@@ -1,0 +1,3969 @@
+openapi: 3.0.3
+info:
+  title: Password Depot Enterprise Server REST API
+  description: |
+    REST API for Password Depot Enterprise Server.
+
+    ## Authentication
+
+    All endpoints except `/auth/login`, `/auth/oidc`, and
+    `/auth/webauthn/{begin,complete}` require a valid
+    `Authorization: Bearer {access_token}` header obtained from the login
+    endpoint. Tokens are JWTs signed with HS256; presence of the `jti` claim
+    indicates a long-lived API token (issued via the Server Manager).
+
+    ## Pagination
+
+    List endpoints support pagination via `offset` and `limit` query
+    parameters (default 100, max 1000, clamped). Responses use the envelope
+    `{ "data": [...], "total": N, "offset": O, "limit": L }`.
+
+    ## Error format
+
+    All non-2xx responses use the envelope
+    `{ "error": { "code": N, "message": "..." } }`. See the
+    `#/components/responses` section for reusable response definitions
+    (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `MethodNotAllowed`,
+    `PayloadTooLarge`, `TooManyRequests`).
+
+    The `error.code` field normally equals the HTTP status, but may carry an
+    application sub-code (`>= 1000`) for a finer machine-readable reason while
+    the HTTP status stays the authority for the response class. Currently the
+    only such sub-code is `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
+    missing second password) returned with HTTP `403`. Always match the numeric
+    code, never the localized message.
+
+    ## Response headers
+
+    Every response includes `Cache-Control: no-store` and `Pragma: no-cache`
+    (on all `/v2.0` and `/v1.0` endpoints, `/file` and `/temp` downloads,
+    `OPTIONS` preflight, and JSON error responses). API responses can carry
+    plaintext secrets and must never be written to a shared or browser disk
+    cache. The shared-link HTML page (`GET /shared/...`) uses the slightly
+    stricter `Cache-Control: no-cache, no-store`.
+
+    ## Timestamps
+
+    All entity timestamp fields are genuine UTC instants with a trailing `Z`
+    (RFC 3339). Inbound timestamp fields are interpreted as true UTC and
+    round-trip exactly. Date-only custom-field values carry no timezone shift.
+
+    ## Cross-cutting status codes
+
+    The following error responses may be returned by any endpoint and are
+    generally not enumerated per-operation:
+
+    - `400 Bad Request` -- malformed JSON body or unknown enum value.
+    - `405 Method Not Allowed` -- includes an `Allow` header listing
+      supported methods (RFC 7231 §6.5.5).
+    - `413 Payload Too Large` -- JSON bodies cap at 1 MB, document-content
+      uploads at 64 MB.
+    - `429 Too Many Requests` -- IP-lockout triggered by repeated failed
+      logins. Includes a `Retry-After` header (seconds). Loopback addresses
+      are exempt from the block list.
+  version: "2.0"
+  contact:
+    name: AceBIT GmbH
+    url: https://www.password-depot.de
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://{server}:{port}/v2.0
+    description: Password Depot Enterprise Server
+    variables:
+      server:
+        default: localhost
+        description: Hostname or IP address of the server
+      port:
+        default: "443"
+        description: HTTPS port
+
+tags:
+  - name: Authentication
+    description: Login, logout, OIDC provider discovery, WebAuthn challenge flow
+  - name: Self-Service
+    description: Endpoints the current user can call on their own account (profile, password, passkeys)
+  - name: Databases
+    description: Client database access
+  - name: Folders
+    description: Folder management within a database
+  - name: Entries
+    description: Entry (credential) management within a database
+  - name: Search
+    description: Full-text search across database entries
+  - name: Users (directory)
+    description: Read-only user directory available to all authenticated callers
+  - name: Groups (directory)
+    description: Read-only group directory available to all authenticated callers
+  - name: Secrets
+    description: Shared-secret links (client scope)
+  - name: Admin - Databases
+    description: Database management (admin scope required)
+  - name: Admin - Permissions
+    description: Permission management (admin scope required)
+  - name: Admin - Users
+    description: User management (admin scope required)
+  - name: Admin - Groups
+    description: Group management (admin scope required)
+  - name: Admin - Alerts
+    description: Alert management (admin scope required)
+  - name: Admin - Secrets
+    description: Secret management (admin scope required)
+  - name: Admin - Passkeys
+    description: User passkey (WebAuthn credential) administration
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------------------
+  # Authentication
+  # ---------------------------------------------------------------------------
+  /auth/login:
+    post:
+      operationId: login
+      tags:
+        - Authentication
+      summary: Authenticate and obtain an access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: |
+            The user account has FIDO2 (security key / passkey) configured as
+            the second factor. The interactive FIDO2 challenge cannot be
+            driven from a stateless REST request -- log in via the native
+            Password Depot client, or ask an administrator to switch the
+            user's `two_factor_mode` to `totp` or `email`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: 409
+                  message: "FIDO2 two-factor authentication is not supported via the REST API. Log in via the native Password Depot client, or ask an administrator to switch your second factor to TOTP or email."
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "459":
+          description: Two-factor authentication not yet activated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: 459
+                  message: "https://your-server:8714/v2.0/temp/qr123456.png"
+        "460":
+          description: Two-factor authentication code required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: 460
+                  message: "Password Depot Enterprise Server requires two-factor authentication."
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags:
+        - Authentication
+      summary: Invalidate the current access token
+      responses:
+        "204":
+          description: Logged out successfully
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/oidc:
+    get:
+      operationId: getOidcProviders
+      tags:
+        - Authentication
+      summary: List configured OpenID Connect providers
+      security: []
+      responses:
+        "200":
+          description: List of OIDC providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OidcProvider"
+
+  # ---------------------------------------------------------------------------
+  # Databases (client)
+  # ---------------------------------------------------------------------------
+  /databases:
+    get:
+      operationId: listDatabases
+      tags:
+        - Databases
+      summary: List all databases
+      description: Returns a paginated list of databases accessible by the authenticated user.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of databases
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/DatabaseBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /databases/{id}:
+    get:
+      operationId: getDatabase
+      tags:
+        - Databases
+      summary: Get a database by ID
+      parameters:
+        - $ref: "#/components/parameters/DatabaseId"
+      responses:
+        "200":
+          description: Database details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Database"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Folders
+  # ---------------------------------------------------------------------------
+  /databases/{db}/folders:
+    get:
+      operationId: listFolders
+      tags:
+        - Folders
+      summary: List folders in a database
+      description: |
+        Returns root-level folders by default. Use the `parent` query parameter
+        to list children of a specific folder.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - name: parent
+          in: query
+          description: Parent folder ID to list children of. Omit for root-level folders.
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of folders (basic representation)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FolderBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createFolder
+      tags:
+        - Folders
+      summary: Create a new folder
+      description: |
+        Create a folder in the database. Set `parent` to an existing folder ID
+        to create a subfolder, or omit it to create at root level.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Folder"
+      responses:
+        "201":
+          description: Folder created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Folder"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /databases/{db}/folders/{id}:
+    get:
+      operationId: getFolder
+      tags:
+        - Folders
+      summary: Get a folder by ID
+      description: Returns the folder details including a list of child folder IDs.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/FolderId"
+      responses:
+        "200":
+          description: Folder details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Folder"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateFolder
+      tags:
+        - Folders
+      summary: Update a folder
+      description: |
+        Update a folder. When the target folder is second-password protected
+        (`has_second_pass=true`), a correct `X-Second-Password` header is
+        required and is verified; a wrong or missing one is rejected with
+        `403` (`error.code` `4031`). To change the second password, send the
+        new value in `X-New-Second-Password` together with the correct current
+        `X-Second-Password`. Folders without a second password are unaffected.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/FolderId"
+        - name: X-Second-Password
+          in: header
+          required: false
+          description: |
+            Current second password. Required (and verified) when the target
+            folder is second-password protected; otherwise the request fails
+            with `403` and `error.code` `4031`.
+          schema:
+            type: string
+        - name: X-New-Second-Password
+          in: header
+          required: false
+          description: |
+            New second password to set. Must be accompanied by the correct
+            current `X-Second-Password`.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Folder"
+      responses:
+        "200":
+          description: Folder updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Folder"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Insufficient permissions, or -- when the folder is
+            second-password protected -- a wrong or missing
+            `X-Second-Password`. The latter case returns `error.code` `4031`
+            (`PD_ERRCODE_INVALID_SECOND_PASS`); a generic access-denied keeps
+            `error.code` `403`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteFolder
+      tags:
+        - Folders
+      summary: Delete a folder
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/FolderId"
+      responses:
+        "204":
+          description: Folder deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Entries
+  # ---------------------------------------------------------------------------
+  /databases/{db}/entries:
+    get:
+      operationId: listEntries
+      tags:
+        - Entries
+      summary: List entries in a database
+      description: |
+        Returns entries in the database. Use the `folder` query parameter to
+        filter by folder. Supports pagination.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - name: folder
+          in: query
+          description: Filter entries by folder ID
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of entries
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Entry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createEntry
+      tags:
+        - Entries
+      summary: Create a new entry
+      description: |
+        Create an entry in the database. Set `folder_id` to place it in a
+        folder, or omit it to create at root level.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Entry"
+      responses:
+        "201":
+          description: Entry created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /databases/{db}/entries/{id}:
+    get:
+      operationId: getEntry
+      tags:
+        - Entries
+      summary: Get a full entry by ID
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/EntryId"
+      responses:
+        "200":
+          description: Full entry details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateEntry
+      tags:
+        - Entries
+      summary: Update an entry
+      description: |
+        Update an entry. When the target entry is second-password protected
+        (`has_second_pass=true`), a correct `X-Second-Password` header is
+        required and is verified; a wrong or missing one is rejected with
+        `403` (`error.code` `4031`). To change the second password, send the
+        new value in `X-New-Second-Password` together with the correct current
+        `X-Second-Password`. Entries without a second password are unaffected.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/EntryId"
+        - name: X-Second-Password
+          in: header
+          required: false
+          description: |
+            Current second password. Required (and verified) when the target
+            entry is second-password protected; otherwise the request fails
+            with `403` and `error.code` `4031`.
+          schema:
+            type: string
+        - name: X-New-Second-Password
+          in: header
+          required: false
+          description: |
+            New second password to set. Must be accompanied by the correct
+            current `X-Second-Password`.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Entry"
+      responses:
+        "200":
+          description: Entry updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Insufficient permissions, or -- when the entry is second-password
+            protected -- a wrong or missing `X-Second-Password`. The latter
+            case returns `error.code` `4031`
+            (`PD_ERRCODE_INVALID_SECOND_PASS`); a generic access-denied keeps
+            `error.code` `403`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteEntry
+      tags:
+        - Entries
+      summary: Delete an entry
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/EntryId"
+      responses:
+        "204":
+          description: Entry deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /databases/{db}/entries/{id}/move:
+    post:
+      operationId: moveEntry
+      tags:
+        - Entries
+      summary: Move an entry to a different folder
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/EntryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveEntryRequest"
+      responses:
+        "200":
+          description: Entry moved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Search
+  # ---------------------------------------------------------------------------
+  /databases/{db}/search:
+    get:
+      operationId: searchEntries
+      tags:
+        - Search
+      summary: Search entries in a database
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - name: q
+          in: query
+          description: Search query string
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated search results
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Entry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Admin Endpoints
+  # ---------------------------------------------------------------------------
+
+  # --- Admin Databases ---
+  /admin/databases:
+    get:
+      operationId: adminListDatabases
+      tags:
+        - Admin - Databases
+      summary: List all server databases (admin)
+      description: Returns all databases on the server regardless of user permissions. Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of databases
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/DatabaseBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: adminCreateDatabase
+      tags:
+        - Admin - Databases
+      summary: Create a new database (admin)
+      description: Requires an admin-scoped session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Database"
+      responses:
+        "201":
+          description: Database created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Database"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/databases/{id}:
+    get:
+      operationId: adminGetDatabase
+      tags:
+        - Admin - Databases
+      summary: Get a database by ID (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseId"
+      responses:
+        "200":
+          description: Database details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Database"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: adminUpdateDatabase
+      tags:
+        - Admin - Databases
+      summary: Update a database (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Database"
+      responses:
+        "200":
+          description: Database updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Database"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: adminDeleteDatabase
+      tags:
+        - Admin - Databases
+      summary: Delete a database (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseId"
+      responses:
+        "204":
+          description: Database deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # --- Admin Permissions ---
+  /admin/databases/{db}/permissions:
+    get:
+      operationId: adminListPermissions
+      tags:
+        - Admin - Permissions
+      summary: List permissions for a database (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of permissions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Permission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: adminCreatePermission
+      tags:
+        - Admin - Permissions
+      summary: Create a permission (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Permission"
+      responses:
+        "201":
+          description: Permission created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Permission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/databases/{db}/permissions/{id}:
+    get:
+      operationId: adminGetPermission
+      tags:
+        - Admin - Permissions
+      summary: Get a permission by ID (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/PermissionId"
+      responses:
+        "200":
+          description: Permission details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Permission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: adminUpdatePermission
+      tags:
+        - Admin - Permissions
+      summary: Update a permission (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/PermissionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Permission"
+      responses:
+        "200":
+          description: Permission updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Permission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: adminDeletePermission
+      tags:
+        - Admin - Permissions
+      summary: Delete a permission (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/DatabaseIdPath"
+        - $ref: "#/components/parameters/PermissionId"
+      responses:
+        "204":
+          description: Permission deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # --- Admin Users ---
+  /admin/users:
+    get:
+      operationId: adminListUsers
+      tags:
+        - Admin - Users
+      summary: List all users (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of users
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: adminCreateUser
+      tags:
+        - Admin - Users
+      summary: Create a new user (admin)
+      description: Requires an admin-scoped session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/User"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/users/{id}:
+    get:
+      operationId: adminGetUser
+      tags:
+        - Admin - Users
+      summary: Get a user by ID (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: adminUpdateUser
+      tags:
+        - Admin - Users
+      summary: Update a user (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/User"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: adminDeleteUser
+      tags:
+        - Admin - Users
+      summary: Delete a user (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "204":
+          description: User deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # --- Admin Groups ---
+  /admin/groups:
+    get:
+      operationId: adminListGroups
+      tags:
+        - Admin - Groups
+      summary: List all groups (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of groups
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GroupBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: adminCreateGroup
+      tags:
+        - Admin - Groups
+      summary: Create a new group (admin)
+      description: Requires an admin-scoped session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Group"
+      responses:
+        "201":
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/groups/{id}:
+    get:
+      operationId: adminGetGroup
+      tags:
+        - Admin - Groups
+      summary: Get a group by ID (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: adminUpdateGroup
+      tags:
+        - Admin - Groups
+      summary: Update a group (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Group"
+      responses:
+        "200":
+          description: Group updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: adminDeleteGroup
+      tags:
+        - Admin - Groups
+      summary: Delete a group (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "204":
+          description: Group deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # --- Admin Alerts ---
+  /admin/alerts:
+    get:
+      operationId: adminListAlerts
+      tags:
+        - Admin - Alerts
+      summary: List all alerts (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of alerts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AlertBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: adminCreateAlert
+      tags:
+        - Admin - Alerts
+      summary: Create a new alert (admin)
+      description: Requires an admin-scoped session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Alert"
+      responses:
+        "201":
+          description: Alert created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/alerts/{id}:
+    get:
+      operationId: adminGetAlert
+      tags:
+        - Admin - Alerts
+      summary: Get an alert by ID (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/AlertId"
+      responses:
+        "200":
+          description: Alert details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: adminUpdateAlert
+      tags:
+        - Admin - Alerts
+      summary: Update an alert (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/AlertId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Alert"
+      responses:
+        "200":
+          description: Alert updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: adminDeleteAlert
+      tags:
+        - Admin - Alerts
+      summary: Delete an alert (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/AlertId"
+      responses:
+        "204":
+          description: Alert deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # --- Admin Secrets ---
+  /admin/secrets:
+    get:
+      operationId: adminListSecrets
+      tags:
+        - Admin - Secrets
+      summary: List all secrets (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of secrets
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SecretBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: adminCreateSecret
+      tags:
+        - Admin - Secrets
+      summary: Create a new secret (admin)
+      description: Requires an admin-scoped session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Secret"
+      responses:
+        "201":
+          description: Secret created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Secret"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/secrets/{id}:
+    get:
+      operationId: adminGetSecret
+      tags:
+        - Admin - Secrets
+      summary: Get a secret by ID (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/SecretId"
+      responses:
+        "200":
+          description: Secret details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Secret"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: adminUpdateSecret
+      tags:
+        - Admin - Secrets
+      summary: Update a secret (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/SecretId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Secret"
+      responses:
+        "200":
+          description: Secret updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Secret"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: adminDeleteSecret
+      tags:
+        - Admin - Secrets
+      summary: Delete a secret (admin)
+      description: Requires an admin-scoped session.
+      parameters:
+        - $ref: "#/components/parameters/SecretId"
+      responses:
+        "204":
+          description: Secret deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Self-Service (/me/...)
+  # ---------------------------------------------------------------------------
+  /me:
+    get:
+      operationId: getMyProfile
+      tags:
+        - Self-Service
+      summary: Get the current user's own profile (full representation)
+      responses:
+        "200":
+          description: Profile returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      operationId: updateMyProfile
+      tags:
+        - Self-Service
+      summary: Update the caller's own profile
+      description: |
+        Strict allow-list. Only `display_name`, `department`, and `phone`
+        may be changed via this endpoint. Any other field in the request
+        body returns `400`. Use `/me/password` to change the password and
+        `/me/passkeys/...` to manage passkeys. Email, roles, groups,
+        AD binding, and 2FA settings remain admin-only via
+        `PATCH /admin/users/{id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdateRequest"
+      responses:
+        "200":
+          description: Updated profile returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/password:
+    post:
+      operationId: changeMyPassword
+      tags:
+        - Self-Service
+      summary: Change the caller's own password
+      description: |
+        Requires knowledge of the current password. Only users with
+        `standard` auth mode can change their password here. The built-in
+        super-administrator account cannot use this endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChangeRequest"
+      responses:
+        "204":
+          description: Password changed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Password change refused. The user account is flagged as
+            "cannot change password", is a super-administrator, or the
+            supplied current password does not match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: User does not use standard authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/passkeys:
+    get:
+      operationId: listMyPasskeys
+      tags:
+        - Self-Service
+      summary: List the caller's registered passkeys (compact representation)
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of passkeys
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CredentialBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/passkeys/begin:
+    post:
+      operationId: beginPasskeyRegistration
+      tags:
+        - Self-Service
+      summary: Begin registering a new passkey for the caller
+      description: |
+        Returns a WebAuthn registration challenge and a `session_id` that
+        must be sent back to `/me/passkeys/complete` together with the
+        attestation produced by `navigator.credentials.create(...)`.
+      responses:
+        "200":
+          description: Registration challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnRegistrationBeginResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/passkeys/complete:
+    post:
+      operationId: completePasskeyRegistration
+      tags:
+        - Self-Service
+      summary: Complete passkey registration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnRegistrationCompleteRequest"
+      responses:
+        "201":
+          description: Passkey registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/passkeys/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PasskeyId"
+    patch:
+      operationId: renameMyPasskey
+      tags:
+        - Self-Service
+      summary: Rename a registered passkey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  description: New friendly name for the passkey
+      responses:
+        "200":
+          description: Passkey renamed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteMyPasskey
+      tags:
+        - Self-Service
+      summary: Delete (revoke) a registered passkey
+      responses:
+        "204":
+          description: Passkey deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # WebAuthn login flow (no token required)
+  # ---------------------------------------------------------------------------
+  /auth/webauthn/begin:
+    post:
+      operationId: beginWebAuthnAuth
+      tags:
+        - Authentication
+      summary: Begin WebAuthn authentication (assertion) for a user
+      security: []
+      description: |
+        Returns a WebAuthn assertion challenge and a `session_id`. The
+        client runs `navigator.credentials.get(...)` with the returned
+        options and posts the assertion back to `/auth/webauthn/complete`.
+
+        For user-enumeration resistance, the server returns the same
+        generic 401 response for unknown users, disabled accounts,
+        WebAuthn-not-enabled users, and users with no registered
+        passkeys. The real reason is recorded only in the server log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnAssertionBeginRequest"
+      responses:
+        "200":
+          description: Assertion challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnAssertionBeginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/webauthn/complete:
+    post:
+      operationId: completeWebAuthnAuth
+      tags:
+        - Authentication
+      summary: Complete WebAuthn authentication
+      security: []
+      description: |
+        Submit the signed assertion produced by the authenticator. On
+        success returns the same `access_token` shape as `/auth/login`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnAssertionCompleteRequest"
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  # ---------------------------------------------------------------------------
+  # Client-scope user and group directory (read-only, compact representation)
+  # ---------------------------------------------------------------------------
+  /users:
+    get:
+      operationId: listUsersDirectory
+      tags:
+        - Users (directory)
+      summary: List all users (compact)
+      description: |
+        Read-only directory available to every authenticated caller. Used by
+        clients to pick users for sharing, permission assignment, and secret
+        recipients. Returns a paginated list of compact user records.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of users
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserCompact"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      operationId: getUserDirectory
+      tags:
+        - Users (directory)
+      summary: Get a user by ID (compact)
+      responses:
+        "200":
+          description: User record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserCompact"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /groups:
+    get:
+      operationId: listGroupsDirectory
+      tags:
+        - Groups (directory)
+      summary: List all groups (compact)
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of groups
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GroupCompact"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+    get:
+      operationId: getGroupDirectory
+      tags:
+        - Groups (directory)
+      summary: Get a group by ID (compact)
+      responses:
+        "200":
+          description: Group record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupCompact"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Client-scope secrets (shared links)
+  # ---------------------------------------------------------------------------
+  /secrets:
+    get:
+      operationId: listMySecrets
+      tags:
+        - Secrets
+      summary: List secrets authored by the caller
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of the caller's secrets
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SecretBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createSecret
+      tags:
+        - Secrets
+      summary: Create a new shared-secret link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Secret"
+      responses:
+        "201":
+          description: Secret created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Secret"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /secrets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/SecretId"
+    get:
+      operationId: getMySecret
+      tags:
+        - Secrets
+      summary: Get a secret (full representation)
+      responses:
+        "200":
+          description: Secret details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Secret"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteMySecret
+      tags:
+        - Secrets
+      summary: Delete a secret (author only)
+      responses:
+        "204":
+          description: Secret deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /secrets/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/SecretId"
+    post:
+      operationId: approveSecret
+      tags:
+        - Secrets
+      summary: Approve a pending secret (designated approver only)
+      description: |
+        Available to callers listed in the secret's `approver_ids`. The
+        action is tallied against the configured quorum; once the quorum
+        is reached the secret moves to status `approved`.
+      responses:
+        "204":
+          description: Approval recorded
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /secrets/{id}/reject:
+    parameters:
+      - $ref: "#/components/parameters/SecretId"
+    post:
+      operationId: rejectSecret
+      tags:
+        - Secrets
+      summary: Reject a pending secret (designated approver only)
+      responses:
+        "204":
+          description: Rejection recorded
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /secrets/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/SecretId"
+    post:
+      operationId: revokeSecret
+      tags:
+        - Secrets
+      summary: Revoke a secret (author or admin)
+      responses:
+        "204":
+          description: Secret revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Admin-scope secret sub-commands
+  # ---------------------------------------------------------------------------
+  /admin/secrets/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/SecretId"
+    post:
+      operationId: adminApproveSecret
+      tags:
+        - Admin - Secrets
+      summary: Approve a pending secret (admin)
+      responses:
+        "204":
+          description: Approval recorded
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/secrets/{id}/reject:
+    parameters:
+      - $ref: "#/components/parameters/SecretId"
+    post:
+      operationId: adminRejectSecret
+      tags:
+        - Admin - Secrets
+      summary: Reject a pending secret (admin)
+      responses:
+        "204":
+          description: Rejection recorded
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/secrets/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/SecretId"
+    post:
+      operationId: adminRevokeSecret
+      tags:
+        - Admin - Secrets
+      summary: Revoke a secret (admin)
+      responses:
+        "204":
+          description: Secret revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Admin user sub-resources
+  # ---------------------------------------------------------------------------
+  /admin/users/{id}/password:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    post:
+      operationId: adminSetUserPassword
+      tags:
+        - Admin - Users
+      summary: Set a user's password (admin)
+      description: |
+        Admin password reset. Unlike `/me/password`, this does not require
+        the user's current password. Not allowed for the super-administrator
+        account -- that must be changed via the Password Depot Server Manager.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - new_password
+              properties:
+                new_password:
+                  type: string
+                  description: New password for the user
+      responses:
+        "204":
+          description: Password changed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: User does not use standard authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/users/{user_id}/passkeys:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+    get:
+      operationId: adminListUserPasskeys
+      tags:
+        - Admin - Passkeys
+      summary: List a user's registered passkeys (admin)
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of the user's passkeys
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CredentialBasic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{user_id}/passkeys/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+      - $ref: "#/components/parameters/PasskeyId"
+    delete:
+      operationId: adminRevokeUserPasskey
+      tags:
+        - Admin - Passkeys
+      summary: Revoke a user's passkey (admin)
+      description: |
+        Admins cannot register passkeys on behalf of a user (requires the
+        user's authenticator); only deletion is exposed.
+      responses:
+        "204":
+          description: Passkey revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Database sub-resources (document content, folder navigation)
+  # ---------------------------------------------------------------------------
+  /databases/{db}/children:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    get:
+      operationId: listDatabaseRootChildren
+      tags:
+        - Databases
+      summary: List root-level folders and entries of a database
+      description: |
+        Returns the direct children of the database root: top-level folders
+        and top-level entries, merged in a single paginated list.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of children
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChildrenList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /databases/{db}/folders/{folder_id}/children:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/FolderIdPath"
+    get:
+      operationId: listFolderChildren
+      tags:
+        - Folders
+      summary: List the folders and entries directly inside a folder
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of children
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChildrenList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /databases/{db}/folders/{folder_id}/move:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/FolderIdPath"
+    post:
+      operationId: moveFolder
+      tags:
+        - Folders
+      summary: Move a folder to a different parent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveEntryRequest"
+      responses:
+        "200":
+          description: Folder moved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Folder"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /databases/{db}/entries/{entry_id}/content:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/EntryIdPath"
+    get:
+      operationId: downloadDocumentContent
+      tags:
+        - Entries
+      summary: Download the binary content of a document entry
+      description: |
+        The entry must be of type `document`. Response is the raw file
+        bytes. The `Content-Disposition` header carries the stored
+        filename (sanitized per RFC 7230 quoted-string rules) and
+        `Content-Type` is derived from the filename extension.
+      responses:
+        "200":
+          description: Document content
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: 'Form: `attachment; filename="<sanitized-name>"`'
+              example: 'attachment; filename="report.pdf"'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Entry is not of type `document`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            Entry not found, or no content has been uploaded yet for this
+            document entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: uploadDocumentContent
+      tags:
+        - Entries
+      summary: Upload (or replace) the binary content of a document entry
+      description: |
+        Body is the raw file bytes, maximum 64 MB. The `Content-Disposition`
+        header on the request (if present) sets the stored filename:
+        `Content-Disposition: attachment; filename="report.pdf"`. CR/LF and
+        other control characters are stripped from the stored name.
+      parameters:
+        - name: Content-Disposition
+          in: header
+          required: false
+          schema:
+            type: string
+          description: 'Optional stored filename, e.g. `attachment; filename="report.pdf"`'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Upload succeeded; updated entry returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        "400":
+          description: Entry is not of type `document`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+
+# =============================================================================
+# Components
+# =============================================================================
+components:
+  # ---------------------------------------------------------------------------
+  # Security Schemes
+  # ---------------------------------------------------------------------------
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token obtained from POST /auth/login
+
+  # ---------------------------------------------------------------------------
+  # Reusable Parameters
+  # ---------------------------------------------------------------------------
+  parameters:
+    DatabaseId:
+      name: id
+      in: path
+      required: true
+      description: Database ID
+      schema:
+        type: string
+        format: uuid
+
+    DatabaseIdPath:
+      name: db
+      in: path
+      required: true
+      description: Database ID
+      schema:
+        type: string
+        format: uuid
+
+    FolderId:
+      name: id
+      in: path
+      required: true
+      description: Folder ID
+      schema:
+        type: string
+        format: uuid
+
+    EntryId:
+      name: id
+      in: path
+      required: true
+      description: Entry ID
+      schema:
+        type: string
+        format: uuid
+
+    PermissionId:
+      name: id
+      in: path
+      required: true
+      description: Permission ID
+      schema:
+        type: string
+        format: uuid
+
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: User ID
+      schema:
+        type: string
+        format: uuid
+
+    GroupId:
+      name: id
+      in: path
+      required: true
+      description: Group ID
+      schema:
+        type: string
+        format: uuid
+
+    AlertId:
+      name: id
+      in: path
+      required: true
+      description: Alert ID
+      schema:
+        type: string
+        format: uuid
+
+    SecretId:
+      name: id
+      in: path
+      required: true
+      description: Secret ID
+      schema:
+        type: string
+        format: uuid
+
+    PasskeyId:
+      name: id
+      in: path
+      required: true
+      description: Passkey credential ID (server-issued UUID for the passkey record)
+      schema:
+        type: string
+        format: uuid
+
+    UserIdPath:
+      name: user_id
+      in: path
+      required: true
+      description: User ID -- path parameter used by sub-resources under /admin/users/{user_id}
+      schema:
+        type: string
+        format: uuid
+
+    EntryIdPath:
+      name: entry_id
+      in: path
+      required: true
+      description: Entry ID -- path parameter used by sub-resources under /databases/{db}/entries/{entry_id}
+      schema:
+        type: string
+        format: uuid
+
+    FolderIdPath:
+      name: folder_id
+      in: path
+      required: true
+      description: Folder ID -- path parameter used by sub-resources under /databases/{db}/folders/{folder_id}
+      schema:
+        type: string
+        format: uuid
+
+    PaginationOffset:
+      name: offset
+      in: query
+      required: false
+      description: Number of items to skip (for pagination)
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+    PaginationLimit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Maximum number of items to return. Values above the cap are clamped.
+        Default: 100. Maximum: 1000.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+
+  # ---------------------------------------------------------------------------
+  # Reusable Responses
+  # ---------------------------------------------------------------------------
+  responses:
+    BadRequest:
+      description: |
+        Malformed request. The request body could not be parsed as JSON, or a
+        required field is missing, or an enum value is unknown. The response
+        body uses the standard error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 400
+              message: "Malformed JSON request body."
+
+    Unauthorized:
+      description: Authentication required or token invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 401
+              message: "Invalid or expired access token"
+
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 403
+              message: "You do not have permission to perform this action"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 404
+              message: "Resource not found"
+
+    MethodNotAllowed:
+      description: |
+        The HTTP method is not supported for this endpoint. Per RFC 7231 §6.5.5
+        the response carries an `Allow` header listing the supported methods.
+      headers:
+        Allow:
+          schema:
+            type: string
+          description: Comma-separated list of methods supported by the target resource
+          example: "GET, POST, PATCH, DELETE"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 405
+              message: "Supported methods: GET POST PATCH DELETE"
+
+    PayloadTooLarge:
+      description: |
+        The request body exceeds the allowed size limit. JSON endpoints cap at
+        1 MB; the document-content upload endpoint caps at 64 MB.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 413
+              message: "Request body exceeds the allowed size limit."
+
+    TooManyRequests:
+      description: |
+        The caller's IP address is temporarily blocked by the server's
+        login-attempt throttle. Honor the `Retry-After` header and back off;
+        retrying immediately will not shorten the lockout. Loopback addresses
+        (`127.0.0.0/8`, `::1`) are exempt from the block list.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+          description: Seconds until the block expires
+          example: 1745
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 429
+              message: "Your IP address has been blocked. Please contact your PD server administrator or try again later."
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+  schemas:
+    # --- Authentication ---
+    LoginRequest:
+      type: object
+      description: |
+        The required fields depend on the `auth` method:
+        - `standard` (default): `user`, `pass`
+        - `sspi`: `user`, `pass`
+        - `negotiate`: (none -- SPNEGO handshake via `WWW-Authenticate`)
+        - `azure` (deprecated): `id_token`
+        - `oidc`: `idp`, `id_token`
+      properties:
+        auth:
+          type: string
+          enum:
+            - standard
+            - sspi
+            - negotiate
+            - azure
+            - oidc
+          default: standard
+          description: |
+            Authentication method. Defaults to `standard` if omitted.
+            - `standard` -- Normal username/password authentication.
+            - `sspi` -- SSPI (Kerberos / Negotiate / NTLM) with explicit Windows domain credentials supplied in `user` and `pass`.
+            - `negotiate` -- Integrated Windows authentication. No credentials in the body; the server responds with `401 WWW-Authenticate: Negotiate` and the client completes a SPNEGO handshake on the same TCP connection using the caller's current identity.
+            - `azure` -- (Deprecated) Azure AD / Entra ID. Use `oidc` instead.
+            - `oidc` -- OpenID Connect via a registered identity provider.
+        scope:
+          type: string
+          enum:
+            - client
+            - admin
+          default: client
+          description: |
+            Session scope. Determines which endpoints are accessible.
+            - `client` -- (Default) Normal client session. Access to databases, folders, entries, and search.
+            - `admin` -- Server administration session. Access to all client endpoints plus `/admin/` management endpoints (databases CRUD, users, groups, permissions, alerts, secrets).
+        user:
+          type: string
+          description: Username (required for `standard` and `sspi`)
+        pass:
+          type: string
+          description: Password (required for `standard` and `sspi`)
+        tfacode:
+          type: string
+          description: 6-digit two-factor authentication code (if enabled)
+        idp:
+          type: string
+          description: Identity Provider ID from `/auth/oidc` (required for `oidc`)
+        id_token:
+          type: string
+          description: |
+            Identity token from the OIDC/Azure flow (required for `oidc` and
+            `azure`). Must carry either (a) a signed OIDC `id_token` JWT, or
+            (b) an opaque OAuth access token usable as a Bearer credential at
+            the provider's `userinfo_endpoint`. It MUST NOT be a bare
+            authorization `code`: the REST server performs no
+            authorization-code exchange and never POSTs to the
+            `token_endpoint`. It validates the supplied value directly (JWT
+            signature/aud/exp via JWKS, then falls back to Bearer ->
+            userinfo). The recommended client configuration is
+            `response_type=id_token`. An invalid/expired/forged token, a bare
+            code, or no matching local user yields HTTP `401`.
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: Bearer token to use in the Authorization header
+
+    OidcProvider:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique provider identifier
+        provider_class:
+          type: string
+          description: Provider class name
+        display_name:
+          type: string
+          description: Human-readable provider name
+        discovery_endpoint:
+          type: string
+          format: uri
+          description: OIDC discovery endpoint URL
+        client_id:
+          type: string
+          description: OAuth 2.0 client ID
+        redirect_uri:
+          type: string
+          format: uri
+          description: Redirect URI after authentication
+        scope:
+          type: string
+          description: OAuth 2.0 scopes (space-separated)
+        response_type:
+          type: string
+          description: OAuth 2.0 response type
+
+    # --- Databases ---
+    DatabaseBasic:
+      type: object
+      description: |
+        Fields returned for a database in EVERY context: list views
+        (`GET /databases`, `GET /admin/databases`), client-scope detail
+        views (`GET /databases/{id}`), and when embedded in other
+        responses. Output of the server's `SaveDatabaseToJSON` with
+        `AFullRepresentation=False`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          description: Database name (used as part of the storage filename)
+        description:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    Database:
+      description: |
+        Full database representation returned by
+        `GET /admin/databases/{id}` for admin-scope callers. Extends
+        `DatabaseBasic` with fields that require admin scope.
+      allOf:
+        - $ref: "#/components/schemas/DatabaseBasic"
+        - type: object
+          properties:
+            size:
+              type: integer
+              format: int64
+              description: On-disk size in bytes
+              readOnly: true
+            entries_count:
+              type: integer
+              description: Total number of entries in the database
+              readOnly: true
+            icons_count:
+              type: integer
+              description: Number of custom icons stored with the database
+              readOnly: true
+            disabled:
+              type: boolean
+            db_admins:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: User IDs designated as database administrators
+            db_supervisors:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: User IDs designated as database supervisors
+            include_server_supervisors:
+              type: boolean
+              description: Whether server-level supervisors can also act on this database
+
+    # --- Folders ---
+    FolderBasic:
+      type: object
+      description: |
+        Fields returned for a folder in EVERY context -- list views and
+        detail views. Folders and entries share a `type` discriminator
+        so they can be returned together in the `/children` listings;
+        `FolderBasic`/`Folder` objects always carry `"type": "folder"`.
+        Output of the server's `SaveFolderToJSON` with
+        `AFullRepresentation=False`.
+      properties:
+        type:
+          type: string
+          enum:
+            - folder
+          description: Discriminator distinguishing folders from entries in heterogeneous listings
+          readOnly: true
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          description: Folder display name
+        icon:
+          type: string
+          description: Icon identifier (numeric or custom name, see `image_index`/`image_name`)
+          readOnly: true
+        importance:
+          type: string
+          description: Importance level (e.g., "low", "normal", "high")
+        category:
+          type: string
+        tags:
+          type: string
+          description: Comma-separated tag list
+        has_second_pass:
+          type: boolean
+          description: Whether this folder is protected by a second password
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    Folder:
+      description: |
+        Full folder representation returned by detail endpoints. Extends
+        `FolderBasic` with fields that are omitted from list responses.
+      allOf:
+        - $ref: "#/components/schemas/FolderBasic"
+        - type: object
+          properties:
+            author:
+              type: string
+              format: uuid
+              readOnly: true
+              description: ID of the user who originally created the folder
+            image_custom:
+              type: boolean
+              description: If true, use `image_name` as the custom image; otherwise use `image_index`
+            image_index:
+              type: integer
+              description: Standard icon index (when `image_custom` is false)
+            image_name:
+              type: string
+              description: Custom image name (when `image_custom` is true), e.g. "twitter.com"
+            comments:
+              type: string
+
+    # --- Entries ---
+    Entry:
+      type: object
+      description: |
+        A credential entry. The `type` field discriminates between the
+        different kinds of entries; type-specific fields are carried in a
+        sub-object named after the type (e.g. `credit_card`, `license`,
+        `identity`, `information`, `banking`, `document`, `rdp`, `putty`,
+        `teamviewer`, `passkey`). For `password` and `custom` entries the
+        common password fields (`pass`, `urls`, `custom_fields`, ...) are
+        at the top level instead.
+      properties:
+        type:
+          type: string
+          enum:
+            - password
+            - custom
+            - credit_card
+            - license
+            - identity
+            - information
+            - banking
+            - document
+            - rdp
+            - putty
+            - teamviewer
+            - passkey
+          description: Entry kind (discriminator)
+          readOnly: true
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+        url:
+          type: string
+          description: Primary URL (empty for types that don't have one)
+        login:
+          type: string
+          description: Primary username / login
+        has_second_pass:
+          type: boolean
+          description: Whether this entry is protected by a second password
+          readOnly: true
+        icon:
+          type: string
+          readOnly: true
+        importance:
+          type: string
+        category:
+          type: string
+        tags:
+          type: string
+          description: Comma-separated tag list
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        # Full representation only (for type = password / custom)
+        login_id:
+          type: string
+          description: Associated HTML element id or name for the login field
+        pass:
+          type: string
+          description: Main password (only for `password` / `custom`)
+        pass_id:
+          type: string
+          description: Associated HTML element id or name for the password field
+        urls:
+          type: array
+          items:
+            type: string
+          description: Additional URLs associated with this entry
+        is_link:
+          type: boolean
+        linked_item:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID of the template entry this one links to (when `is_link` is true)
+        is_template:
+          type: boolean
+        info_template:
+          type: string
+          nullable: true
+          description: Template reference (only for `custom` entries)
+        param_str:
+          type: string
+          description: Command-line parameters
+        custom_fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomField"
+          description: Additional name/value/type tuples (only for `password` / `custom`)
+        author:
+          type: string
+          format: uuid
+          readOnly: true
+        image_custom:
+          type: boolean
+        image_index:
+          type: integer
+        image_name:
+          type: string
+        comments:
+          type: string
+        # Type-specific sub-objects. Only one of these is present per entry,
+        # keyed by the `type` field above.
+        credit_card:
+          $ref: "#/components/schemas/EntryCreditCard"
+        license:
+          $ref: "#/components/schemas/EntryLicense"
+        identity:
+          $ref: "#/components/schemas/EntryIdentity"
+        information:
+          $ref: "#/components/schemas/EntryInformation"
+        banking:
+          $ref: "#/components/schemas/EntryBanking"
+        document:
+          $ref: "#/components/schemas/EntryDocument"
+        rdp:
+          $ref: "#/components/schemas/EntryRdp"
+        putty:
+          $ref: "#/components/schemas/EntryPutty"
+        teamviewer:
+          $ref: "#/components/schemas/EntryTeamViewer"
+        passkey:
+          $ref: "#/components/schemas/EntryPasskey"
+
+    EntryCreditCard:
+      type: object
+      properties:
+        card:
+          type: string
+          description: Card brand (e.g. "master_card", "visa", "discover")
+        holder:
+          type: string
+        number:
+          type: string
+          description: 16-digit card number, space-separated
+        valid_thru:
+          type: string
+          description: Expiry date in MM/YYYY form
+        cvv:
+          type: string
+        phone:
+          type: string
+          description: Hotline telephone
+        url:
+          type: string
+        online_user:
+          type: string
+        online_pass:
+          type: string
+        pin:
+          type: string
+
+    EntryLicense:
+      type: object
+      properties:
+        product:
+          type: string
+        version:
+          type: string
+        reg_name:
+          type: string
+        key_1:
+          type: string
+        key_2:
+          type: string
+        url:
+          type: string
+        user:
+          type: string
+        pass:
+          type: string
+        purchase_date:
+          type: string
+          format: date
+          nullable: true
+        order_number:
+          type: string
+        reg_email:
+          type: string
+
+    EntryIdentity:
+      type: object
+      properties:
+        account:
+          type: string
+        email:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        company:
+          type: string
+        address_1:
+          type: string
+        address_2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+        country:
+          type: string
+        phone:
+          type: string
+        website:
+          type: string
+        birth_date:
+          type: string
+          format: date
+          nullable: true
+        mobile:
+          type: string
+        fax:
+          type: string
+        house:
+          type: string
+
+    EntryInformation:
+      type: object
+      properties:
+        text:
+          type: string
+
+    EntryBanking:
+      type: object
+      description: Online banking entry (previously `ec_card`, renamed in v2.0)
+      properties:
+        url:
+          type: string
+        user:
+          type: string
+        pass:
+          type: string
+        holder:
+          type: string
+        account_number:
+          type: string
+          description: Legacy field -- preserved for migration from older DB formats
+        bank_id:
+          type: string
+          description: Legacy field
+        bank_name:
+          type: string
+        bic:
+          type: string
+        iban:
+          type: string
+        card_number:
+          type: string
+        phone:
+          type: string
+        legitimation_id:
+          type: string
+          description: Legitimation ID (used by some German banks)
+        pin:
+          type: string
+
+    EntryDocument:
+      type: object
+      description: |
+        Metadata for a document-type entry. Use
+        `GET /databases/{db}/entries/{entry_id}/content` to fetch the
+        actual binary content.
+      properties:
+        name:
+          type: string
+          description: Filename (as set via Content-Disposition on upload)
+        type:
+          type: string
+          description: MIME type derived from the filename extension
+        size:
+          type: integer
+          format: int64
+          description: Content size in bytes
+
+    EntryRdp:
+      type: object
+      properties:
+        host:
+          type: string
+        user:
+          type: string
+        pass:
+          type: string
+        cmd_line:
+          type: string
+
+    EntryPutty:
+      type: object
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        protocol:
+          type: string
+          description: Connection protocol (ssh, telnet, rlogin, ...)
+        user:
+          type: string
+        pass:
+          type: string
+        key_file:
+          type: string
+        key_pass:
+          type: string
+        cmd_line:
+          type: string
+
+    EntryTeamViewer:
+      type: object
+      properties:
+        partner_id:
+          type: string
+        pass:
+          type: string
+        mode:
+          type: string
+          description: TeamViewer mode
+
+    EntryPasskey:
+      type: object
+      properties:
+        url:
+          type: string
+        user:
+          type: string
+        alg:
+          type: integer
+          description: COSE algorithm ID
+        sign_count:
+          type: integer
+          readOnly: true
+        cred_id:
+          type: string
+        rp_id:
+          type: string
+        rp_name:
+          type: string
+        user_id:
+          type: string
+        key:
+          type: string
+          description: Public and private key material (encrypted at rest)
+
+    MoveEntryRequest:
+      type: object
+      required:
+        - target
+      properties:
+        target:
+          type: string
+          format: uuid
+          description: Target folder ID to move the entry into
+
+    # --- Search ---
+    # Search reuses the Entry schema in paginated responses.
+
+    # --- Permissions ---
+    Permission:
+      type: object
+      description: |
+        A permission binds a principal (user OR group, identified by
+        `principal_id`) to a database, optionally gated by a validity
+        window and a seal workflow. The basic view returned in list
+        responses carries only identity and validity; the full view (from
+        `GET /admin/databases/{db}/permissions/{id}`) additionally
+        includes the allow/deny right tokens and per-entry overrides.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        principal_id:
+          type: string
+          format: uuid
+          description: |
+            ID of the user OR group this permission applies to. Whether
+            it's a user or group is resolved by lookup on the server.
+        issuer_id:
+          type: string
+          format: uuid
+          description: ID of the user who created the permission
+          readOnly: true
+        valid_from:
+          type: string
+          format: date-time
+          nullable: true
+        valid_until:
+          type: string
+          format: date-time
+          nullable: true
+        # Full representation only
+        allow:
+          type: array
+          items:
+            $ref: "#/components/schemas/RightToken"
+          description: Database-level allow rights
+        deny:
+          type: array
+          items:
+            $ref: "#/components/schemas/RightToken"
+          description: Database-level deny rights (override `allow`)
+        entry_allow:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemRightOverride"
+          description: Per-entry or per-folder allow overrides
+        entry_deny:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemRightOverride"
+          description: Per-entry or per-folder deny overrides
+        seal_status:
+          type: integer
+          enum:
+            - 0
+            - 1
+            - 2
+            - 3
+            - 4
+          description: |
+            Seal workflow state:
+            * 0 = unset
+            * 1 = set (seal configured, access requires approval)
+            * 2 = waiting (approval requested)
+            * 3 = approved
+            * 4 = broken (one-time access already consumed)
+        approver_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: User IDs designated as seal approvers
+
+    RightToken:
+      type: string
+      description: |
+        A single right on a database. These tokens also appear under
+        `entry_allow` / `entry_deny` when narrowed to a specific
+        entry or folder.
+      enum:
+        - use
+        - read
+        - update
+        - create
+        - delete
+        - print
+        - export
+        - save
+        - auto_complete
+        - addon_fill
+        - addon_offer
+        - sync
+        - share
+        - seal
+        - second_pass
+
+    ItemRightOverride:
+      type: object
+      description: |
+        Per-entry or per-folder override of a right. The `target_id`
+        points at an entry or folder; `rights` lists the right tokens
+        that are overridden for that target.
+      properties:
+        target_id:
+          type: string
+          format: uuid
+        rights:
+          type: array
+          items:
+            $ref: "#/components/schemas/RightToken"
+
+    # --- Users ---
+    UserBasic:
+      type: object
+      description: |
+        Fields returned for a user in EVERY context -- both the detail
+        response (`GET /me`, `GET /admin/users/{id}`) and the list
+        response (`GET /admin/users`). This is the output of the server's
+        `SaveUserToJSON` with `AFullRepresentation=False`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          description: Username (immutable once created)
+        auth_modes:
+          type: array
+          items:
+            type: string
+            enum:
+              - standard
+              - sspi
+              - iwa
+              - azure
+              - oidc
+              - webauthn
+          description: Authentication methods allowed for this user
+        two_factor_mode:
+          type: string
+          enum:
+            - default
+            - disabled
+            - email
+            - totp
+            - fido2
+          description: |
+            Per-user 2FA mode. `default` inherits the server-wide setting;
+            `disabled` opts out (suitable for service accounts); `fido2` uses
+            a registered passkey / security key as the second factor.
+        display_name:
+          type: string
+          description: Friendly name (`FullName` internally)
+        department:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+          description: Mobile phone number
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    User:
+      description: |
+        Full user representation as returned by `GET /me` and
+        `GET /admin/users/{id}`. Extends `UserBasic` with the detail-only
+        fields. For the client-scope directory at `GET /users/{id}` use
+        `UserCompact` instead.
+      allOf:
+        - $ref: "#/components/schemas/UserBasic"
+        - type: object
+          properties:
+            sam:
+              type: string
+              description: Windows SAM account name (DOMAIN\username)
+            upn:
+              type: string
+              description: User principal name (user@domain.local)
+            dn:
+              type: string
+              description: Distinguished name (AD)
+            objectId:
+              type: string
+              description: AD objectId (GUID)
+            disabled:
+              type: boolean
+            must_change_pass:
+              type: boolean
+            cannot_change_pass:
+              type: boolean
+            roles:
+              type: array
+              items:
+                type: string
+                enum:
+                  - super_admin
+                  - server_admin
+                  - db_admin
+                  - user_admin
+                  - group_admin
+                  - ad_operator
+                  - log_reader
+              description: Server-level roles granted to this user
+            member_of:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: IDs of groups this user belongs to
+            last_login:
+              type: string
+              format: date-time
+              readOnly: true
+            passkeys:
+              type: array
+              items:
+                $ref: "#/components/schemas/Credential"
+              readOnly: true
+              description: Registered passkeys for this user (compact representation, public key not exposed)
+
+    # --- Groups ---
+    GroupBasic:
+      type: object
+      description: |
+        Fields returned for a group in EVERY context -- both the detail
+        response (`GET /admin/groups/{id}`) and the list response
+        (`GET /admin/groups`). This is the output of the server's
+        `SaveGroupToJSON` with `AFullRepresentation=False`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+        description:
+          type: string
+        department:
+          type: string
+        email:
+          type: string
+        disabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    Group:
+      description: |
+        Full group representation as returned by `GET /admin/groups/{id}`.
+        Extends `GroupBasic` with the detail-only fields. For the
+        client-scope directory use `GroupCompact` instead.
+      allOf:
+        - $ref: "#/components/schemas/GroupBasic"
+        - type: object
+          properties:
+            dn:
+              type: string
+              description: Distinguished name (AD)
+            objectId:
+              type: string
+              description: AD objectId (GUID)
+            ad_sync:
+              type: boolean
+              description: Whether this group is synchronized with Active Directory
+            member_of:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: IDs of parent groups this group belongs to
+            members:
+              type: array
+              items:
+                type: string
+                format: uuid
+              readOnly: true
+              description: Calculated list of user/group IDs that are members of this group
+            admins:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: User IDs designated as administrators of this group
+
+    # --- Alerts ---
+    AlertBasic:
+      type: object
+      description: |
+        Fields returned for an alert in EVERY context -- both the detail
+        response (`GET /admin/alerts/{id}`) and the list response
+        (`GET /admin/alerts`). Output of the server's `SaveAlertToJSON`
+        with `AFullRepresentation=False`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          description: Server-generated human-readable name
+        type:
+          type: string
+          description: Event type identifier (e.g. `user_login`, `db_size_changes`)
+        notes:
+          type: string
+          description: Free-form notes included in the notification body
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    Alert:
+      description: |
+        Full alert representation returned by `GET /admin/alerts/{id}`.
+        Extends `AlertBasic` with recipient list and the per-database /
+        per-user / per-entry scope filters. When an event matching `type`
+        occurs, the server sends an email to each address in
+        `recipients`. Scope can be narrowed to specific databases,
+        users, or entries via the `filter_by_*` / `*_ids` pairs.
+      allOf:
+        - $ref: "#/components/schemas/AlertBasic"
+        - type: object
+          properties:
+            recipients:
+              type: array
+              items:
+                type: string
+                format: email
+              description: Email addresses to notify (validated on write)
+            filter_by_databases:
+              type: boolean
+            database_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+            filter_by_users:
+              type: boolean
+            user_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+            filter_by_entries:
+              type: boolean
+            entry_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+
+    # --- Secrets ---
+    SecretBasic:
+      type: object
+      description: |
+        Fields returned for a secret in EVERY context -- both detail
+        (`GET /secrets/{id}`, `GET /admin/secrets/{id}`) and list
+        (`GET /secrets`, `GET /admin/secrets`). Output of the server's
+        `SaveSecretToJSON` with `AFullRepresentation=False`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        type:
+          type: string
+          description: Secret type (discriminator)
+        status:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+            - revoked
+            - consumed
+            - expired
+          description: Current lifecycle state
+          readOnly: true
+        protocol:
+          type: string
+          enum:
+            - https
+            - pd-server
+          description: |
+            URL scheme to use when generating the link:
+            `https` (browser) or `pd-server` (native client).
+        author:
+          type: string
+          format: uuid
+          readOnly: true
+        database_id:
+          type: string
+          format: uuid
+        database_name:
+          type: string
+          readOnly: true
+        entry_id:
+          type: string
+          format: uuid
+        entry_path:
+          type: string
+          readOnly: true
+          description: Human-readable path of the shared entry within its database
+        entry_user:
+          type: string
+          readOnly: true
+        entry_type:
+          type: string
+          readOnly: true
+          description: Type of the shared entry (e.g. `password`, `document`, `credit_card`)
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Secret:
+      description: |
+        Full secret representation returned by detail endpoints. Extends
+        `SecretBasic` with the approval workflow, quorum settings, and
+        the bearer UUIDs (`open_uuid`, `approve_uuid`) that must be
+        treated as credentials. Sub-commands (`/approve`, `/reject`,
+        `/revoke`) are separate endpoints.
+      allOf:
+        - $ref: "#/components/schemas/SecretBasic"
+        - type: object
+          properties:
+            notes:
+              type: string
+            access_max:
+              type: integer
+              description: Maximum number of times the secret may be accessed (0 = unlimited)
+            access_count:
+              type: integer
+              readOnly: true
+              description: How many times the secret has been accessed
+            include_totp:
+              type: boolean
+              description: Include a TOTP seed in the shared payload
+            approval_required:
+              type: boolean
+            quorum_n:
+              type: integer
+              description: Required number of approvers in the M-of-N scheme
+            quorum_m:
+              type: integer
+              description: Total number of approvers in the M-of-N scheme
+            require_2fa:
+              type: boolean
+              description: Recipient must complete 2FA before receiving the secret
+            recipient_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: User IDs of the recipients
+            approver_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: User IDs of designated approvers
+            approved_by:
+              type: array
+              items:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                  at:
+                    type: string
+                    format: date-time
+              readOnly: true
+            rejected_by:
+              type: array
+              items:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                  at:
+                    type: string
+                    format: date-time
+              readOnly: true
+            open_uuid:
+              type: string
+              readOnly: true
+              description: Bearer token embedded in the recipient-access URL
+            approve_uuid:
+              type: string
+              readOnly: true
+              description: Bearer token embedded in the approver URL
+
+    # --- Common ---
+    CustomField:
+      type: object
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+        type:
+          type: string
+          description: "Field type (text, password, url, email, date, etc.)"
+
+    PaginatedResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: {}
+          description: Array of result items
+        total:
+          type: integer
+          description: Total number of items matching the query
+        offset:
+          type: integer
+          description: Number of items skipped
+        limit:
+          type: integer
+          description: Maximum number of items returned
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              description: |
+                Machine-readable error code. Normally equals the HTTP status
+                code, but MAY carry an application sub-code (>= 1000) that
+                conveys a finer reason while the HTTP status remains the
+                authority for the response class. Currently the only such
+                sub-code is `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` --
+                wrong or missing second password) returned with HTTP `403`.
+                Match the numeric code, never the localized message.
+            message:
+              type: string
+              description: Human-readable error message
+
+    # -------------------------------------------------------------------------
+    # Self-Service (/me/...)
+    # -------------------------------------------------------------------------
+    ProfileUpdateRequest:
+      type: object
+      description: |
+        Partial update. Send only the fields you want to change. Unknown
+        fields are rejected with 400.
+      properties:
+        display_name:
+          type: string
+          description: Friendly name ("FullName" internally)
+        department:
+          type: string
+        phone:
+          type: string
+
+    PasswordChangeRequest:
+      type: object
+      required:
+        - current_password
+        - new_password
+      properties:
+        current_password:
+          type: string
+          description: The caller's current password (must match the stored hash)
+        new_password:
+          type: string
+          description: The new password; must satisfy the server's password policy
+
+    # -------------------------------------------------------------------------
+    # Passkeys / WebAuthn
+    # -------------------------------------------------------------------------
+    CredentialBasic:
+      type: object
+      description: |
+        Registered WebAuthn credential (passkey) as returned in lists
+        (`GET /me/passkeys`, `GET /admin/users/{user_id}/passkeys`) and
+        embedded inside `User.passkeys`. Output of the server's
+        `SaveCredentialToJSON` with `AFullRepresentation=False`.
+      properties:
+        id:
+          type: string
+          description: Server-issued credential identifier
+          readOnly: true
+        name:
+          type: string
+          description: Friendly name; editable via `PATCH /me/passkeys/{id}`
+        transports:
+          type: array
+          items:
+            type: string
+            enum:
+              - usb
+              - nfc
+              - ble
+              - internal
+              - hybrid
+          description: Authenticator transports supported by this credential
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        last_used_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    Credential:
+      description: |
+        Full WebAuthn credential representation. Extends `CredentialBasic`
+        with the technical fields that are only useful in detail views.
+      allOf:
+        - $ref: "#/components/schemas/CredentialBasic"
+        - type: object
+          properties:
+            type:
+              type: string
+              description: Credential type (typically "public-key")
+              readOnly: true
+            alg:
+              type: integer
+              description: COSE algorithm identifier (e.g., -7 = ES256, -257 = RS256)
+              readOnly: true
+            sign_count:
+              type: integer
+              description: Authenticator signature counter (monotonic)
+              readOnly: true
+
+    WebAuthnRegistrationBeginResponse:
+      type: object
+      description: |
+        Passes through the W3C `PublicKeyCredentialCreationOptions`
+        structure plus a server-issued `session_id` used to correlate the
+        subsequent `/me/passkeys/complete` call.
+      properties:
+        session_id:
+          type: string
+          description: Opaque session identifier (short-lived, single-use)
+        publicKey:
+          type: object
+          description: W3C PublicKeyCredentialCreationOptions (JSON form)
+          additionalProperties: true
+
+    WebAuthnRegistrationCompleteRequest:
+      type: object
+      description: |
+        Authenticator attestation response (as produced by
+        `navigator.credentials.create(...)`), plus `session_id` from the
+        preceding `/me/passkeys/begin` call.
+      required:
+        - session_id
+      properties:
+        session_id:
+          type: string
+        id:
+          type: string
+          description: Base64url-encoded credential ID
+        rawId:
+          type: string
+        type:
+          type: string
+          enum:
+            - public-key
+        response:
+          type: object
+          description: Authenticator attestation response
+          additionalProperties: true
+        name:
+          type: string
+          description: Optional friendly name for the new credential
+
+    WebAuthnAssertionBeginRequest:
+      type: object
+      required:
+        - user
+      properties:
+        user:
+          type: string
+          description: Username
+        scope:
+          type: string
+          enum:
+            - client
+            - admin
+          default: client
+
+    WebAuthnAssertionBeginResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+        publicKey:
+          type: object
+          description: W3C PublicKeyCredentialRequestOptions (JSON form)
+          additionalProperties: true
+
+    WebAuthnAssertionCompleteRequest:
+      type: object
+      required:
+        - session_id
+      properties:
+        session_id:
+          type: string
+        id:
+          type: string
+        rawId:
+          type: string
+        type:
+          type: string
+          enum:
+            - public-key
+        response:
+          type: object
+          additionalProperties: true
+
+    # -------------------------------------------------------------------------
+    # API tokens (issued by Server Manager; read-only surface for now)
+    # -------------------------------------------------------------------------
+    ApiToken:
+      type: object
+      description: |
+        Long-lived API token descriptor. Emitted when listing tokens in
+        the Server Manager. The token material itself (`access_token`)
+        is returned only once at creation time and never again.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Record identifier; also used as the JWT `jti` claim
+          readOnly: true
+        name:
+          type: string
+          description: Friendly name (e.g. "CI pipeline")
+        user_id:
+          type: string
+          format: uuid
+          description: Owning user
+        admin_scope:
+          type: boolean
+          description: If true, the token authorizes admin-scope requests
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+        lastused_at:
+          type: string
+          format: date-time
+          readOnly: true
+        revoked:
+          type: boolean
+
+    # -------------------------------------------------------------------------
+    # Compact user / group directory
+    # -------------------------------------------------------------------------
+    UserCompact:
+      type: object
+      description: |
+        Compact user record returned by the client-scope directory
+        (`GET /users`, `GET /users/{id}`). Output of the server's
+        `SaveUserToJSONCompact`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+        display_name:
+          type: string
+        department:
+          type: string
+        email:
+          type: string
+        disabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    GroupCompact:
+      type: object
+      description: |
+        Compact group record returned by the client-scope directory
+        (`GET /groups`, `GET /groups/{id}`). Output of the server's
+        `SaveGroupToJSONCompact`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+        description:
+          type: string
+        department:
+          type: string
+        email:
+          type: string
+        disabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    # -------------------------------------------------------------------------
+    # Folder/entry children list
+    # -------------------------------------------------------------------------
+    ChildrenList:
+      type: object
+      description: |
+        Paginated list of a folder's (or the database root's) direct
+        children. `data` contains a heterogeneous mix of folders and
+        entries in their basic (list) representation, distinguished by
+        the `type` field. `path` is the ancestor breadcrumb trail from the
+        database root down to (but not including) the current folder; it is
+        an empty array at the root. The envelope contains only `path`,
+        `data`, `total`, `offset`, and `limit` -- there are no top-level
+        `name`, `parent`, or `has_second_pass` fields.
+      properties:
+        path:
+          type: array
+          readOnly: true
+          description: Ancestor breadcrumb trail (root-first); empty at the root.
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+        data:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/FolderBasic"
+              - $ref: "#/components/schemas/Entry"
+            discriminator:
+              propertyName: type
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer

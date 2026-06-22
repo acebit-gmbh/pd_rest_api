@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {{ super() }}
+  <style>
+    .md-header__inner::after {
+      content: "";
+      flex-shrink: 0;
+      width: 9rem;
+      height: 2rem;
+      margin-left: 0.6rem;
+      background: url('{{ "assets/images/password-depot-logo.svg" | url }}') no-repeat center right;
+      background-size: contain;
+      filter: brightness(0) invert(1);
+    }
+    @media screen and (max-width: 76.1875em) {
+      .md-header__inner::after {
+        display: none;
+      }
+    }
+  </style>
+{% endblock %}

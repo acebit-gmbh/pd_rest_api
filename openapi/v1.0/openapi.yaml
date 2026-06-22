@@ -1,0 +1,965 @@
+openapi: 3.0.3
+info:
+  title: Password Depot Enterprise Server REST API
+  description: |
+    RESTful HTTPS interface for Password Depot Enterprise Server.
+
+    ## Authentication
+    All endpoints (except `/login`) require the following HTTP headers:
+    - `access_token` -- Access token obtained from the login endpoint
+    - `client_id` -- Client identifier returned by the login endpoint
+
+    Tokens expire after **10 minutes** of inactivity.
+
+    ## Base URL
+    `https://<YOUR_SERVER>:8714/v1.0/`
+
+    ## Entry Icons
+    Entry icons are served outside the API version prefix at
+    `https://<YOUR_SERVER>:8714/file/<icon_filename>` (no authentication required).
+  version: "1.0"
+  contact:
+    name: AceBIT GmbH
+    url: https://www.password-depot.de
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://{server}:{port}/v1.0
+    description: Password Depot Enterprise Server
+    variables:
+      server:
+        default: localhost
+        description: Server hostname or IP address
+      port:
+        default: "8714"
+        description: REST service port
+
+paths:
+  /login:
+    post:
+      operationId: login
+      summary: Authenticate user
+      description: |
+        Authenticates a user and returns an access token and client ID for subsequent requests.
+
+        Supports three authentication methods:
+        - **Standard authentication** -- username and password
+        - **Windows authentication** -- Windows domain credentials
+        - **OIDC/Azure** -- identity provider token
+
+        If two-factor authentication is enabled, the server may respond with:
+        - `459` -- TFA not activated (returns QR code URL for initial setup)
+        - `460` -- TFA code required (user must provide 6-digit code)
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            examples:
+              standard:
+                summary: Standard login
+                value:
+                  user: "admin"
+                  pass: "my_password"
+              with_2fa:
+                summary: Login with 2FA code
+                value:
+                  user: "admin"
+                  pass: "my_password"
+                  tfacode: "123456"
+              oidc:
+                summary: OIDC/Azure login
+                value:
+                  idp: "azure-provider-id"
+                  id_token: "eyJhbGciOiJSUzI1NiIs..."
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+              example:
+                access_token: "a1b2c3d4e5f6..."
+                client_id: "client-uuid-here"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: 401
+                error: "Invalid username or password"
+        "459":
+          description: TFA not activated -- QR code URL returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "459"
+                error: "https://127.0.0.1/v1.0/temp/as123453456.png"
+        "460":
+          description: TFA code required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "460"
+                error: "Please enter the verification code from your Authenticator app."
+
+  /logout:
+    post:
+      operationId: logout
+      summary: End session
+      description: Logs out the current user and invalidates the access token.
+      tags:
+        - Authentication
+      parameters:
+        - $ref: "#/components/parameters/ClientId"
+      responses:
+        "200":
+          description: Logout successful
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /oidc:
+    get:
+      operationId: listOidcProviders
+      summary: List OIDC/Azure identity providers
+      description: |
+        Returns the list of OIDC and Azure identity providers configured on the server.
+        Use this to discover available providers before performing an OIDC login via `/login`.
+        No authentication is required.
+      tags:
+        - Authentication
+      responses:
+        "200":
+          description: List of configured identity providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OidcProvider"
+              example:
+                - id: "azure-tenant-id"
+                  provider_class: "Azure"
+                  display_name: "Contoso Azure AD"
+                  discovery_endpoint: "https://login.microsoftonline.com/tenant-id/v2.0/.well-known/openid-configuration"
+                  client_id: "app-client-id"
+                  redirect_uri: "https://your-app/callback"
+                  scope: "openid profile email"
+                  response_type: "id_token"
+
+  /list:
+    get:
+      operationId: listDatabasesOrEntries
+      summary: List databases or entries
+      description: |
+        Without query parameters, returns a list of all databases available to the authenticated user.
+
+        With the `db` parameter, returns entries in the root folder of the specified database.
+
+        With both `db` and `folder` parameters, returns entries in the specified folder.
+      tags:
+        - Databases
+        - Entries
+      parameters:
+        - $ref: "#/components/parameters/AccessToken"
+        - $ref: "#/components/parameters/ClientId"
+        - name: db
+          in: query
+          description: Database fingerprint (UUID). If omitted, lists databases.
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: folder
+          in: query
+          description: Folder fingerprint (UUID). Requires `db` parameter. If omitted, lists root folder.
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/DatabaseListResponse"
+                  - $ref: "#/components/schemas/EntryListResponse"
+              examples:
+                databases:
+                  summary: Database list
+                  value:
+                    databases:
+                      - name: "db_1.pswe"
+                        fingerprint: "550e8400-e29b-41d4-a716-446655440000"
+                        date: "2020-12-09T11:12:45.202Z"
+                        rights: "RMIDCFAPE-Y-HL"
+                        reasondelete: "1"
+                    infoclasses: "000007FF"
+                    policyforce: "1"
+                    policyminlength: "10"
+                    policyincludeatleast: "0"
+                    policymingroups: "3"
+                    policyselectedgroups: "15"
+                entries:
+                  summary: Entry list
+                  value:
+                    name: "New Group"
+                    parent: "550e8400-e29b-41d4-a716-446655440000"
+                    entries:
+                      - name: "Example Entry"
+                        fingerprint: "660e8400-e29b-41d4-a716-446655440001"
+                        rights: "RMID"
+                        itemclass: "0"
+                        login: "user1"
+                        url: "http://example.com"
+                        date: "2021-07-05T10:39:50.000Z"
+                        icon: "ico0.png"
+                        hash: ""
+                    infoclasses: "000007FF"
+                    reasondelete: "1"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /read:
+    get:
+      operationId: readEntry
+      summary: Read entry attributes
+      description: |
+        Returns all fields of the specified entry, including custom fields and TANs.
+      tags:
+        - Entries
+      parameters:
+        - $ref: "#/components/parameters/AccessToken"
+        - $ref: "#/components/parameters/ClientId"
+        - name: db
+          in: query
+          description: Database fingerprint (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: entry
+          in: query
+          description: Entry fingerprint (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Entry details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /search:
+    get:
+      operationId: searchEntries
+      summary: Search entries
+      description: |
+        Searches for entries matching the query string within the specified database.
+        Optionally restricted to a specific parent folder.
+        Returns results in the same format as the entry list endpoint.
+      tags:
+        - Search
+      parameters:
+        - $ref: "#/components/parameters/AccessToken"
+        - $ref: "#/components/parameters/ClientId"
+        - name: db
+          in: query
+          description: Database fingerprint (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: query
+          in: query
+          description: Search term
+          required: true
+          schema:
+            type: string
+        - name: parent
+          in: query
+          description: Parent folder fingerprint (UUID) to restrict search scope
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /add:
+    put:
+      operationId: createEntry
+      summary: Create a new entry
+      description: |
+        Creates a new entry in the specified database and folder.
+        If the `parent` parameter is omitted, the entry is added to the root folder.
+        Fields such as `fingerprint` and `icon` are generated by the server.
+      tags:
+        - Entries
+      parameters:
+        - $ref: "#/components/parameters/AccessToken"
+        - $ref: "#/components/parameters/ClientId"
+        - name: db
+          in: query
+          description: Database fingerprint (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: parent
+          in: query
+          description: Parent folder fingerprint (UUID). Defaults to root folder.
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryCreateRequest"
+            example:
+              name: "My New Entry"
+              login: "user@example.com"
+              password: "secure_password"
+              url: "https://example.com"
+      responses:
+        "200":
+          description: Entry created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /modify:
+    post:
+      operationId: modifyEntry
+      summary: Modify an existing entry
+      description: |
+        Updates attributes of an existing entry. Submit a JSON object with the
+        attributes to update, using the same structure as returned by the read endpoint.
+      tags:
+        - Entries
+      parameters:
+        - $ref: "#/components/parameters/AccessToken"
+        - $ref: "#/components/parameters/ClientId"
+        - name: db
+          in: query
+          description: Database fingerprint (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: entry
+          in: query
+          description: Entry fingerprint (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryDetail"
+      responses:
+        "200":
+          description: Entry updated successfully
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /delete:
+    delete:
+      operationId: deleteEntries
+      summary: Delete entries
+      description: |
+        Deletes one or more entries from the specified database.
+        A reason for deletion can optionally be provided.
+      tags:
+        - Entries
+      parameters:
+        - $ref: "#/components/parameters/AccessToken"
+        - $ref: "#/components/parameters/ClientId"
+        - name: db
+          in: query
+          description: Database fingerprint (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteRequest"
+            example:
+              reason: "No longer needed"
+              entries:
+                - "550e8400-e29b-41d4-a716-446655440000"
+                - "660e8400-e29b-41d4-a716-446655440001"
+      responses:
+        "200":
+          description: Entries deleted successfully
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /move:
+    post:
+      operationId: moveEntries
+      summary: Move entries to another folder
+      description: |
+        Moves one or more entries to a target folder within the same database.
+      tags:
+        - Entries
+      parameters:
+        - $ref: "#/components/parameters/AccessToken"
+        - $ref: "#/components/parameters/ClientId"
+        - name: db
+          in: query
+          description: Database fingerprint (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveRequest"
+            example:
+              target: "770e8400-e29b-41d4-a716-446655440002"
+              entries:
+                - "550e8400-e29b-41d4-a716-446655440000"
+                - "660e8400-e29b-41d4-a716-446655440001"
+      responses:
+        "200":
+          description: Entries moved successfully
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    AccessToken:
+      name: access_token
+      in: header
+      description: Access token obtained from the login endpoint
+      required: true
+      schema:
+        type: string
+    ClientId:
+      name: client_id
+      in: header
+      description: Client ID obtained from the login endpoint
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    OidcProvider:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique provider identifier. Pass as `idp` in the login request.
+        provider_class:
+          type: string
+          description: Provider type (e.g., "Azure", "OIDC")
+        display_name:
+          type: string
+          description: Human-readable name for display in a login UI
+        discovery_endpoint:
+          type: string
+          format: uri
+          description: OpenID Connect discovery URL (.well-known/openid-configuration)
+        client_id:
+          type: string
+          description: OAuth 2.0 client ID registered with the provider
+        redirect_uri:
+          type: string
+          format: uri
+          description: Redirect URI configured for the OAuth flow
+        scope:
+          type: string
+          description: Space-separated list of OAuth scopes
+          example: "openid profile email"
+        response_type:
+          type: string
+          description: Space-separated OAuth response types (code, id_token, token)
+          example: "id_token"
+
+    LoginRequest:
+      type: object
+      description: Login credentials
+      properties:
+        user:
+          type: string
+          description: Username (for standard/Windows authentication)
+        pass:
+          type: string
+          description: Password (for standard/Windows authentication)
+        tfacode:
+          type: string
+          description: Optional 6-digit two-factor authentication code
+          pattern: "^[0-9]{6}$"
+        idp:
+          type: string
+          description: Identity Provider ID (for OIDC/Azure authentication)
+        id_token:
+          type: string
+          description: OIDC/Azure identity token
+
+    LoginResponse:
+      type: object
+      required:
+        - access_token
+        - client_id
+      properties:
+        access_token:
+          type: string
+          description: Access token for authenticating subsequent requests. Expires after 10 minutes of inactivity.
+        client_id:
+          type: string
+          description: Unique client identifier for the session
+
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - error
+      properties:
+        code:
+          oneOf:
+            - type: integer
+            - type: string
+          description: HTTP error code
+        error:
+          type: string
+          description: Human-readable error description
+
+    DatabaseListResponse:
+      type: object
+      properties:
+        databases:
+          type: array
+          items:
+            $ref: "#/components/schemas/DatabaseInfo"
+        infoclasses:
+          type: string
+          description: Bitmask of available information classes
+        policyforce:
+          type: string
+          description: Whether password policy is enforced ("1" = yes)
+        policyminlength:
+          type: string
+          description: Minimum password length required by policy
+        policyincludeatleast:
+          type: string
+          description: Minimum number of character types to include
+        policymingroups:
+          type: string
+          description: Minimum number of character groups
+        policyselectedgroups:
+          type: string
+          description: Bitmask of selected character groups
+
+    DatabaseInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Database filename
+          example: "db_1.pswe"
+        fingerprint:
+          type: string
+          format: uuid
+          description: Unique database identifier
+        date:
+          type: string
+          format: date-time
+          description: Last modification date (ISO 8601)
+        rights:
+          type: string
+          description: User permission string for this database
+          example: "RMIDCFAPE-Y-HL"
+        reasondelete:
+          type: string
+          description: Whether deletion reason is required ("1" = yes)
+
+    EntryListResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Current folder name
+        parent:
+          type: string
+          format: uuid
+          description: Parent folder fingerprint
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntrySummary"
+        infoclasses:
+          type: string
+          description: Bitmask of available information classes
+        reasondelete:
+          type: string
+          description: Whether deletion reason is required
+
+    EntrySummary:
+      type: object
+      description: Summary entry object returned in list and search results.
+      properties:
+        name:
+          type: string
+          description: Entry name
+        fingerprint:
+          type: string
+          format: uuid
+          description: Unique entry identifier
+        rights:
+          type: string
+          description: User permission string for this entry
+          example: "RMID"
+        itemclass:
+          type: string
+          description: 'Entry type: "-1" = folder, "0" = password entry. REST API v1.0 only operates on these two types.'
+        login:
+          type: string
+          description: Login/username stored in the entry
+        url:
+          type: string
+          description: URL associated with the entry
+        importance:
+          type: string
+          description: Importance level (numeric)
+        date:
+          type: string
+          format: date-time
+          description: Last modification date (ISO 8601)
+        icon:
+          type: string
+          description: Icon filename (available at /file/ endpoint)
+          example: "ico0.png"
+        hash:
+          type: string
+          description: Second password hash (empty if not set)
+
+    EntryDetail:
+      type: object
+      description: |
+        Full entry object with all attributes as returned by the read endpoint.
+        May include custom fields, TANs, and history.
+      properties:
+        name:
+          type: string
+          description: Entry display name
+        fingerprint:
+          type: string
+          format: uuid
+          description: Unique entry identifier
+        itemclass:
+          type: string
+          description: 'Entry type: "-1" = folder, "0" = password entry'
+        login:
+          type: string
+          description: Login/username
+        pass:
+          type: string
+          description: Decrypted password
+        url:
+          type: string
+          description: Primary URL
+        importance:
+          type: string
+          description: Importance level (numeric)
+        date:
+          type: string
+          format: date-time
+          description: Last modification date (ISO 8601)
+        comment:
+          type: string
+          description: Notes/comments
+        expirydate:
+          type: string
+          description: Expiration date (ISO 8601, empty if not set)
+        tags:
+          type: string
+          description: Comma-separated tags
+        author:
+          type: string
+          description: Entry author/creator
+        category:
+          type: string
+          description: Entry category
+        icon:
+          type: string
+          description: Icon filename
+        hash:
+          type: string
+          description: Second password hash (empty if no second password)
+        secondpass:
+          type: string
+          description: Second password (write-only, returned empty)
+        template:
+          type: string
+          description: Auto-complete template
+        acm:
+          type: string
+          description: Auto-complete mode (numeric)
+        paramstr:
+          type: string
+          description: Additional parameters
+        loginid:
+          type: string
+          description: HTML field ID for login auto-fill
+        passid:
+          type: string
+          description: HTML field ID for password auto-fill
+        donotaddon:
+          type: string
+          description: Disable browser addon ("0" or "1")
+        markassafe:
+          type: string
+          description: Mark URL as safe ("0" or "1")
+        safemode:
+          type: string
+          description: Safe mode enabled ("0" or "1")
+        istemplate:
+          type: string
+          description: Entry is a template ("0" or "1") (since v17.0.0)
+        infotemplate:
+          type: string
+          description: Custom template identifier (since v17.0.0)
+        usetabs:
+          type: string
+          description: Number of tabs used (since v17.0.0)
+        islink:
+          type: string
+          description: Entry is a link to another entry ("0" or "1") (since v17.2.0)
+        linkeditem:
+          type: string
+          description: Fingerprint of the linked entry (since v17.2.0)
+        warnmsg:
+          type: string
+          description: Warning message (since v16.0.0)
+        warnlvl:
+          type: string
+          description: Warning severity level (since v16.0.0)
+        warnverify:
+          type: string
+          description: Verification text user must type (since v16.0.0)
+        serverrqrd:
+          type: string
+          description: Server connection required ("0" or "1") (since v16.0.0)
+        urls:
+          type: array
+          items:
+            type: string
+          description: Additional URLs
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomField"
+          description: Custom fields
+        tans:
+          type: array
+          items:
+            $ref: "#/components/schemas/TAN"
+          description: Transaction Authentication Numbers
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntryDetail"
+          description: Previous versions of the entry (since v17.2.2)
+      additionalProperties: true
+
+    CustomField:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Field name
+        value:
+          type: string
+          description: Field value
+
+    TAN:
+      type: object
+      properties:
+        number:
+          type: string
+          description: TAN sequence number
+        value:
+          type: string
+          description: TAN value
+        used:
+          type: string
+          description: Date when used (ISO 8601, empty if unused)
+        amount:
+          type: string
+          description: Monetary amount
+        ccode:
+          type: string
+          description: Currency code
+        comment:
+          type: string
+          description: Comment
+
+    EntryCreateRequest:
+      type: object
+      description: |
+        Entry attributes for creation. Fields like `fingerprint` and `icon` are
+        generated server-side and should not be included.
+        Accepts the same fields as EntryDetail (except fingerprint and icon).
+      properties:
+        name:
+          type: string
+          description: Entry name
+        login:
+          type: string
+          description: Login/username
+        pass:
+          type: string
+          description: Password
+        url:
+          type: string
+          description: Associated URL
+        comment:
+          type: string
+          description: Notes/comments
+        importance:
+          type: string
+          description: Importance level
+        tags:
+          type: string
+          description: Comma-separated tags
+        category:
+          type: string
+          description: Category
+      additionalProperties: true
+
+    DeleteRequest:
+      type: object
+      required:
+        - entries
+      properties:
+        reason:
+          type: string
+          description: Reason for deletion
+        entries:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: List of entry fingerprints to delete
+
+    MoveRequest:
+      type: object
+      required:
+        - target
+        - entries
+      properties:
+        target:
+          type: string
+          format: uuid
+          description: Target folder fingerprint
+        entries:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: List of entry fingerprints to move
+
+  responses:
+    Unauthorized:
+      description: Invalid credentials or expired token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 401
+            error: "Unauthorized"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 403
+            error: "Forbidden"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 404
+            error: "Not Found"
+
+tags:
+  - name: Authentication
+    description: Login, logout, and session management
+  - name: Databases
+    description: Database listing and information
+  - name: Entries
+    description: CRUD operations on password entries
+  - name: Search
+    description: Search across databases
