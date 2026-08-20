@@ -119,7 +119,22 @@ Browse entries within a database or folder.
 | `importance` | string | Importance level (numeric) |
 | `date` | string (ISO 8601) | Last modification timestamp |
 | `icon` | string | Icon filename, available at `https://<server>:8714/file/<icon>` |
-| `hash` | string | Second password hash (empty if not set) |
+| `hash` | string | Whether a second password protects the item: `set` when one is configured, empty when not. **Since Server 20.0.0 this is a marker, not the hash itself** — see the note below |
+
+!!! note "`hash` no longer carries the verifier"
+    Before Server 20.0.0 this field contained the second-password hash
+    itself. That value is an offline-crackable verifier and no client needs
+    it — the second password is sent to the server, which checks it — so the
+    field now reports only whether one is set:
+
+    | Value | Meaning |
+    |-------|---------|
+    | `""` | no second password on this item |
+    | `"set"` | a second password is required to read `pass` |
+
+    Test it for emptiness, which is all the field was ever documented to
+    mean. Writing the marker back in an update is a no-op: to change or
+    clear a second password, send `secondpass` as before.
 
 ---
 
@@ -248,7 +263,7 @@ Returns all attributes of a specific entry, including the password, custom field
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `hash` | string | Second password hash (empty if not protected by second password) |
+| `hash` | string | Whether a second password protects the item: `set` when one is configured, empty when not. **Since Server 20.0.0 this is a marker, not the hash itself** — see the note below |
 | `secondpass` | string | Second password (write-only, returned empty for security) |
 
 #### Auto-Complete and Template Fields
