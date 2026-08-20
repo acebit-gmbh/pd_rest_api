@@ -57,8 +57,8 @@ Includes all compact fields plus:
 | `approver_ids` | array of UUIDs | Yes | User IDs designated as approvers |
 | `approved_by` | array of objects | No | List of received approvals (read-only, see below) |
 | `rejected_by` | array of objects | No | List of received rejections (read-only, see below) |
-| `open_uuid` | string | No | UUID hash used to construct the open link (read-only) |
-| `approve_uuid` | string | No | UUID hash used to construct the approve link (read-only) |
+| `open_uuid` | string | No | Bearer token for the open link (read-only). Returned only to the author and to the users in `recipient_ids` — see [Who receives the link tokens](#who-receives-the-link-tokens) |
+| `approve_uuid` | string | No | Bearer token for the approve link (read-only). Returned only to the author and to the users in `approver_ids` |
 
 **Approval/rejection entries:**
 
@@ -118,7 +118,32 @@ When a secret is created, the server generates two UUID hashes (`open_uuid` and 
 | `https` | `https://<server>:<port>/shared/<open_uuid>` | N/A (approval via API or binary client) |
 | `pd-server` | `pd-server://<server>:<port>/shared/open/<open_uuid>` | `pd-server://<server>:<port>/shared/approve/<approve_uuid>` |
 
-The `open_uuid` and `approve_uuid` are returned in the full representation. Clients construct the final URLs using the server hostname and port.
+The `open_uuid` and `approve_uuid` are returned in the full representation, but only to the callers each token is for. Clients construct the final URLs using the server hostname and port.
+
+### Who receives the link tokens
+
+!!! warning "These UUIDs are credentials"
+    `open_uuid` is a **bearer token**. Anyone holding it can redeem the secret
+    at the anonymous `/shared/` page — with no session, without being named in
+    `recipient_ids`, and without the access being attributable to a user
+    account. `approve_uuid` is the same for the approval step.
+
+    They are therefore returned only to the caller each token is for:
+
+    | Field | Returned to |
+    |-------|-------------|
+    | `open_uuid` | the secret's `author`, and the users named in `recipient_ids` |
+    | `approve_uuid` | the secret's `author`, and the users named in `approver_ids` |
+
+    Any other caller receives the secret's metadata with the token field simply
+    **absent** — including an administrator reading or listing secrets in the
+    admin scope. Approving or rejecting a secret does **not** return
+    `open_uuid`: an approver authorises somebody else's access, not their own.
+
+    Treat a missing field as "not for you", not as an error.
+
+    *Changed in Server 20.0.0.* Earlier releases returned both tokens to every
+    caller who could see the secret at all.
 
 ---
 
@@ -397,6 +422,13 @@ Returns the **full representation** of a specific secret. In client scope, the c
     "approve_uuid": "d8e9f490g77g7c97h9fc11ghh150443f"
 }
 ```
+
+!!! note "The two UUID fields depend on who is asking"
+    This example is the response the secret's **author** receives. An
+    approver sees the same object with `open_uuid` absent, and a caller who
+    is neither author, recipient nor approver — an administrator in the
+    admin scope, for instance — sees it with both fields absent. See
+    [Who receives the link tokens](#who-receives-the-link-tokens).
 
 ### Error Responses
 

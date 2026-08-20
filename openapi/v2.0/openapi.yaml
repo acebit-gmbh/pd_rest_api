@@ -3535,6 +3535,11 @@ components:
         the bearer UUIDs (`open_uuid`, `approve_uuid`) that must be
         treated as credentials. Sub-commands (`/approve`, `/reject`,
         `/revoke`) are separate endpoints.
+
+        Since Server 20.0.0 the two UUID fields are returned only to the
+        caller each one is for, and are ABSENT otherwise - including for
+        an approver and for an administrator using the admin scope. See
+        the field descriptions.
       allOf:
         - $ref: "#/components/schemas/SecretBasic"
         - type: object
@@ -3601,11 +3606,22 @@ components:
             open_uuid:
               type: string
               readOnly: true
-              description: Bearer token embedded in the recipient-access URL
+              description: >
+                Bearer token embedded in the recipient-access URL. Whoever
+                holds it can redeem the secret at the anonymous /shared/
+                page with no session, so since Server 20.0.0 it is returned
+                ONLY to the secret's author and to the users named in
+                `recipient_ids`; it is absent for every other caller,
+                including approvers and administrators. Approving or
+                rejecting a secret never returns it.
             approve_uuid:
               type: string
               readOnly: true
-              description: Bearer token embedded in the approver URL
+              description: >
+                Bearer token embedded in the approver URL. Since Server
+                20.0.0 it is returned ONLY to the secret's author and to
+                the users named in `approver_ids`; it is absent for every
+                other caller.
 
     # --- Common ---
     CustomField:
