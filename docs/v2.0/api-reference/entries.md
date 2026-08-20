@@ -501,7 +501,17 @@ Returns the **full representation** of a specific entry, including the password,
 |--------|-------------|
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (body `error.code` = `403`), **or** a missing/incorrect `X-Second-Password` for a protected entry (body `error.code` = `4031`) |
-| `404 Not Found` | Database or entry not found |
+| `404 Not Found` | Database or entry not found, **or** the entry is in the recycle bin |
+
+!!! note "Deleted entries are not addressable"
+    This API has no recycle bin: nothing lists it, no field names it, and a
+    deleted entry is not part of the model. Addressing one by its fingerprint
+    therefore returns `404 Not Found` - on this endpoint and on every other
+    `/entries/{id}` and `/folders/{id}` route - and a deleted entry cannot be
+    used as the target of a shared secret.
+
+    *Changed in Server 20.0.0.* Earlier releases resolved a deleted entry and
+    returned it like a live one, password included.
 
 !!! tip "Detecting a wrong second password"
     A wrong or missing second password returns `403` with the JSON body `error.code` = `4031` (`PD_ERRCODE_INVALID_SECOND_PASS`), distinct from a generic access-denied `403` (which keeps `error.code` = `403`). Detect the condition by checking `HTTP status == 403 && body.error.code == 4031` and re-prompt the user for the second password; on a generic `403`, do not re-prompt. Always match the numeric `error.code`, never the localized message.
