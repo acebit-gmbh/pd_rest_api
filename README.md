@@ -4,10 +4,16 @@ Official documentation and examples for the **Password Depot Enterprise Server**
 
 ## API Versions
 
-| Version | Status | Documentation | OpenAPI Spec |
-|---------|--------|---------------|--------------|
-| **v1.0** | Stable | [docs/v1.0/](docs/v1.0/) | [openapi/v1.0/openapi.yaml](openapi/v1.0/openapi.yaml) |
-| **v2.0** | In Development (Release-Candidate quality) | [docs/v2.0/](docs/v2.0/) | [openapi/v2.0/openapi.yaml](openapi/v2.0/openapi.yaml) |
+| Version | Status | Server support | Documentation | OpenAPI Spec |
+|---------|--------|----------------|---------------|--------------|
+| **v2.0** | **Recommended** | Server **19.2.0 and later**, including **20.0.0 and later** | [docs/v2.0/](docs/v2.0/) | [openapi/v2.0/openapi.yaml](openapi/v2.0/openapi.yaml) |
+| **v1.0** | Legacy | Server **19.x and earlier** -- **not available in 20.0.0 or later** | [docs/v1.0/](docs/v1.0/) | [openapi/v1.0/openapi.yaml](openapi/v1.0/openapi.yaml) |
+
+v1.0 is closed to new development and is documented here for the servers that
+still carry it. **Password Depot Enterprise Server 20.0.0 serves v2.0 only**, so
+an application still calling `/v1.0/...` has to move to v2.0 before the server it
+talks to is upgraded. The [v2.0 changelog](docs/v2.0/changelog.md) lists what
+changes between the two.
 
 ### What's New in v2.0
 
@@ -54,7 +60,7 @@ The [Password Depot Web Client](https://github.com/acebit-gmbh/web_client_2) is 
 
 ## Quick Links
 
-### v2.0 (preview)
+### v2.0 (recommended)
 
 | Resource | Description |
 |----------|-------------|
@@ -65,7 +71,7 @@ The [Password Depot Web Client](https://github.com/acebit-gmbh/web_client_2) is 
 | [PowerShell Examples](examples/v2.0/) | Helper module, login example, integration test suite |
 | [OpenAPI Spec](openapi/v2.0/openapi.yaml) | Machine-readable API definition |
 
-### v1.0 (stable)
+### v1.0 (legacy)
 
 | Resource | Description |
 |----------|-------------|
@@ -76,7 +82,7 @@ The [Password Depot Web Client](https://github.com/acebit-gmbh/web_client_2) is 
 
 ## Prerequisites
 
-- Password Depot Enterprise Server **v19.0.5 or later** for the v2.0 API; **v18.0.0 or later** for the v1.0 API
+- Password Depot Enterprise Server **v19.2.0 or later** for the v2.0 API. The v1.0 API is present in **19.x and earlier** only -- it was removed in **20.0.0**
 - REST Web Service enabled in Server Manager
 - Valid SSL certificate configured
 - Default port: **8714** (configurable via `pdserver.ini`)
@@ -187,7 +193,7 @@ To redirect the root URL to the default version, copy the `index.html` from the 
 ```html
 <!DOCTYPE html>
 <html>
-<head><meta http-equiv="refresh" content="0; url=v1.0/"></head>
+<head><meta http-equiv="refresh" content="0; url=v2.0/"></head>
 </html>
 ```
 
