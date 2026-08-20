@@ -2,9 +2,17 @@
 
 This guide walks you through enabling and configuring the REST web service on your Password Depot Enterprise Server.
 
+!!! warning "v1.0 is legacy and is not available on Server 20"
+
+    REST API v1.0 was **removed in Password Depot Enterprise Server 20.0.0**. A
+    Server 20 answers `/v1.0/...` with **410 Gone**. Use the **v2.0** API
+    instead - it is available from Server 19.2.0 onward, so an application can
+    be moved over before the server it talks to is upgraded. See the v2.0
+    documentation for setup and the changelog for what differs.
+
 ## Prerequisites
 
-- Password Depot Enterprise Server **v15.0.0** or later installed and running
+- Password Depot Enterprise Server **v15.0.0 through 19.x** installed and running
 - Access to the **Server Manager** application
 - Administrator privileges on the server
 
