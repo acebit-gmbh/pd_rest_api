@@ -356,7 +356,7 @@ paths:
             example:
               name: "My New Entry"
               login: "user@example.com"
-              password: "secure_password"
+              pass: "secure_password"
               url: "https://example.com"
       responses:
         "200":

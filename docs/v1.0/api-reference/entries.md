@@ -379,7 +379,7 @@ Creates a new entry in the specified database and folder.
       -d '{
         "name": "My New Entry",
         "login": "user@example.com",
-        "password": "secure_password",
+        "pass": "secure_password",
         "url": "https://example.com"
       }'
     ```
@@ -390,7 +390,7 @@ Creates a new entry in the specified database and folder.
     $newEntry = @{
         name     = "My New Entry"
         login    = "user@example.com"
-        password = "secure_password"
+        pass     = "secure_password"
         url      = "https://example.com"
     } | ConvertTo-Json
 
@@ -408,7 +408,7 @@ Creates a new entry in the specified database and folder.
     new_entry = {
         "name": "My New Entry",
         "login": "user@example.com",
-        "password": "secure_password",
+        "pass": "secure_password",
         "url": "https://example.com"
     }
 
@@ -463,7 +463,7 @@ Submit a JSON object with only the attributes you want to change, using the fiel
       -d '{
         "name": "Updated Entry Name",
         "login": "new_user@example.com",
-        "password": "new_secure_password"
+        "pass": "new_secure_password"
       }'
     ```
 
@@ -473,7 +473,7 @@ Submit a JSON object with only the attributes you want to change, using the fiel
     $updates = @{
         name     = "Updated Entry Name"
         login    = "new_user@example.com"
-        password = "new_secure_password"
+        pass     = "new_secure_password"
     } | ConvertTo-Json
 
     Invoke-RestMethod `
@@ -490,7 +490,7 @@ Submit a JSON object with only the attributes you want to change, using the fiel
     updates = {
         "name": "Updated Entry Name",
         "login": "new_user@example.com",
-        "password": "new_secure_password"
+        "pass": "new_secure_password"
     }
 
     requests.post(
