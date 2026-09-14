@@ -28,9 +28,10 @@ info:
 
     The `error.code` field normally equals the HTTP status, but may carry an
     application sub-code (`>= 1000`) for a finer machine-readable reason while
-    the HTTP status stays the authority for the response class. Currently the
-    only such sub-code is `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
-    missing second password) returned with HTTP `403`. Always match the numeric
+    the HTTP status stays the authority for the response class. The sub-codes
+    are `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or missing second
+    password) with HTTP `403`, and `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the
+    entry has no one-time code) with HTTP `404`. Always match the numeric
     code, never the localized message.
 
     ## Response headers
@@ -507,6 +508,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
+        - $ref: "#/components/parameters/SecondPasswordHeader"
       responses:
         "200":
           description: Full entry details
@@ -516,6 +518,14 @@ paths:
                 $ref: "#/components/schemas/Entry"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            `error.code` 4031: wrong or missing second password.
+            `error.code` 403: no permission, or the entry is sealed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
@@ -2227,6 +2237,68 @@ paths:
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
 
+  /databases/{db}/entries/{entry_id}/otp:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/EntryIdPath"
+    get:
+      operationId: getEntryOneTimeCode
+      tags:
+        - Entries
+      summary: Get the entry's current one-time code (TOTP)
+      description: |
+        Returns the current one-time code, computed on the server's clock from
+        the TOTP settings stored with the entry. The same rules apply as for
+        `getEntry`: read permission, no seal for the caller, and
+        `X-Second-Password` for a protected entry (for a link, also for the
+        entry it points to). For a link the code comes from the link's own TOTP
+        settings. Long-lived API tokens are refused. The seed is never
+        returned. Every call is audited as an entry access.
+      parameters:
+        - $ref: "#/components/parameters/SecondPasswordHeader"
+      responses:
+        "200":
+          description: The current one-time code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OneTimeCode"
+        "400":
+          description: "`X-Second-Password` longer than 1024 characters"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            `error.code` 4031: wrong or missing second password.
+            `error.code` 403: no permission (on the entry or a link's target),
+            sealed, long-lived API token, or an old form of second-password
+            protection the REST API cannot check.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: |
+            `error.code` 4041: the entry has no one-time code.
+            `error.code` 404: database or entry not found, or the entry is in
+            the recycle bin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          description: Entry type `encrypted_file` or `certificate`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 # =============================================================================
 # Components
 # =============================================================================
@@ -2352,6 +2424,18 @@ components:
       schema:
         type: string
         format: uuid
+
+    SecondPasswordHeader:
+      name: X-Second-Password
+      in: header
+      required: false
+      description: |
+        Base64 of the UTF-8 bytes of the second password. Required when the
+        entry - or, for a link, the entry it points to - is protected by a
+        second password; otherwise the request is refused with HTTP 403 and
+        `error.code` 4031.
+      schema:
+        type: string
 
     FolderIdPath:
       name: folder_id
@@ -2774,6 +2858,14 @@ components:
           type: boolean
           description: Whether this entry is protected by a second password
           readOnly: true
+        has_otp:
+          type: boolean
+          description: |
+            Whether a one-time code (TOTP) can be generated for this entry
+            (see getEntryOneTimeCode). For a link, from the link's own TOTP
+            settings. False when the caller may not read the entry. Absent on
+            servers older than 20.0.0.
+          readOnly: true
         icon:
           type: string
           readOnly: true
@@ -3096,6 +3188,46 @@ components:
           type: string
           format: uuid
           description: Target folder ID to move the entry into
+
+    OneTimeCode:
+      type: object
+      required:
+        - code
+        - digits
+        - period
+        - expires_in
+        - algorithm
+      properties:
+        code:
+          type: string
+          pattern: "^[0-9]+$"
+          description: The current code. A string, because leading zeros are part of it.
+          example: "012345"
+        digits:
+          type: integer
+          minimum: 4
+          maximum: 16
+          description: |
+            Length of the code. Codes of 10 or more digits are Password
+            Depot's own and not RFC 4226 codes; every Password Depot client
+            computes them the same way.
+          example: 6
+        period:
+          type: integer
+          minimum: 1
+          description: Seconds each code is valid.
+          example: 30
+        expires_in:
+          type: integer
+          minimum: 1
+          description: |
+            Whole seconds until the code changes, 1 to period; the time
+            actually left is between expires_in - 1 and expires_in seconds.
+          example: 12
+        algorithm:
+          type: string
+          enum: [SHA1, SHA256, SHA512]
+          example: SHA1
 
     # --- Search ---
     # Search reuses the Entry schema in paginated responses.
@@ -3665,9 +3797,11 @@ components:
                 Machine-readable error code. Normally equals the HTTP status
                 code, but MAY carry an application sub-code (>= 1000) that
                 conveys a finer reason while the HTTP status remains the
-                authority for the response class. Currently the only such
-                sub-code is `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` --
-                wrong or missing second password) returned with HTTP `403`.
+                authority for the response class. The sub-codes are `4031`
+                (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or missing second
+                password) with HTTP `403`, and `4041`
+                (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time
+                code) with HTTP `404`.
                 Match the numeric code, never the localized message.
             message:
               type: string

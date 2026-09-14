@@ -142,6 +142,13 @@ One of the most requested features from customers: **document entries now suppor
 - `GET /databases/{db}/entries/{id}/content` -- Download document content
 - `PUT /databases/{db}/entries/{id}/content` -- Upload or replace document content (max 64 MB)
 
+#### One-Time Codes (TOTP)
+
+- **`GET /databases/{db}/entries/{id}/otp`** returns the entry's current one-time code: `code`, `digits`, `period`, `expires_in` and `algorithm`, computed on the server's clock. The same permission, seal and `X-Second-Password` rules apply as for reading the entry, every call is audited as an entry access and fires "password accessed" alerts, and long-lived API tokens are refused. For a link, the code comes from the link's own TOTP settings. The seed is never returned.
+- **`has_otp`** (boolean, read-only) is part of every entry representation, compact and full, next to `has_second_pass`: whether a one-time code can be generated for the entry. It is `false` when you may not read the entry.
+
+An entry without a one-time code answers `404` with `error.code` = `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE`), distinct from the plain `404` for an entry that does not exist. A server without this feature omits `has_otp`.
+
 #### Type-Specific Fields
 
 Entry types other than `password` and `custom` now return their type-specific attributes as a sub-object keyed by the entry type name (e.g., `"document": {"name": "report.pdf", "type": "application/pdf", "size": 2458621}`). This keeps the common entry schema clean and supports future type extensions without schema conflicts. Supported type sub-objects: `credit_card`, `license`, `identity`, `information`, `banking`, `document`, `rdp`, `putty`, `teamviewer`, `passkey`. The `fields` array has been renamed to `custom_fields` and is only present for `password` and `custom` entry types. The `ec_card` type has been renamed to `banking`. Entry types `encrypted_file` and `certificate` are not exposed via the REST API.
@@ -196,6 +203,24 @@ Inbound request fields `expires_at` (entries, api_tokens, secrets) and `valid_fr
     Clients that show and send the string as delivered need no change -- `"high"` now means High everywhere. Do not add an inversion of your own, or the level flips twice. Items whose importance was set to `"low"` or `"high"` through this API before the correction carry the opposite level and now read back swapped; the desktop and mobile clients were already showing them swapped.
 
 No field names, strings or status codes change, and any other string is still stored as `"normal"`.
+
+#### Seal Checked Against the Caller (Behavior Change)
+
+Reading an entry (`GET /databases/{db}/entries/{id}`) and reading, creating or updating a link now check the seal against **your own** permissions. Previously the check could use the permissions of another user who had opened the same database - applying their seals, or missing yours - and after the database was saved or the server restarted it found no seal at all, so a sealed entry could be read in full.
+
+!!! warning "Behavior change for clients"
+    A sealed entry now consistently returns `403`. No field names, strings or status codes change otherwise.
+
+#### Link Targets Weighed Like Direct Requests (Behavior Change)
+
+Reading, creating or updating a **link** now requires the same permissions on the entry it points to as a direct request for that entry would: read **and** use permission, and the entry must not be a folder or in the recycle bin. Previously read permission alone was enough, so a link could show an entry hidden from you, and a link to a deleted entry still returned its password. Alerts set on the linked entry now also fire when it is read through a link.
+
+!!! warning "Behavior change for clients"
+    Such requests now return `403`. Links to entries you can read and use directly are unaffected.
+
+#### One-Time Codes Counted in UTC
+
+One-time codes are now computed from true UTC everywhere on the server, including the shared-link page and two-factor login. Previously, during the hour that repeats when summer time ends, they were computed an hour ahead, so displayed codes were wrong and a correct two-factor code could be refused for that hour.
 
 #### Search Filters Unsupported Entry Types
 

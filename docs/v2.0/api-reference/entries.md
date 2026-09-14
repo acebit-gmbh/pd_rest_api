@@ -23,8 +23,9 @@ Returned by list/children and search endpoints.
 | `id` | string (UUID) | No | Unique identifier (server-generated) |
 | `name` | string | Yes | Entry display name |
 | `has_second_pass` | boolean | No | Whether the entry is protected by a second password |
-| `login` | string or null | Yes | Login/username (only for `password` and `custom` types). Returns `null` if second-pass protected and no correct password provided. |
-| `url` | string or null | Yes | Primary URL (only for `password` and `custom` types). Returns `null` if second-pass protected and no correct password provided. |
+| `has_otp` | boolean | No | Whether a one-time code (TOTP) can be generated for this entry - see [Get One-Time Code](#get-one-time-code). For a link, whether the link's own TOTP settings produce one, as the Windows client shows. `false` when you may not read the entry. The seed is never returned. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
+| `login` | string | Yes | Login/username (only for `password` and `custom` types). |
+| `url` | string | Yes | Primary URL (only for `password` and `custom` types). |
 | `icon` | string | No | Icon filename (e.g., `"ico12.svg"`). Served at `/file/{icon}`. |
 | `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show (default: `"normal"`) |
 | `category` | string | Yes | Category label |
@@ -399,7 +400,9 @@ The sub-object is present only in the **full representation**. Clients can gener
 | `input_id` | string | Input identifier |
 
 !!! info "Second Password Protection"
-    Entries can be protected with an optional second password. When `has_second_pass` is `true`, retrieving the full representation (including `pass`, `comments`, and `custom_fields`) requires the `X-Second-Password` request header with the correct password. In compact representations, `login` and `url` return `null` when the entry is second-pass protected and no correct password is provided.
+    Entries can be protected with an optional second password. When `has_second_pass` is `true`, retrieving the full representation (including `pass`, `comments`, and `custom_fields`) requires the `X-Second-Password` request header with the correct password. `login` and `url` are part of every representation and are not withheld for a protected entry.
+
+    Reading an entry's [one-time code](#get-one-time-code) requires `X-Second-Password` in the same way - for a link, also the second password of the entry it points to. `has_second_pass` on a link describes the link itself, so handle `4031` on `/otp` whatever it says.
 
     Updating (`PATCH`) a protected entry now **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. (Previously the current second password was not enforced on writes.) Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`.
 
@@ -458,6 +461,7 @@ Returns the **full representation** of a specific entry, including the password,
     "id": "e1a2b3c4-d5e6-7890-abcd-ef1234567890",
     "name": "GitHub Account",
     "has_second_pass": false,
+    "has_otp": false,
     "login": "devteam",
     "url": "https://github.com",
     "login_id": "",
@@ -603,6 +607,7 @@ Returns the compact representation of the created entry (without `pass`).
     "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
     "name": "Slack Workspace",
     "has_second_pass": false,
+    "has_otp": false,
     "login": "admin@company.com",
     "url": "https://company.slack.com",
     "icon": "ico0.svg",
@@ -691,6 +696,7 @@ Returns the compact representation of the updated entry.
     "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
     "name": "Slack Workspace (Admin)",
     "has_second_pass": false,
+    "has_otp": false,
     "login": "admin@company.com",
     "url": "https://company.slack.com",
     "icon": "ico0.svg",
@@ -809,6 +815,7 @@ Returns the compact representation of the moved entry.
     "id": "e1a2b3c4-d5e6-7890-abcd-ef1234567890",
     "name": "GitHub Account",
     "has_second_pass": false,
+    "has_otp": false,
     "login": "devteam",
     "url": "https://github.com",
     "icon": "ico12.svg",
@@ -851,6 +858,97 @@ Returns the compact representation of the moved entry.
         -d '{
             "target": null
         }'
+    ```
+
+---
+
+## Get One-Time Code
+
+```
+GET /v2.0/databases/{db}/entries/{id}/otp
+```
+
+Returns the entry's **current one-time code** (TOTP), computed on the server's clock from the TOTP settings stored with the entry. Use it to fill the one-time-code step of a login from the same entry that filled the user name and password. The seed itself is never returned.
+
+The code is valid for the rest of the current period: `expires_in` is the number of whole seconds until it changes (`1` to `period`), so the time actually left is between `expires_in - 1` and `expires_in` seconds. Do not cache a code, and do not fill one with `expires_in` of `2` or less - wait `expires_in` seconds and fetch the next one.
+
+The same rules apply as for [reading the entry](#get-entry): you need read permission, the entry must not be sealed for you, and a second-password-protected entry needs `X-Second-Password`. Long-lived API tokens cannot read one-time codes; log in to obtain a session. An entry whose [`has_otp`](#compact-representation) is `false` has no code to return.
+
+### Path Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `db` | string (UUID) | Yes | Database ID |
+| `id` | string (UUID) | Yes | Entry unique identifier |
+
+### Request Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-Second-Password` | Conditional | Base64-encoded. Required if the entry has a second password (`has_second_pass: true`) - and, for a link, if the entry it points to has one |
+
+### Response
+
+`200 OK`
+
+```json
+{
+    "code": "012345",
+    "digits": 6,
+    "period": 30,
+    "expires_in": 12,
+    "algorithm": "SHA1"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `code` | string | The current code. A string, because leading zeros are part of it |
+| `digits` | integer | Length of the code, `4` to `16`. Codes of 10 or more digits are Password Depot's own and not RFC 4226 codes; every Password Depot client computes them the same way |
+| `period` | integer | Seconds each code is valid |
+| `expires_in` | integer | Whole seconds until the code changes, `1` to `period` |
+| `algorithm` | string | `"SHA1"`, `"SHA256"` or `"SHA512"` |
+
+### Error Responses
+
+| Status | `error.code` | Meaning |
+|:------:|:------------:|---------|
+| `400` | `400` | `X-Second-Password` longer than 1024 characters |
+| `401` | `401` | Not authenticated |
+| `403` | `403` | No permission (on the entry or, for a link, on the entry it points to); sealed; long-lived API token; the entry uses an old form of second-password protection that the REST API cannot check |
+| `403` | `4031` | Wrong or missing second password (for a link, also the linked entry's) |
+| `404` | `404` | Database or entry not found, or the entry is in the recycle bin |
+| `404` | `4041` | The entry has no one-time code (`PD_ERRCODE_NO_ONE_TIME_CODE`) |
+| `405` | `405` | Method other than `GET` |
+| `501` | `501` | Entry type `encrypted_file` or `certificate` |
+
+!!! warning "Sensitive Data"
+    A one-time code is a credential. Treat the response like the `pass` field: never log it, and discard it once it has been used.
+
+!!! note "Links"
+    For a link, the code comes from the link's **own** TOTP settings - the same code the Windows client shows for that link. The entry it points to must still be readable by you and must not be in the recycle bin.
+
+!!! info "Audit"
+    Every call is recorded as an entry access in the server's audit log, and "password accessed" alerts fire for it - for a link, alerts set on the link and on the entry it points to.
+
+!!! tip "Telling the errors apart"
+    Match `error.code`, never the message. `403` with `4031` means prompt for the second password; a plain `403` means do not. `404` with `4041` means the entry exists but has no one-time code; a plain `404` means there is no such entry. A server older than 20.0.0 does not know this endpoint and answers a plain `404` - and omits `has_otp` from its entries, which is the better way to detect the feature.
+
+### Examples
+
+=== "curl"
+
+    ```bash
+    curl -X GET "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/e1a2b3c4-d5e6-7890-abcd-ef1234567890/otp" \
+        -H "Authorization: Bearer <token>"
+    ```
+
+=== "curl (with second password)"
+
+    ```bash
+    curl -X GET "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/e1a2b3c4-d5e6-7890-abcd-ef1234567890/otp" \
+        -H "Authorization: Bearer <token>" \
+        -H "X-Second-Password: $(echo -n 'mySecretPass' | base64)"
     ```
 
 ---
@@ -948,6 +1046,7 @@ Returns the compact representation of the entry. Note that the `document` sub-ob
     "id": "e1a2b3c4-d5e6-7890-abcd-ef1234567890",
     "name": "Q4 Report",
     "has_second_pass": false,
+    "has_otp": false,
     "icon": "ico0.svg",
     "importance": "normal",
     "category": "",

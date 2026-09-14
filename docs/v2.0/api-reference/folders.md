@@ -173,6 +173,7 @@ The `path` array contains the ancestor chain from the database root down to the 
             "id": "e1a2b3c4-d5e6-7890-abcd-ef1234567890",
             "name": "GitHub Account",
             "has_second_pass": false,
+            "has_otp": false,
             "login": "devteam",
             "url": "https://github.com",
             "icon": "ico12.svg",

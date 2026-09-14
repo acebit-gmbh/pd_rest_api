@@ -49,6 +49,7 @@ Returns a paginated list of matching items. Each item is a **compact representat
             "id": "e1a2b3c4-d5e6-7890-abcd-ef1234567890",
             "name": "Production Database",
             "has_second_pass": false,
+            "has_otp": false,
             "login": "admin",
             "url": "https://db.example.com",
             "icon": "ico5.svg",

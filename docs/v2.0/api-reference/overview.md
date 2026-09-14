@@ -131,7 +131,7 @@ On error, the server returns a JSON object with a nested `error` object:
     v1.0 used a flat format: `{"code": 404, "error": "..."}`. v2.0 uses a nested structure: `{"error": {"code": 404, "message": "..."}}`.
 
 !!! note "Application sub-codes in `error.code`"
-    `error.code` usually equals the HTTP status, but it may carry an application sub-code (`>= 1000`) that conveys a finer, machine-readable reason. For example, a wrong or missing second password returns HTTP `403` with `error.code = 4031` (`PD_ERRCODE_INVALID_SECOND_PASS`), distinct from a generic access-denied `403` (which keeps `error.code = 403`). The **HTTP status is authoritative** for the response class; `error.code` only refines it. Always match the numeric code, never the localized message.
+    `error.code` usually equals the HTTP status, but it may carry an application sub-code (`>= 1000`) that conveys a finer, machine-readable reason. For example, a wrong or missing second password returns HTTP `403` with `error.code = 4031` (`PD_ERRCODE_INVALID_SECOND_PASS`), distinct from a generic access-denied `403` (which keeps `error.code = 403`); and an entry without a one-time code returns HTTP `404` with `error.code = 4041` (`PD_ERRCODE_NO_ONE_TIME_CODE`), distinct from a `404` for an entry that does not exist. The **HTTP status is authoritative** for the response class; `error.code` only refines it. Always match the numeric code, never the localized message.
 
 ## Error Codes
 
@@ -293,6 +293,7 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `PATCH` | [`/databases/{db}/entries/{id}`](entries.md#update-entry) | Update an entry | Any |
 | `DELETE` | [`/databases/{db}/entries/{id}`](entries.md#delete-entry) | Delete an entry | Any |
 | `POST` | [`/databases/{db}/entries/{id}/move`](entries.md#move-entry) | Move an entry to a different folder | Any |
+| `GET` | [`/databases/{db}/entries/{id}/otp`](entries.md#get-one-time-code) | Get the entry's current one-time code (TOTP) | Any |
 | `GET` | [`/databases/{db}/entries/{id}/content`](entries.md#get-document-content) | Download document content (BLOB) | Any |
 | `PUT` | [`/databases/{db}/entries/{id}/content`](entries.md#upload-document-content) | Upload/replace document content (BLOB) | Any |
 

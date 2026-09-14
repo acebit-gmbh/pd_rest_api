@@ -323,6 +323,28 @@ function Move-PDEntry {
     return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries/$EntryId/move" -Method POST -Body $json
 }
 
+# --- One-Time Code ---
+
+function Get-PDEntryOneTimeCode {
+    <#
+    .SYNOPSIS
+        Returns the entry's current one-time code (TOTP): code, digits, period,
+        expires_in and algorithm. Requires a login session; long-lived API tokens
+        are refused. Server 20.0.0 or later.
+    #>
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [Parameter(Mandatory)] [string] $EntryId,
+        [string] $SecondPassword
+    )
+    $headers = @{}
+    if ($SecondPassword) {
+        $headers["X-Second-Password"] = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($SecondPassword))
+    }
+    return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries/$EntryId/otp" -Headers $headers
+}
+
 # --- Document Content ---
 
 function Set-PDDocumentContent {
