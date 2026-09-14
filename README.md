@@ -24,7 +24,7 @@ changes between the two.
 - **OIDC identity providers** -- Federated login against configured identity providers, listed via `GET /auth/oidc`
 - **Long-lived API tokens** -- Configurable-lifetime tokens (6 months to 2 years) for automation, issued to administrator accounts and managed (created and revoked) in the Server Manager; they are not revoked by `/auth/logout`
 - **Standard Bearer token auth** -- Industry-standard `Authorization: Bearer <token>` header; no custom `client_id` header
-- **IP lockout with `429` + `Retry-After`** -- RFC-compliant rate-limit responses; loopback addresses are exempt so the Server Manager stays reachable during an external brute-force
+- **IP lockout with `429` + `Retry-After`** -- RFC-compliant rate-limit responses
 
 **Resources & endpoints**
 

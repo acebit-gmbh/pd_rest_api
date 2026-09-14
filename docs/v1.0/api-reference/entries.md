@@ -119,22 +119,28 @@ Browse entries within a database or folder.
 | `importance` | string | Importance level (numeric): `"0"` = high, `"1"` = normal, `"2"` = low -- as the desktop and mobile clients show it |
 | `date` | string (ISO 8601) | Last modification timestamp |
 | `icon` | string | Icon filename, available at `https://<server>:8714/file/<icon>` |
-| `hash` | string | Whether a second password protects the item: `set` when one is configured, empty when not. **Since Server 20.0.0 this is a marker, not the hash itself** — see the note below |
+| `hash` | string | Whether a second password protects the item: non-empty when one is configured, empty when not. Treat it as a flag — see the note below |
 
-!!! note "`hash` no longer carries the verifier"
-    Before Server 20.0.0 this field contained the second-password hash
-    itself. That value is an offline-crackable verifier and no client needs
-    it — the second password is sent to the server, which checks it — so the
-    field now reports only whether one is set:
+!!! note "`hash` is a flag"
+    Test `hash` only for emptiness. Do not store, compare or interpret a
+    non-empty value.
 
     | Value | Meaning |
     |-------|---------|
     | `""` | no second password on this item |
-    | `"set"` | a second password is required to read `pass` |
+    | any other value | the item has a second password |
 
-    Test it for emptiness, which is all the field was ever documented to
-    mean. Writing the marker back in an update is a no-op: to change or
-    clear a second password, send `secondpass` as before.
+    For an item with a second password, `/read` and `/modify` are refused with
+    `403` unless the current second password is passed in the `secondeye`
+    query parameter.
+
+    Leave `hash` out of update requests unless you are setting, changing or
+    removing the second password: sending it can change or remove the item's
+    second password. To set, change or remove one, send `hash` together with
+    the new `secondpass` (an empty or missing `secondpass` removes it;
+    `secondpass` without `hash` is ignored), in a request of its own without
+    `pass` or `fields`. To create a protected entry, create it first, then set
+    the second password with `/modify`.
 
 ---
 
@@ -263,7 +269,7 @@ Returns all attributes of a specific entry, including the password, custom field
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `hash` | string | Whether a second password protects the item: `set` when one is configured, empty when not. **Since Server 20.0.0 this is a marker, not the hash itself** — see the note below |
+| `hash` | string | Whether a second password protects the item: non-empty when one is configured, empty when not. Treat it as a flag — see the note under List Entries |
 | `secondpass` | string | Second password (write-only, returned empty for security) |
 
 #### Auto-Complete and Template Fields
@@ -442,7 +448,7 @@ Updates attributes of an existing entry.
 
 ### Request Body
 
-Submit a JSON object with the attributes to update. Use the same structure as returned by the [read endpoint](#read-entry).
+Submit a JSON object with only the attributes you want to change, using the field names the [read endpoint](#read-entry) returns. Do not send a read response back unchanged: it contains `hash`, which can remove a protected item's second password (see the note under [List Entries](#list-entries)).
 
 ### Request Examples
 

@@ -404,7 +404,7 @@ The sub-object is present only in the **full representation**. Clients can gener
 
     Reading an entry's [one-time code](#get-one-time-code) requires `X-Second-Password` in the same way - for a link, also the second password of the entry it points to. `has_second_pass` on a link describes the link itself, so handle `4031` on `/otp` whatever it says.
 
-    Updating (`PATCH`) a protected entry now **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. (Previously the current second password was not enforced on writes.) Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`.
+    Updating (`PATCH`) a protected entry **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`.
 
     Both headers must be **Base64-encoded** (UTF-8 bytes → Base64). This ensures reliable transport of passwords containing non-ASCII characters (e.g., umlauts, accented letters).
 
@@ -512,10 +512,11 @@ Returns the **full representation** of a specific entry, including the password,
     deleted entry is not part of the model. Addressing one by its fingerprint
     therefore returns `404 Not Found` - on this endpoint and on every other
     `/entries/{id}` and `/folders/{id}` route - and a deleted entry cannot be
-    used as the target of a shared secret.
+    used as the target of a shared secret. Treat such an id like one that
+    does not exist. A link whose target has been deleted is the exception:
+    creating, reading or updating that link returns `403 Forbidden`.
 
-    *Changed in Server 20.0.0.* Earlier releases resolved a deleted entry and
-    returned it like a live one, password included.
+    *Server 20.0.0 and later.*
 
 !!! tip "Detecting a wrong second password"
     A wrong or missing second password returns `403` with the JSON body `error.code` = `4031` (`PD_ERRCODE_INVALID_SECOND_PASS`), distinct from a generic access-denied `403` (which keeps `error.code` = `403`). Detect the condition by checking `HTTP status == 403 && body.error.code == 4031` and re-prompt the user for the second password; on a generic `403`, do not re-prompt. Always match the numeric `error.code`, never the localized message.

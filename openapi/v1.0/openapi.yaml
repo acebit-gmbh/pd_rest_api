@@ -375,8 +375,10 @@ paths:
       operationId: modifyEntry
       summary: Modify an existing entry
       description: |
-        Updates attributes of an existing entry. Submit a JSON object with the
-        attributes to update, using the same structure as returned by the read endpoint.
+        Updates attributes of an existing entry. Submit a JSON object with
+        only the attributes to change, using the field names returned by the
+        read endpoint. Do not send a read response back unchanged: leave out
+        `hash` and `secondpass` unless you are changing the second password.
       tags:
         - Entries
       parameters:
@@ -697,7 +699,9 @@ components:
           example: "ico0.png"
         hash:
           type: string
-          description: Second password hash (empty if not set)
+          description: >
+            Non-empty when a second password protects this item, empty when
+            not. Treat it as a flag and test only for emptiness.
 
     EntryDetail:
       type: object
@@ -751,7 +755,13 @@ components:
           description: Icon filename
         hash:
           type: string
-          description: Second password hash (empty if no second password)
+          description: >
+            Non-empty when a second password protects this item, empty when
+            not. Treat it as a flag and test only for emptiness. Leave it out
+            of updates unless you are setting, changing or removing the second
+            password; then send it together with the new `secondpass` (empty
+            removes it) and, if the item already has a second password, the
+            current one in the `secondeye` query parameter.
         secondpass:
           type: string
           description: Second password (write-only, returned empty)

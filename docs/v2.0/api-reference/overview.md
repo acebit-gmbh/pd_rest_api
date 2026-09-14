@@ -230,8 +230,6 @@ On error, the server returns a JSON object with a nested `error` object:
 !!! info "IP lockout (`429`)"
     After repeated failed `POST /auth/login` attempts from the same IP address, the server blocks that IP for a configurable period (Server Manager &rarr; *Options* &rarr; *Security* &rarr; *Login Attempts*). While the block is active **every** request from that IP is rejected with `429 Too Many Requests` and a `Retry-After` header containing the number of seconds until the block expires. Clients should honor `Retry-After` and back off; retrying immediately will not shorten the lockout. Login responses with `error.code` `4012` or `4013` do not count as failed attempts (*Server 20.0.0 and later*).
 
-    **Loopback addresses** (`127.0.0.0/8`, `::1`, `::ffff:127.0.0.0/8`) are exempt from the block list. This keeps the Password Depot Server Manager (which connects over loopback) reachable even when the public interface is being brute-forced.
-
 ---
 
 ## Client vs Admin Scope

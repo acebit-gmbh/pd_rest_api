@@ -57,8 +57,8 @@ Includes all compact fields plus:
 | `approver_ids` | array of UUIDs | Yes | User IDs designated as approvers |
 | `approved_by` | array of objects | No | List of received approvals (read-only, see below) |
 | `rejected_by` | array of objects | No | List of received rejections (read-only, see below) |
-| `open_uuid` | string | No | Bearer token for the open link (read-only). Returned only to the author and to the users in `recipient_ids` — see [Who receives the link tokens](#who-receives-the-link-tokens) |
-| `approve_uuid` | string | No | Bearer token for the approve link (read-only). Returned only to the author and to the users in `approver_ids` |
+| `open_uuid` | string | No | Token for the open link (read-only); treat it as a credential. Returned only to the author and to users whose own ID is in `recipient_ids` (membership of a listed group is not enough) — see [Who receives the link tokens](#who-receives-the-link-tokens) |
+| `approve_uuid` | string | No | Token for the approve link (read-only); treat it as a credential. Returned only to the author and to users whose own ID is in `approver_ids` |
 
 **Approval/rejection entries:**
 
@@ -123,27 +123,33 @@ The `open_uuid` and `approve_uuid` are returned in the full representation, but 
 ### Who receives the link tokens
 
 !!! warning "These UUIDs are credentials"
-    `open_uuid` is a **bearer token**. Anyone holding it can redeem the secret
-    at the anonymous `/shared/` page — with no session, without being named in
-    `recipient_ids`, and without the access being attributable to a user
-    account. `approve_uuid` is the same for the approval step.
+    `open_uuid` and `approve_uuid` form the secret's links. Handle them like
+    passwords: never write them to logs or telemetry, and pass a link on only
+    to the people it is meant for - the open link to the recipients, the
+    approve link to the approvers.
 
-    They are therefore returned only to the caller each token is for:
+    Each is returned according to the caller's own role on the secret:
 
     | Field | Returned to |
     |-------|-------------|
-    | `open_uuid` | the secret's `author`, and the users named in `recipient_ids` |
-    | `approve_uuid` | the secret's `author`, and the users named in `approver_ids` |
+    | `open_uuid` | the secret's `author`, and users whose own ID is in `recipient_ids` (membership of a listed group is not enough) |
+    | `approve_uuid` | the secret's `author`, and users whose own ID is in `approver_ids` |
 
-    Any other caller receives the secret's metadata with the token field simply
-    **absent** — including an administrator reading or listing secrets in the
-    admin scope. Approving or rejecting a secret does **not** return
-    `open_uuid`: an approver authorises somebody else's access, not their own.
+    For any other caller the field is **absent**, so a full representation
+    does not always contain it. Treat a missing field as "not for you", not as
+    an error. The rule depends only on the caller's role, never on the scope,
+    and applies to every response that carries the full representation:
 
-    Treat a missing field as "not for you", not as an error.
+    - **Create** - the caller becomes the `author`, so the response contains
+      both fields.
+    - **Get, update, revoke** - an administrator using the admin scope
+      receives a field only if they are the author or are listed for it.
+    - **Approve, reject** - the response contains `approve_uuid`; it contains
+      `open_uuid` only if the approver is also the author or is listed in
+      `recipient_ids`.
+    - **List** - the compact representation contains neither field.
 
-    *Changed in Server 20.0.0.* Earlier releases returned both tokens to every
-    caller who could see the secret at all.
+    Clients must treat both fields as optional.
 
 ---
 
@@ -424,10 +430,11 @@ Returns the **full representation** of a specific secret. In client scope, the c
 ```
 
 !!! note "The two UUID fields depend on who is asking"
-    This example is the response the secret's **author** receives. An
-    approver sees the same object with `open_uuid` absent, and a caller who
-    is neither author, recipient nor approver — an administrator in the
-    admin scope, for instance — sees it with both fields absent. See
+    This example is the response the secret's **author** receives. Any other
+    caller receives a token field only if their own ID is listed for it:
+    `open_uuid` in `recipient_ids`, `approve_uuid` in `approver_ids`. In the
+    client scope only the author can read a secret; approvers receive it in
+    the `approve` and `reject` responses. See
     [Who receives the link tokens](#who-receives-the-link-tokens).
 
 ### Error Responses

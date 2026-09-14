@@ -65,8 +65,7 @@ info:
     - `413 Payload Too Large` -- JSON bodies cap at 1 MB, document-content
       uploads at 64 MB.
     - `429 Too Many Requests` -- IP-lockout triggered by repeated failed
-      logins. Includes a `Retry-After` header (seconds). Loopback addresses
-      are exempt from the block list.
+      logins. Includes a `Retry-After` header (seconds).
   version: "2.0"
   contact:
     name: AceBIT GmbH
@@ -2592,8 +2591,7 @@ components:
       description: |
         The caller's IP address is temporarily blocked by the server's
         login-attempt throttle. Honor the `Retry-After` header and back off;
-        retrying immediately will not shorten the lockout. Loopback addresses
-        (`127.0.0.0/8`, `::1`) are exempt from the block list.
+        retrying immediately will not shorten the lockout.
       headers:
         Retry-After:
           schema:
@@ -3701,14 +3699,19 @@ components:
       description: |
         Full secret representation returned by detail endpoints. Extends
         `SecretBasic` with the approval workflow, quorum settings, and
-        the bearer UUIDs (`open_uuid`, `approve_uuid`) that must be
+        the link UUIDs (`open_uuid`, `approve_uuid`) that must be
         treated as credentials. Sub-commands (`/approve`, `/reject`,
         `/revoke`) are separate endpoints.
 
-        Since Server 20.0.0 the two UUID fields are returned only to the
-        caller each one is for, and are ABSENT otherwise - including for
-        an approver and for an administrator using the admin scope. See
-        the field descriptions.
+        Each UUID field is returned according to the caller's own role on
+        the secret, in either scope: `open_uuid` to the author and to users
+        whose own ID is in `recipient_ids`, `approve_uuid` to the author and
+        to users whose own ID is in `approver_ids`. Any other caller,
+        including an administrator using the admin scope, receives the
+        object without that field, and the `/approve` and `/reject`
+        responses carry `open_uuid` only when the approver is also the
+        author or a listed recipient. Clients must treat both fields as
+        optional. See the field descriptions.
       allOf:
         - $ref: "#/components/schemas/SecretBasic"
         - type: object
@@ -3776,20 +3779,18 @@ components:
               type: string
               readOnly: true
               description: >
-                Bearer token embedded in the recipient-access URL. Whoever
-                holds it can redeem the secret at the anonymous /shared/
-                page with no session, so since Server 20.0.0 it is returned
-                ONLY to the secret's author and to the users named in
-                `recipient_ids`; it is absent for every other caller,
-                including approvers and administrators. Approving or
-                rejecting a secret never returns it.
+                Token embedded in the recipient-access URL; treat it as a
+                credential. Returned only to the secret's author and to
+                users whose own ID is in `recipient_ids` (membership of a
+                listed group is not enough), and absent for every other
+                caller.
             approve_uuid:
               type: string
               readOnly: true
               description: >
-                Bearer token embedded in the approver URL. Since Server
-                20.0.0 it is returned ONLY to the secret's author and to
-                the users named in `approver_ids`; it is absent for every
+                Token embedded in the approver URL; treat it as a
+                credential. Returned only to the secret's author and to
+                users whose own ID is in `approver_ids`, and absent for every
                 other caller.
 
     # --- Common ---

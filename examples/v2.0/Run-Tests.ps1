@@ -157,15 +157,14 @@ try {
     else { Fail-Test "Unexpected response: $($me2 | ConvertTo-Json -Compress)" }
 } catch { Fail-Test $_.Exception.Message }
 
-# 1.5b B1: /me/unknown-subpath must 404, not silently return /me profile
+# 1.5b B1: an unknown sub-path under /me must return 404
 Start-Test "GET /me/foobar -> 404"
 if (Assert-HttpError -ExpectedCode 404 -Action {
     Invoke-PDRequest -Session $clientSession -Path "/me/foobar"
 }) { Pass-Test "404 as expected" }
 
-# 1.5bc C13: trailing segments on known sub-paths must 404, not silently execute
-# the action. These specifically guard against the "DELETE /admin/users/{id}/tfa
-# silently deletes the user" class of bug across the v2.0 routing.
+# 1.5bc C13: a trailing segment on a known sub-path must return 404, across
+# the v2.0 routing.
 $c13Cases = @(
     @{ method = 'POST';   path = "/me/password/extra";                 why = '/me/password trailing' },
     @{ method = 'GET';    path = "/me/passkeys/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/extra"; why = '/me/passkeys/{id} trailing' },
@@ -229,9 +228,8 @@ if (Assert-HttpError -ExpectedCode 401 -Action {
     Invoke-PDRequest -Session $fakeSession -Path "/databases"
 }) { Pass-Test "401 as expected" }
 
-# 1.6.1 B20: malformed JSON on /auth/login -> 400 (not 401). The fix also
-# excludes these from the IP-lockout counter, but that can only be verified
-# from a non-loopback peer; covered manually.
+# 1.6.1 B20: malformed JSON on /auth/login -> 400 (not 401). These requests
+# do not count towards the IP lockout; that part is covered manually.
 #
 # Note on test bodies: Delphi's TJSONObject.Parse is lenient about some
 # technically-dubious input. Numeric overflow literals like `{"a":1e99999}`
@@ -382,11 +380,11 @@ if (Assert-HttpError -ExpectedCode 404 -Action {
 
 # 2.4 Reject path-traversal names on create -> 400
 $pathTraversalNames = @(
-    '../../evil-traversal',          # unix-style
-    '..\..\evil-traversal',          # windows-style
+    '../../traversal-name',          # unix-style
+    '..\..\traversal-name',          # windows-style
     'foo/bar',                       # slash mid-name
     'foo\bar',                       # backslash mid-name
-    'C:\pwn',                        # drive letter
+    'C:\name',                       # drive letter
     'CON',                           # reserved device name
     'nul.dbp',                       # reserved name + ext
     '.leadingdot',                   # leading dot
@@ -395,9 +393,9 @@ $pathTraversalNames = @(
     "bad`twith`ttab",                # control character (tab)
     'weird*file',                    # wildcard
     '..dotsonly..',                  # `..` sequence
-    '\\evil-host\share\payload',     # UNC path (SMB call-home)
-    '//evil-host/share/payload',     # UNC path (forward-slash variant)
-    "claude-null$([char]0)suffix",   # C4: NULL byte truncation (must not bypass .dbp suffix)
+    '\\host\share\name',             # UNC path
+    '//host/share/name',             # UNC path (forward slashes)
+    "name$([char]0)suffix",          # NUL control char
     "before$([char]10)after",        # LF control char
     "before$([char]13)after"         # CR control char
 )
@@ -408,15 +406,15 @@ foreach ($badName in $pathTraversalNames) {
     }) { Pass-Test "400 as expected" }
 }
 
-# 2.5 Error responses must not leak internal paths (C2 fix)
-# If we ever 500, the client must get a generic message, not an OS path.
+# 2.5 Error responses contain no server-internal paths
+# A 500, should one ever occur, must carry a generic message only.
 $leakIndicators = @('Program Files', 'Data\DB', 'Password Depot Server', '_database.pswd', '.dbp\')
-Start-Test "No path leak on error (C:/Windows/... repro)"
+Start-Test "No internal paths in error response"
 $responseBody = $null
 try {
-    Invoke-PDRequest -Session $adminSession -Path "/admin/databases" -Method POST -Body @{ name = "C:/Windows/System32/claude-evil" }
+    Invoke-PDRequest -Session $adminSession -Path "/admin/databases" -Method POST -Body @{ name = "C:/Temp/test-name" }
 } catch {
-    # either response type is fine (400 expected after C1 fix, but 500 would be a regression)
+    # 400 is expected; any error body is checked for internal paths below
     try { $responseBody = $_.ErrorDetails.Message } catch { $responseBody = $_.Exception.Message }
 }
 $leaked = $false
@@ -429,10 +427,8 @@ foreach ($indicator in $leakIndicators) {
 }
 if (-not $leaked) { Pass-Test "no internal paths in error response" }
 
-# 2.6 C-Zusatzbefund: name with embedded dot must NOT be truncated at the dot.
-# Before the fix, ChangeFileExt treated the last dot as an extension boundary,
-# so "Q4.2024" would be stored as folder "Q4.dbp". Now EnsureFileExt preserves
-# the full name.
+# 2.6 A name with an embedded dot is kept whole: "Q4.2024" is not cut at the
+# dot.
 Start-Test "Embedded dot in DB name is preserved (no truncation)"
 $dotName = "Q4.2024"
 $createdDbId = $null
@@ -647,7 +643,7 @@ if (-not $testDbId) {
         Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId "00000000-0000-0000-0000-000000000000"
     }) { Pass-Test "404 as expected" }
 
-    # 4.9 Invalid entry type -> 400 (previously silently defaulted to password)
+    # 4.9 Invalid entry type -> 400
     Start-Test "Invalid entry type -> 400"
     if (Assert-HttpError -ExpectedCode 400 -Action {
         New-PDEntry -Session $adminSession -DatabaseId $testDbId -Fields @{
@@ -975,10 +971,9 @@ if ($testUserId) {
     }) { Pass-Test "400 as expected" }
 } else { Skip-Test "User not created" }
 
-# 5.1j C13: unknown sub-resources under /admin/users/{id} must 404, not silently
-# delete the user. Before the fix, DELETE /admin/users/{id}/tfa silently
-# deleted the entire user. Verify by confirming the user still exists after
-# each attempted bogus sub-resource call.
+# 5.1j C13: unknown sub-resources under /admin/users/{id} must 404 and leave
+# the user untouched. Verified by confirming the user still exists after each
+# call.
 Start-Test "C13: /admin/users/{id}/<unknown> -> 404 (user survives)"
 if ($testUserId) {
     $c13AdminCases = @(
@@ -1013,8 +1008,7 @@ if ($testUserId) {
 } else { Skip-Test "User not created" }
 
 # 5.1k R5: malformed JSON body on a non-login endpoint must return 400
-# (not 500). Before the fix, ~30 v2.0 endpoints let the raw parser exception
-# bubble to ProcessException which mapped it to 500 Internal Server Error.
+# (not 500).
 Start-Test "R5: malformed JSON on PATCH /admin/users/{id} -> 400"
 if ($testUserId) {
     # See note at the login malformed-JSON test: Delphi's parser is lenient
@@ -1085,7 +1079,7 @@ try {
     if (Assert-Equal 1000 $res.limit "clamped limit") { Pass-Test "clamped to $($res.limit)" }
 } catch { Fail-Test $_.Exception.Message }
 
-# 5.2f B3: overflowing limit -> 400 (was silently falling back to default before)
+# 5.2f B3: overflowing limit -> 400
 Start-Test "Pagination: limit overflow -> 400"
 if (Assert-HttpError -ExpectedCode 400 -Action {
     Invoke-PDRequest -Session $adminSession -Path "/admin/users" -QueryParams @{ limit = "9999999999999999999" }
@@ -1316,7 +1310,7 @@ if (-not $testDbId -or -not $testUserId) {
         }) { Pass-Test "404 as expected" }
     } else { Skip-Test "Permission still exists" }
 
-    # 7.7 Invalid permission token in allow array -> 400 (C7 fix: silent drops)
+    # 7.7 Invalid permission token in allow array -> 400
     Start-Test "Invalid token in allow array -> 400"
     if ($testUserId) {
         if (Assert-HttpError -ExpectedCode 400 -Action {
@@ -1562,11 +1556,11 @@ if ($clientSession2) {
     Disconnect-PDServer -Session $clientSession2
 }
 
-# 8.5 IDOR (C5): non-admin user without permission on a DB must get 404 on
-# single-GET by UUID, indistinguishable from "UUID does not exist".
+# 8.5 Client scope: a user with no permission on a database gets 404 from
+# GET /databases/{id}, the same response as for an id that does not exist.
 # Uses the fresh test user apitest_$ts (password rotated to Rot4ted!P@ss in 5.1g)
 # who has no explicit permissions on $testDbId after the permissions suite cleaned up.
-Start-Test "IDOR: non-admin cannot fetch DB metadata by UUID"
+Start-Test "Client: database without permission -> 404"
 if ($testUserId -and $testDbId) {
     try {
         $nonAdminSession = Connect-PDServer -Server $Server -Username "apitest_$ts" -Password "Rot4ted!P@ss" -Port $Port -Scope "client"
