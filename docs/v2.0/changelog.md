@@ -188,6 +188,15 @@ Affected fields: users `updated_at` + `last_login`; groups `updated_at`; databas
 
 Inbound request fields `expires_at` (entries, api_tokens, secrets) and `valid_from`/`valid_until` (permissions) are now interpreted as true UTC and round-trip exactly (previously a write/read cycle drifted by the offset). Date-only custom-field values are unchanged (no timezone shift). No field names or status codes change; malformed inbound dates still return `400`.
 
+#### Importance Levels Corrected (Behavior Change)
+
+`importance` on entries and folders now means the same level every other Password Depot client shows. Previously `"low"` and `"high"` were swapped against the Windows, macOS, iOS and Android clients: an entry marked **High** in the Windows client was returned as `"low"`, and `"high"` sent in a `POST` or `PATCH` was stored as the level those clients show as **Low**. `"normal"` was never affected.
+
+!!! warning "Behavior change for clients"
+    Clients that show and send the string as delivered need no change -- `"high"` now means High everywhere. Do not add an inversion of your own, or the level flips twice. Items whose importance was set to `"low"` or `"high"` through this API before the correction carry the opposite level and now read back swapped; the desktop and mobile clients were already showing them swapped.
+
+No field names, strings or status codes change, and any other string is still stored as `"normal"`.
+
 #### Search Filters Unsupported Entry Types
 
 `GET /databases/{db}/search` no longer returns entries whose type is unsupported by the REST/web surface -- i.e. the desktop-only legacy types `encrypted_file` and `certificate`. This brings `/search` into parity with `GET /children`, which already excludes them. The result array, the `total`/result count, and pagination all reflect the filtered set. Previously such entries appeared in results but returned `501 Not Implemented` when opened.

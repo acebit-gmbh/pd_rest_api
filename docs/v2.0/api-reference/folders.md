@@ -23,7 +23,7 @@ Returned by list/children endpoints and create/update responses.
 | `id` | string (UUID) | No | Unique identifier (server-generated) |
 | `name` | string | Yes | Folder name |
 | `icon` | string | No | Icon filename (e.g., `"ico3.svg"`). Served at `/file/{icon}`. |
-| `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` (default: `"normal"`) |
+| `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show (default: `"normal"`) |
 | `category` | string | Yes | Category label |
 | `tags` | string | Yes | Tags (comma-separated) |
 | `has_second_pass` | boolean | No | Whether the folder is protected by a second password |
@@ -326,7 +326,7 @@ Creates a new folder within a database. Use the `parent` query parameter to plac
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
 | `name` | string | Yes | Folder name |
-| `importance` | string | No | `"low"`, `"normal"`, or `"high"` (default: `"normal"`) |
+| `importance` | string | No | `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show. Any other string is stored as `"normal"` (default: `"normal"`) |
 | `category` | string | No | Category label |
 | `tags` | string | No | Tags (comma-separated) |
 | `comments` | string | No | Folder comments/notes |

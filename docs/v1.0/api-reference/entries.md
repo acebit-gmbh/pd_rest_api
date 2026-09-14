@@ -116,7 +116,7 @@ Browse entries within a database or folder.
 | `itemclass` | string | Entry type: `"-1"` = folder, `"0"` = password entry. The REST API v1.0 only operates on these two types. |
 | `login` | string | Username/login stored in the entry |
 | `url` | string | Associated URL |
-| `importance` | string | Importance level (numeric) |
+| `importance` | string | Importance level (numeric): `"0"` = high, `"1"` = normal, `"2"` = low -- as the desktop and mobile clients show it |
 | `date` | string (ISO 8601) | Last modification timestamp |
 | `icon` | string | Icon filename, available at `https://<server>:8714/file/<icon>` |
 | `hash` | string | Whether a second password protects the item: `set` when one is configured, empty when not. **Since Server 20.0.0 this is a marker, not the hash itself** — see the note below |
@@ -250,7 +250,7 @@ Returns all attributes of a specific entry, including the password, custom field
 | `login` | string | Username/login |
 | `pass` | string | Password (decrypted). Requires valid second password if `hash` is set. |
 | `url` | string | Primary URL |
-| `importance` | string | Importance level (numeric) |
+| `importance` | string | Importance level (numeric): `"0"` = high, `"1"` = normal, `"2"` = low -- as the desktop and mobile clients show it |
 | `date` | string (ISO 8601) | Last modification timestamp |
 | `comment` | string | Notes/comments |
 | `expirydate` | string (ISO 8601) | Expiration date (empty if not set) |

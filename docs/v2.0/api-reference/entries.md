@@ -26,7 +26,7 @@ Returned by list/children and search endpoints.
 | `login` | string or null | Yes | Login/username (only for `password` and `custom` types). Returns `null` if second-pass protected and no correct password provided. |
 | `url` | string or null | Yes | Primary URL (only for `password` and `custom` types). Returns `null` if second-pass protected and no correct password provided. |
 | `icon` | string | No | Icon filename (e.g., `"ico12.svg"`). Served at `/file/{icon}`. |
-| `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` (default: `"normal"`) |
+| `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show (default: `"normal"`) |
 | `category` | string | Yes | Category label |
 | `tags` | string | Yes | Tags (comma-separated) |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp |
@@ -571,7 +571,7 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 | `login` | string | No | Login/username |
 | `pass` | string | No | Password |
 | `url` | string | No | Primary URL |
-| `importance` | string | No | `"low"`, `"normal"`, or `"high"` (default: `"normal"`) |
+| `importance` | string | No | `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show. Any other string is stored as `"normal"` (default: `"normal"`) |
 | `category` | string | No | Category label |
 | `tags` | string | No | Tags (comma-separated) |
 | `comments` | string | No | Comments/notes |

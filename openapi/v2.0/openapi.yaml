@@ -2689,7 +2689,7 @@ components:
           readOnly: true
         importance:
           type: string
-          description: Importance level (e.g., "low", "normal", "high")
+          description: Importance level ("low", "normal" or "high"), the same level the Windows, macOS, iOS and Android clients show; any other string is stored as "normal"
         category:
           type: string
         tags:
@@ -2779,6 +2779,7 @@ components:
           readOnly: true
         importance:
           type: string
+          description: Importance level ("low", "normal" or "high"), the same level the Windows, macOS, iOS and Android clients show; any other string is stored as "normal"
         category:
           type: string
         tags:

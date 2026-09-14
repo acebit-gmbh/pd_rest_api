@@ -686,7 +686,7 @@ components:
           description: URL associated with the entry
         importance:
           type: string
-          description: Importance level (numeric)
+          description: 'Importance level (numeric): "0" = high, "1" = normal, "2" = low'
         date:
           type: string
           format: date-time
@@ -726,7 +726,7 @@ components:
           description: Primary URL
         importance:
           type: string
-          description: Importance level (numeric)
+          description: 'Importance level (numeric): "0" = high, "1" = normal, "2" = low'
         date:
           type: string
           format: date-time
@@ -884,7 +884,7 @@ components:
           description: Notes/comments
         importance:
           type: string
-          description: Importance level
+          description: 'Importance level (numeric): "0" = high, "1" = normal, "2" = low'
         tags:
           type: string
           description: Comma-separated tags
