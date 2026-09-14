@@ -54,10 +54,10 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | `"fido2"` | FIDO2 / WebAuthn. User must register a FIDO2 credential first. |
 
 !!! warning "Service accounts and 2FA"
-    If the server-wide 2FA default is `"email"` and you create a user without an `email` address, login will fail at runtime with an unhelpful error. For service / automation accounts (gMSA, CI pipelines, API tokens), set `"two_factor_mode": "disabled"` at creation to opt out explicitly.
+    If the server-wide 2FA default is `"email"` and you create a user without an `email` address, login will fail at runtime with `401` and `error.code` `4013`. For service / automation accounts (gMSA, CI pipelines, API tokens), set `"two_factor_mode": "disabled"` at creation to opt out explicitly.
 
 !!! note "Email requirement"
-    When a user's effective 2FA mode resolves to `email`, the server requires a non-empty `email` field. Setting `two_factor_mode` to `email` without an email address is permitted at the API level but the user will not be able to log in until an email is added.
+    When a user's effective 2FA mode resolves to `email`, the server requires a non-empty `email` field. Setting `two_factor_mode` to `email` without an email address is permitted at the API level but the user will not be able to log in until an email is added (`401`, `error.code` `4013`).
 
 ### `roles` Values
 
@@ -577,7 +577,7 @@ Creates a new user.
     `new_password` is sent as **plaintext** in the JSON body -- the server hashes and stores it. Always call this endpoint over HTTPS. The server applies the configured password policy (complexity, length) if one is active; otherwise it only rejects empty strings.
 
 !!! tip "Service account recipe"
-    Automation / service accounts (CI pipelines, cron jobs, gMSA) usually don't have an email address. If the server-wide 2FA default is `"email"`, the account will be locked out at first login. Opt out explicitly:
+    Automation / service accounts (CI pipelines, cron jobs, gMSA) usually don't have an email address. If the server-wide 2FA default is `"email"`, the account cannot sign in (`401`, `error.code` `4013`) at first login. Opt out explicitly:
 
     ```json
     {

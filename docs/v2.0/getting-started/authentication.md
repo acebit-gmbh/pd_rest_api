@@ -267,6 +267,10 @@ If two-factor authentication is enabled for the user, the login flow has additio
 |:-------------:|---------|-----------------|
 | `459` | TFA not yet activated | Scan QR code from URL in `error.message` field, then resend login with `tfacode` |
 | `460` | TFA code required | Prompt user for 6-digit code, resend login with `tfacode` |
+| `401` with `error.code` `4012` | E-mail 2FA: the server cannot send the verification e-mail | Tell the user to contact the administrator; do not retry automatically; never report a wrong password |
+| `401` with `error.code` `4013` | E-mail 2FA: the account has no e-mail address | Tell the user to contact the administrator |
+
+*`4012` and `4013` require Server 20.0.0 or later; see [Error Responses](../api-reference/authentication.md#error-responses).*
 
 ### Login with 2FA Code
 

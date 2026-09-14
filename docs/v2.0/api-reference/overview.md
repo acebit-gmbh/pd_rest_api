@@ -131,7 +131,16 @@ On error, the server returns a JSON object with a nested `error` object:
     v1.0 used a flat format: `{"code": 404, "error": "..."}`. v2.0 uses a nested structure: `{"error": {"code": 404, "message": "..."}}`.
 
 !!! note "Application sub-codes in `error.code`"
-    `error.code` usually equals the HTTP status, but it may carry an application sub-code (`>= 1000`) that conveys a finer, machine-readable reason. For example, a wrong or missing second password returns HTTP `403` with `error.code = 4031` (`PD_ERRCODE_INVALID_SECOND_PASS`), distinct from a generic access-denied `403` (which keeps `error.code = 403`); and an entry without a one-time code returns HTTP `404` with `error.code = 4041` (`PD_ERRCODE_NO_ONE_TIME_CODE`), distinct from a `404` for an entry that does not exist. The **HTTP status is authoritative** for the response class; `error.code` only refines it. Always match the numeric code, never the localized message.
+    `error.code` usually equals the HTTP status, but it may carry an application sub-code (`>= 1000`) that conveys a finer, machine-readable reason. The **HTTP status is authoritative** for the response class (for example, whether a token was issued); `error.code` only refines it. Always match the numeric code, never the localized message. A client must not infer a specific reason from a sub-code it does not recognise: show a neutral message rather than the reason a plain status would imply -- an unrecognised `401` sub-code on login does not mean the password was wrong.
+
+    | Sub-code | HTTP | Constant | Meaning |
+    |:--------:|:----:|----------|---------|
+    | `4012` | `401` | `PD_ERRCODE_2FA_EMAIL_SEND_FAILED` | Login: e-mail two-factor authentication is required, but the server cannot send the verification e-mail |
+    | `4013` | `401` | `PD_ERRCODE_2FA_EMAIL_MISSING` | Login: e-mail two-factor authentication is required, but the account has no e-mail address |
+    | `4031` | `403` | `PD_ERRCODE_INVALID_SECOND_PASS` | Wrong or missing second password; a generic access-denied `403` keeps `error.code = 403` |
+    | `4041` | `404` | `PD_ERRCODE_NO_ONE_TIME_CODE` | The entry has no one-time code; a `404` for an entry that does not exist keeps `error.code = 404` |
+
+    *Changed in Server 20.0.0.* `4012` and `4013` are new; earlier servers answer both conditions with `401` and `error.code` `401`.
 
 ## Error Codes
 
@@ -219,7 +228,7 @@ On error, the server returns a JSON object with a nested `error` object:
     Clients can parse the `Allow` header programmatically to retry with a supported method.
 
 !!! info "IP lockout (`429`)"
-    After repeated failed `POST /auth/login` attempts from the same IP address, the server blocks that IP for a configurable period (Server Manager &rarr; *Options* &rarr; *Security* &rarr; *Login Attempts*). While the block is active **every** request from that IP is rejected with `429 Too Many Requests` and a `Retry-After` header containing the number of seconds until the block expires. Clients should honor `Retry-After` and back off; retrying immediately will not shorten the lockout.
+    After repeated failed `POST /auth/login` attempts from the same IP address, the server blocks that IP for a configurable period (Server Manager &rarr; *Options* &rarr; *Security* &rarr; *Login Attempts*). While the block is active **every** request from that IP is rejected with `429 Too Many Requests` and a `Retry-After` header containing the number of seconds until the block expires. Clients should honor `Retry-After` and back off; retrying immediately will not shorten the lockout. Login responses with `error.code` `4012` or `4013` do not count as failed attempts (*Server 20.0.0 and later*).
 
     **Loopback addresses** (`127.0.0.0/8`, `::1`, `::ffff:127.0.0.0/8`) are exempt from the block list. This keeps the Password Depot Server Manager (which connects over loopback) reachable even when the public interface is being brute-forced.
 

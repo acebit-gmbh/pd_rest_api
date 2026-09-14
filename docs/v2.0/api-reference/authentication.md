@@ -394,12 +394,51 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 {
   "error": {
     "code": 401,
-    "message": "Invalid username or password"
+    "message": "Logon failure: unknown user name or bad password."
   }
 }
 ```
 
-Returned when credentials are invalid or the account is locked.
+Returned when credentials are invalid or the account is locked (`error.code` `401`).
+
+---
+
+**401 -- Verification e-mail cannot be sent** *(`error.code` `4012`)*
+
+```json
+{
+  "error": {
+    "code": 4012,
+    "message": "Failed to send the authentication email. Please contact your administrator."
+  }
+}
+```
+
+Returned when the user's effective two-factor mode is `email` and the server cannot send e-mail: no SMTP server is configured, or the server's e-mail sender has stopped after repeated connection failures (it resumes only when the Password Depot Server service is restarted). While this lasts, a login that already carries `tfacode` is refused the same way. The HTTP status stays `401` and no token is issued. An administrator must fix this: do not report it as a wrong password and do not retry automatically. It is only reported after the password or identity token was accepted, it does not count towards the IP lockout (`429`), and it is still logged and alerted as a failed login.
+
+An SMTP server that accepts the connection but refuses the message (for example, rejected SMTP credentials) is not detected at login: the client receives `460` and no e-mail arrives.
+
+*Changed in Server 20.0.0.* Earlier servers returned `error.code` `401`, and with no SMTP server configured they answered `460` although no e-mail could be sent.
+
+---
+
+**401 -- No e-mail address for two-factor authentication** *(`error.code` `4013`)*
+
+```json
+{
+  "error": {
+    "code": 4013,
+    "message": "User email is not defined. Please contact your Password Depot Server administrator."
+  }
+}
+```
+
+Returned when the user's effective two-factor mode is `email` but the account has no e-mail address. An administrator must set `email` on the user or change its `two_factor_mode` (see [Users](users.md#two_factor_mode-values)). It is only reported after the password or identity token was accepted, it does not count towards the IP lockout (`429`), and it is still logged and alerted as a failed login. When the server also cannot send e-mail, `4012` is reported instead.
+
+*Changed in Server 20.0.0.* Earlier servers returned `error.code` `401`.
+
+!!! tip "Telling the 401 responses apart"
+    Check `HTTP status == 401`, then `body.error.code`: `401` -- invalid credentials or locked account; `4012` -- the verification e-mail cannot be sent; `4013` -- no e-mail address on the account. For any other sub-code show a neutral sign-in failure, never "wrong password". The `message` is localized by the server; never match on it.
 
 ---
 
@@ -420,7 +459,7 @@ Content-Type: application/json
 }
 ```
 
-Returned when the IP address has exceeded the configured number of failed login attempts within the Login Interval (Server Manager &rarr; *Options* &rarr; *Security*). The block applies to **all** endpoints, not just `/auth/login`, for the duration of the Unblock-After period. The `Retry-After` header carries the remaining lockout in seconds -- honor it and back off; retrying immediately will not shorten the lockout.
+Returned when the IP address has exceeded the configured number of failed login attempts within the Login Interval (Server Manager &rarr; *Options* &rarr; *Security*). The block applies to **all** endpoints, not just `/auth/login`, for the duration of the Unblock-After period. The `Retry-After` header carries the remaining lockout in seconds -- honor it and back off; retrying immediately will not shorten the lockout. Responses with `error.code` `4012` or `4013` do not count towards this limit.
 
 ---
 

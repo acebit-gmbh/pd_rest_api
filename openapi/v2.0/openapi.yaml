@@ -29,10 +29,15 @@ info:
     The `error.code` field normally equals the HTTP status, but may carry an
     application sub-code (`>= 1000`) for a finer machine-readable reason while
     the HTTP status stays the authority for the response class. The sub-codes
-    are `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or missing second
-    password) with HTTP `403`, and `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the
-    entry has no one-time code) with HTTP `404`. Always match the numeric
-    code, never the localized message.
+    are `4012` (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED` -- e-mail two-factor
+    authentication, the verification e-mail cannot be sent) and `4013`
+    (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
+    e-mail address), both with HTTP `401` from `POST /auth/login` (Server
+    20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
+    missing second password) with HTTP `403`; and `4041`
+    (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with HTTP
+    `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
+    message. Always match the numeric code, never the localized message.
 
     ## Response headers
 
@@ -145,7 +150,38 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: |
+            Authentication failed; no token is issued. `error.code` gives the
+            reason: `401` -- invalid credentials or locked account; `4012`
+            (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED`) -- two-factor mode is `email`
+            and the server cannot send the verification e-mail; `4013`
+            (`PD_ERRCODE_2FA_EMAIL_MISSING`) -- two-factor mode is `email` and
+            the account has no e-mail address. Neither 4012 nor 4013 means the
+            password was wrong, and neither counts towards the IP lockout (429).
+            4012/4013: Server 20.0.0 and later.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidCredentials:
+                  summary: Invalid credentials
+                  value:
+                    error:
+                      code: 401
+                      message: "Logon failure: unknown user name or bad password."
+                emailSendFailed:
+                  summary: Verification e-mail cannot be sent
+                  value:
+                    error:
+                      code: 4012
+                      message: "Failed to send the authentication email. Please contact your administrator."
+                emailMissing:
+                  summary: No e-mail address on the account
+                  value:
+                    error:
+                      code: 4013
+                      message: "User email is not defined. Please contact your Password Depot Server administrator."
         "409":
           description: |
             The user account has FIDO2 (security key / passkey) configured as
@@ -3795,14 +3831,18 @@ components:
               type: integer
               description: |
                 Machine-readable error code. Normally equals the HTTP status
-                code, but MAY carry an application sub-code (>= 1000) that
-                conveys a finer reason while the HTTP status remains the
-                authority for the response class. The sub-codes are `4031`
-                (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or missing second
-                password) with HTTP `403`, and `4041`
-                (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time
-                code) with HTTP `404`.
-                Match the numeric code, never the localized message.
+                code, but MAY carry an
+                application sub-code (`>= 1000`) for a finer machine-readable reason while
+                the HTTP status stays the authority for the response class. The sub-codes
+                are `4012` (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED` -- e-mail two-factor
+                authentication, the verification e-mail cannot be sent) and `4013`
+                (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
+                e-mail address), both with HTTP `401` from `POST /auth/login` (Server
+                20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
+                missing second password) with HTTP `403`; and `4041`
+                (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with HTTP
+                `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
+                message. Always match the numeric code, never the localized message.
             message:
               type: string
               description: Human-readable error message

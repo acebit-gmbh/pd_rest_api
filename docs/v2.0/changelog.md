@@ -238,6 +238,21 @@ More generally, `error.code` may now carry an application sub-code (`>= 1000`) t
 
 **Client guidance:** detect the wrong-second-password condition by `HTTP status == 403 && body.error.code == 4031` (and re-prompt for the second password) versus a generic `403` (do not re-prompt). Always match the numeric code, never the localized message. The obsolete v1.0 error format is unchanged (still emits `403`).
 
+#### Error Codes 4012 and 4013 for E-mail Two-Factor Failures
+
+When a user's effective two-factor mode is `email`, `POST /v2.0/auth/login` answered a server-side e-mail failure with a plain `401` (`error.code = 401`), indistinguishable from a wrong password. It now keeps HTTP `401` and the same `error.message`, and sets a distinct `error.code`:
+
+| Condition | HTTP | `error.code` | Constant |
+|-----------|:----:|:------------:|----------|
+| The server cannot send e-mail (no SMTP server configured, or its e-mail sender stopped after repeated connection failures until the service is restarted) | `401` | `4012` | `PD_ERRCODE_2FA_EMAIL_SEND_FAILED` |
+| The account has no e-mail address | `401` | `4013` | `PD_ERRCODE_2FA_EMAIL_MISSING` |
+
+With no SMTP server configured, such a login previously answered `460` ("code sent") although no e-mail could leave; it now returns `4012`. Invalid credentials still return `401` with `error.code = 401`. The 2FA challenges (`459`, `460`), the FIDO2 `409` and the second-password `403` / `4031` are unchanged.
+
+Neither `4012` nor `4013` counts towards the IP lockout (`429`), on the REST API or the classic client protocol; both are only reported after the password or identity token was accepted. Each attempt is still logged and alerted as a failed login, individually -- these attempts are no longer limited by the IP block list and no longer lead to an "IP blocked" server-log entry.
+
+**Client guidance:** detect the conditions by `HTTP status == 401 && body.error.code == 4012` and `== 4013`; in both cases advise contacting the administrator and do not retry automatically. Treat a plain `401` as before. Do not infer a reason from a sub-code you do not recognise: show a neutral sign-in failure, never "wrong password". Always match the numeric code, never the localized message. Servers before 20.0.0 send `error.code = 401` for both conditions.
+
 #### OIDC Login Token Contract (Clarification)
 
 `POST /v2.0/auth/login` with `auth: "oidc"` sends `{ auth, idp, id_token }`. The `id_token` field **must** carry either (a) a signed OIDC `id_token` JWT, or (b) an opaque OAuth access token usable as a Bearer credential at the provider's `userinfo_endpoint`. It **must not** carry a bare authorization `code`.
