@@ -206,14 +206,14 @@ No field names, strings or status codes change, and any other string is still st
 
 #### Seal Checked Against the Caller (Behavior Change)
 
-Reading an entry (`GET /databases/{db}/entries/{id}`) and reading, creating or updating a link now check the seal against **your own** permissions. Previously the check could use the permissions of another user who had opened the same database - applying their seals, or missing yours - and after the database was saved or the server restarted it found no seal at all, so a sealed entry could be read in full.
+Reading an entry (`GET /databases/{db}/entries/{id}`) and reading, creating or updating a link now check the seals that apply to **you** (not ones you issued), including seals set on a parent folder and seals that apply to you through a group.
 
 !!! warning "Behavior change for clients"
-    A sealed entry now consistently returns `403`. No field names, strings or status codes change otherwise.
+    Reading a sealed entry now consistently returns `403`. No field names, strings or status codes change otherwise.
 
 #### Link Targets Weighed Like Direct Requests (Behavior Change)
 
-Reading, creating or updating a **link** now requires the same permissions on the entry it points to as a direct request for that entry would: read **and** use permission, and the entry must not be a folder or in the recycle bin. Previously read permission alone was enough, so a link could show an entry hidden from you, and a link to a deleted entry still returned its password. Alerts set on the linked entry now also fire when it is read through a link.
+Reading, creating or updating a **link** now requires the same permissions on the entry it points to as a direct request for that entry would: read **and** use permission, and the entry must not be a folder or in the recycle bin. Alerts set on the linked entry now also fire when it is read through a link.
 
 !!! warning "Behavior change for clients"
     Such requests now return `403`. Links to entries you can read and use directly are unaffected.
@@ -228,7 +228,7 @@ One-time codes are now computed from true UTC everywhere on the server, includin
 
 #### Second Password Enforced on Update
 
-`PATCH /databases/{db}/entries/{id}` and `PATCH /databases/{db}/folders/{id}` now **require** a correct `X-Second-Password` header when the target item is second-password protected (`has_second_pass=true`); otherwise the server responds `403 Forbidden`. This also applies to the change-second-password flow: when sending `X-New-Second-Password`, the client must additionally send the correct current `X-Second-Password`. Previously the current second password was not verified on update, so a wrong or missing one was silently accepted (a security gap). Items without a second password are unaffected.
+`PATCH /databases/{db}/entries/{id}` and `PATCH /databases/{db}/folders/{id}` now **require** a correct `X-Second-Password` header when the target item is second-password protected (`has_second_pass=true`); otherwise the server responds `403 Forbidden`. This also applies to the change-second-password flow: when sending `X-New-Second-Password`, the client must additionally send the correct current `X-Second-Password`. Items without a second password are unaffected.
 
 #### Error Code 4031 for Wrong Second Password
 
