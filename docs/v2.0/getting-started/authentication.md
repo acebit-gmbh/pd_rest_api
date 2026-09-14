@@ -326,7 +326,7 @@ Retrieve the list of configured OIDC/Azure identity providers. No authentication
 === "PowerShell"
 
     ```powershell
-    $providers = Invoke-RestMethod -Uri "https://your-server:8714/v2.0/auth/oidc"
+    $providers = (Invoke-RestMethod -Uri "https://your-server:8714/v2.0/auth/oidc").data
     $providers | Format-Table id, display_name, provider_class
     ```
 
@@ -337,7 +337,7 @@ Retrieve the list of configured OIDC/Azure identity providers. No authentication
         "https://your-server:8714/v2.0/auth/oidc",
         verify=False
     )
-    providers = response.json()
+    providers = response.json()["data"]
     for p in providers:
         print(f"  {p['display_name']} ({p['provider_class']})")
     ```

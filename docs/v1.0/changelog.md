@@ -22,7 +22,7 @@ The general request checks still come first: an address that is currently blocke
 
 All v1.0 routes are gone, together with the `access_token` / `client_id` header scheme and the flat v1.0 error body. `/file/`, `/temp/` and `/shared/` belong to neither API version. A path that contains one of them goes to that handler before the version check and keeps working.
 
-**What to do:** move to REST API v2.0 before the server is upgraded. v2.0 is supported on Server 19.2.0 and later, so you can make and test the migration against a 19.2.x server first. Then check it again on 20.0.0: the REST API v2.0 changelog lists the v2.0 behaviour that changes in 20.0.0. Detect the removal by the HTTP status `410`, not by the message, which is localizable.
+**What to do:** move to REST API v2.0 before the server is upgraded. v2.0 is available from Server 19.1.0 (its documentation describes 19.2.0 and later), so you can make and test the migration against a 19.2.x server first. Then check it again on 20.0.0: the REST API v2.0 changelog lists the v2.0 behaviour that changes in 20.0.0. Detect the removal by the HTTP status `410`, not by the message, which is localizable.
 
 | v1.0 | v2.0 |
 |------|------|

@@ -626,7 +626,7 @@ Creates a new user.
 |--------|-------------|
 | `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, or password that violates the configured policy. |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions to create users, or attempted to set `roles` without `server_admin` role |
+| `403 Forbidden` | `error.code` `403`: the session is not admin-scoped, the account has neither the `server_admin` nor the `user_admin` role, or it may not set the requested `roles` (requires `server_admin`) or `member_of`. `error.code` `4032` (`PD_ERRCODE_LICENSE_LIMIT`): the server's licensed number of users is reached |
 | `409 Conflict` | A user with this username already exists |
 
 #### Example

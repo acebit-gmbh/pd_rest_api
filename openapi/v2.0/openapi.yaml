@@ -34,9 +34,11 @@ info:
     (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
     e-mail address), both with HTTP `401` from `POST /auth/login` (Server
     20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
-    missing second password) with HTTP `403`; and `4041`
-    (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with HTTP
-    `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
+    missing second password) and `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
+    licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
+    later) with HTTP `403`; and
+    `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with
+    HTTP `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
     message. Always match the numeric code, never the localized message.
 
     ## Response headers
@@ -240,15 +242,23 @@ paths:
         - Authentication
       summary: List configured OpenID Connect providers
       security: []
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
       responses:
         "200":
-          description: List of OIDC providers
+          description: Paginated list of OIDC providers
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/OidcProvider"
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/OidcProvider"
 
   # ---------------------------------------------------------------------------
   # Databases (client)
@@ -1000,10 +1010,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            Refused. `error.code` gives the reason: `403` -- the session is
+            not admin-scoped, the account has neither the `server_admin` nor
+            the `user_admin` role, or it may not set the requested `roles` or
+            `member_of`; `4032` (`PD_ERRCODE_LICENSE_LIMIT`) -- the server's
+            licensed number of users is reached (Server 20.0.0 and later).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                forbidden:
+                  summary: Insufficient permissions
+                  value:
+                    error:
+                      code: 403
+                      message: "This account does not have any of the server roles required for this operation."
+                licenseLimit:
+                  summary: Licensed number of users reached
+                  value:
+                    error:
+                      code: 4032
+                      message: "Number of registered clients 26 exceeds the number of installed licenses 25."
+        "409":
+          description: A user with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/users/{id}:
     get:
@@ -1687,6 +1727,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
 
@@ -3840,9 +3882,11 @@ components:
                 (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
                 e-mail address), both with HTTP `401` from `POST /auth/login` (Server
                 20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
-                missing second password) with HTTP `403`; and `4041`
-                (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with HTTP
-                `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
+                missing second password) and `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
+                licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
+                later) with HTTP `403`; and
+                `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with
+                HTTP `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
                 message. Always match the numeric code, never the localized message.
             message:
               type: string

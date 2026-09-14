@@ -6,7 +6,7 @@ This guide walks you through enabling and configuring the REST web service on yo
 
     REST API v1.0 was **removed in Password Depot Enterprise Server 20.0.0**. A
     Server 20 answers `/v1.0/...` with **410 Gone**. Use the **v2.0** API
-    instead - it is available from Server 19.2.0 onward, so an application can
+    instead - it is available from Server 19.1.0 onward, so an application can
     be moved over before the server it talks to is upgraded. See the v2.0
     documentation for setup and the changelog for what differs.
 

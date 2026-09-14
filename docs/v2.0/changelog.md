@@ -24,7 +24,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - writing a link's fields answers `409`
 - `super_admin` in `roles` is not applied
 - stricter passkey verification
-- new one-time-code endpoint and `has_otp` field; new `401` sub-codes `4012` and `4013`
+- new one-time-code endpoint and `has_otp` field; new sub-codes `4012` and `4013` (`401`) and `4032` (`403`)
 
 ### Breaking Changes
 
@@ -46,7 +46,7 @@ The nested `error` object is the only error shape the server produces; the flat 
 Checks that run before routing still come first: an address under an IP lockout receives `429`, and `OPTIONS` preflight requests are answered with `204`. Paths containing `/file/`, `/temp/` or `/shared/` are not versioned and are routed before the version check, so they keep working and never answer `410`.
 
 !!! warning "Behavior change for clients"
-    Move every `/v1.0/` call to v2.0 before the server is upgraded. v2.0 is supported on Server 19.2.0 and later, so the migration can be made and tested against 19.2.x first. See [New URL Structure](#new-url-structure) for the route mapping. Detect the removal by the HTTP status `410` (also carried in `error.code`), not by the message, which is localizable.
+    Move every `/v1.0/` call to v2.0 before the server is upgraded. v2.0 is available from Server 19.1.0 (this documentation describes 19.2.0 and later), so the migration can be made and tested against a 19.2.x server first. See [New URL Structure](#new-url-structure) for the route mapping. Detect the removal by the HTTP status `410` (also carried in `error.code`), not by the message, which is localizable.
 
 ### New Features
 
@@ -99,17 +99,17 @@ The server setting is checked first, before the user name, token or identity pro
 
 With `POST /v2.0/auth/login` and `auth: "oidc"`, the server matches the user ID from the validated token only against accounts linked to the identity provider named in `idp`. The user ID is the provider's configured user-ID claim, `sub` by default. The comparison is case-sensitive. The login answers `401` with "The server cannot find the user account specified." when that user ID is linked only under a different provider, or only in a different letter case. The message does not include the user ID. The account must also allow OIDC authentication (see **Sign-In Methods Follow the Server and Account Settings**).
 
-#### Per-User IP Restriction Applies to REST Sign-In (Behavior Change)
+#### `401` for a Sign-In From an Address the Account Does Not Allow (Behavior Change)
 
 An account restricted to one IP address or an address range can sign in over REST only from that address:
 
 - **`POST /auth/login`** (every `auth` method, including Negotiate): the check runs after the credentials are accepted, and before the scope check and two-factor authentication. A refusal answers `401` with `error.code = 401` and a localized `error.message` (English: "IP is not authorized."). It counts as a failed login towards the IP lockout (`429`).
-- **`POST /auth/webauthn/complete`**: the check runs after the passkey assertion is verified and after the admin-scope check, before a token is issued. A refusal currently answers `500` (`error.code = 500`) with the generic internal-error message and a `ref` id. It counts towards the IP lockout (`429`).
+- **`POST /auth/webauthn/complete`**: the check runs after the passkey assertion is verified and after the admin-scope check, before a token is issued. A refusal answers `401` with `error.code = 401` and the same message. It counts towards the IP lockout (`429`).
 
 The address compared is the connection's peer address, so behind a reverse proxy it is the proxy's address. An IPv4 client reported as `::ffff:a.b.c.d` is matched as `a.b.c.d`. The address is checked only when a token is issued. Later requests that carry a bearer token are not checked against it.
 
 !!! warning "Behavior change for clients"
-    A `401` at login is a refused sign-in. For an account with an address restriction, a `500` from `/auth/webauthn/complete` may also be this refusal; the response does not distinguish it from an internal fault, so do not retry it automatically. Always match the numeric code, never the localized message.
+    A `401` from `POST /auth/login` or `POST /auth/webauthn/complete` is a refused sign-in; do not retry it automatically. Always match the numeric code, never the localized message.
 
 #### Password Changes End the Account's REST Sessions (Behavior Change)
 
@@ -201,12 +201,12 @@ The server checks the whole request body before applying any of it. If one field
 
 Like `POST /admin/users`, `PATCH` also answers `400` when the resulting `name` is empty, and `409` when another account already has that name. Both checks use the name the account would have after the request, even when the body does not contain `name`. Names are compared without regard to case, so a name held only by this account, in any letter case, is not a conflict. For all of these refusals `error.code` equals the HTTP status. Do not rely on the `error.message` text, which can be localized.
 
-#### User Creation Counts Against the Licensed Number of Users (Behavior Change)
+#### `403` / `4032` When the Licensed Number of Users Is Reached (Behavior Change)
 
-`POST /admin/users` counts the new account against the server's licensed number of users, the same limit the Server Manager applies. When the licensed number is reached, an otherwise valid request creates no user and returns `500` with the standard error body: `error.code` is `500` and `error.message` is the generic internal-error message followed by a short reference, `(ref: XXXXXXXX)`. The reason, with the current and licensed numbers of users, is written to the server log and to the failed request's admin audit record. The REST log holds it under the same reference. Permission, validation and name-conflict errors (`403`, `400`, `409`) are still returned first.
+When the server's licensed number of users is reached (the same limit the Server Manager applies; super-administrators do not count), an otherwise valid `POST /admin/users` creates no user and returns `403` with `error.code` = `4032` (`PD_ERRCODE_LICENSE_LIMIT`). `error.message` gives the number of users the server would have with the new account and the licensed number, in the server's language. The refusal is also written to the server log and to the request's admin audit record. Permission, validation and name-conflict errors (`403` with `error.code` `403`, `400`, `409`) are still returned first.
 
 !!! warning "Behavior change for clients"
-    Provisioning scripts must expect this `500` once the licensed number of users is reached, and must not retry it automatically. There is no licence-specific error code: use the reference in `error.message` to find the cause in the REST log. The installed licences are shown in the Server Manager.
+    Provisioning scripts must expect `403` / `4032` once the licensed number of users is reached, and must not retry it automatically. Tell it apart from a permission refusal by `error.code`, never by the message. The installed licences are shown in the Server Manager.
 
 ### Entries and Folders
 
@@ -472,7 +472,7 @@ New `"auth": "negotiate"` login method enables passwordless authentication via H
 
 #### Long-Lived Tokens for Service Accounts
 
-The Password Depot Server Manager can generate **long-lived access tokens** for a user account, in client or admin scope, with an expiry date 1 to 730 days ahead (180 by default). Unlike session tokens, which lapse after 10 minutes without activity, they do not expire on inactivity, which makes them suitable for automation. A token is refused with `401` once it has expired or has been revoked or deleted in the Server Manager. An admin-scope token is refused with `403` if its account has no Server Manager access. `POST /auth/logout` with such a token answers `200` with `"revoked": false` and `"token_type": "api_token"`, and neither revokes the token nor ends the account's session.
+The Password Depot Server Manager can generate **long-lived access tokens** for a user account, in client or admin scope, with an expiry date 1 to 730 days ahead (180 by default). Unlike session tokens, which lapse after 10 minutes without activity, they do not expire on inactivity, which makes them suitable for automation. A token is refused with `401` once it has expired or has been revoked or deleted in the Server Manager. Only a Super Administrator can generate, revoke or delete them. The token stops working at 00:00 on its expiry date. An admin-scope token is refused with `403` if its account has no Server Manager access, and a client-scope token for a Super Administrator account is refused with `401` ("The admin account cannot login from the client."). `POST /auth/logout` with such a token answers `200` with `"revoked": false` and `"token_type": "api_token"`, and neither revokes the token nor ends the account's session.
 
 #### Native JSON Types
 

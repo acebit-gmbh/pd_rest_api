@@ -138,9 +138,10 @@ On error, the server returns a JSON object with a nested `error` object:
     | `4012` | `401` | `PD_ERRCODE_2FA_EMAIL_SEND_FAILED` | Login: e-mail two-factor authentication is required, but the server cannot send the verification e-mail |
     | `4013` | `401` | `PD_ERRCODE_2FA_EMAIL_MISSING` | Login: e-mail two-factor authentication is required, but the account has no e-mail address |
     | `4031` | `403` | `PD_ERRCODE_INVALID_SECOND_PASS` | Wrong or missing second password; a generic access-denied `403` keeps `error.code = 403` |
+    | `4032` | `403` | `PD_ERRCODE_LICENSE_LIMIT` | `POST /admin/users`: the server's licensed number of users is reached |
     | `4041` | `404` | `PD_ERRCODE_NO_ONE_TIME_CODE` | The entry has no one-time code; a `404` for an entry that does not exist keeps `error.code = 404` |
 
-    *Changed in Server 20.0.0.* `4012` and `4013` are new; earlier servers answer both conditions with `401` and `error.code` `401`.
+    *Changed in Server 20.0.0.* `4012`, `4013`, `4032` and `4041` are new. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`.
 
 ## Error Codes
 

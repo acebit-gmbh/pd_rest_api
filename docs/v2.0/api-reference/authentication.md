@@ -338,7 +338,7 @@ The `id_token` field must carry **either** (a) a signed OIDC `id_token` (JWT) **
 
 By default, access tokens expire after **10 minutes of inactivity** (the timer resets on every authenticated API call). This is suitable for interactive use and short-lived scripts.
 
-For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines, monitoring scripts), the Password Depot Server Manager can generate **long-lived tokens** for administrator accounts with configurable lifetimes (6 months, 1 year, 18 months, or 2 years). Long-lived tokens do not expire on inactivity and remain valid until their expiration date is reached, they are explicitly revoked, or deleted by an administrator.
+For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines, monitoring scripts), a Super Administrator can generate **long-lived tokens** in the Password Depot Server Manager for any user account, in client or admin scope, with an expiry date 1 to 730 days ahead (180 by default). Long-lived tokens do not expire on inactivity. They stay valid until 00:00 on their expiry date, or until they are revoked or deleted in the Server Manager. An admin-scope token needs an account with a server role, and a Super Administrator's token must be admin scope.
 
 !!! tip "When to Use Long-Lived Tokens"
     - Scheduled tasks and cron jobs that need unattended access
