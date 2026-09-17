@@ -135,13 +135,20 @@ On error, the server returns a JSON object with a nested `error` object:
 
     | Sub-code | HTTP | Constant | Meaning |
     |:--------:|:----:|----------|---------|
+    | `4001` | `400` | `PD_ERRCODE_TOTP_SECRET` | Entry `totp` write: `secret` is not strict Base32 of 16 to 128 characters, or yields no code |
+    | `4002` | `400` | `PD_ERRCODE_TOTP_ALGORITHM` | Entry `totp` write: `algorithm` is not `SHA1`, `SHA256` or `SHA512` |
+    | `4003` | `400` | `PD_ERRCODE_TOTP_DIGITS` | Entry `totp` write: `digits` outside `6` to `8` |
+    | `4004` | `400` | `PD_ERRCODE_TOTP_PERIOD` | Entry `totp` write: `period` outside `15` to `120` |
+    | `4005` | `400` | `PD_ERRCODE_TOTP_SHAPE` | Entry `totp` write: wrong shape (`{}`, an unknown member, a wrong JSON type, or no `secret` where one is required) |
+    | `4006` | `400` | `PD_ERRCODE_TOTP_ENTRY_TYPE` | Entry `totp` write: the entry's type cannot carry a one-time code written over REST |
     | `4012` | `401` | `PD_ERRCODE_2FA_EMAIL_SEND_FAILED` | Login: e-mail two-factor authentication is required, but the server cannot send the verification e-mail |
     | `4013` | `401` | `PD_ERRCODE_2FA_EMAIL_MISSING` | Login: e-mail two-factor authentication is required, but the account has no e-mail address |
     | `4031` | `403` | `PD_ERRCODE_INVALID_SECOND_PASS` | Wrong or missing second password; a generic access-denied `403` keeps `error.code = 403` |
     | `4032` | `403` | `PD_ERRCODE_LICENSE_LIMIT` | `POST /admin/users`: the server's licensed number of users is reached |
+    | `4033` | `403` | `PD_ERRCODE_TOTP_READ_REQUIRED` | Entry `totp` write on `PATCH`: read permission on the entry is required as well |
     | `4041` | `404` | `PD_ERRCODE_NO_ONE_TIME_CODE` | The entry has no one-time code; a `404` for an entry that does not exist keeps `error.code = 404` |
 
-    *Changed in Server 20.0.0.* `4012`, `4013`, `4032` and `4041` are new. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`.
+    *Changed in Server 20.0.0.* `4001` to `4006`, `4012`, `4013`, `4032`, `4033` and `4041` are new. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
 
 ## Error Codes
 

@@ -48,7 +48,7 @@ Includes all compact fields plus:
 | `notes` | string | Yes | Notes for approvers or recipients |
 | `access_max` | integer | Yes | Maximum number of times the secret can be opened (default: `1`) |
 | `access_count` | integer | No | Current number of times the secret has been opened (read-only) |
-| `include_totp` | boolean | Yes | Whether to include TOTP codes when displaying the secret (default: `true`) |
+| `include_totp` | boolean | Yes | Accepted and echoed back, but without effect today: the HTTPS shared-link page shows the entry's current one-time code whenever the entry has a TOTP seed, whatever this field says, and the value is not read back when the server reloads its stored secrets (for example after a restart), so it reverts to `true`. See the note on shared links and one-time codes below. |
 | `approval_required` | boolean | Yes | Whether supervisor approval is required before the secret becomes available |
 | `quorum_n` | integer | Yes | Number of approvals required (default: `1`) |
 | `quorum_m` | integer | Yes | Total number of designated approvers (default: `2`) |
@@ -59,6 +59,9 @@ Includes all compact fields plus:
 | `rejected_by` | array of objects | No | List of received rejections (read-only, see below) |
 | `open_uuid` | string | No | Token for the open link (read-only); treat it as a credential. Returned only to the author and to users whose own ID is in `recipient_ids` (membership of a listed group is not enough) — see [Who receives the link tokens](#who-receives-the-link-tokens) |
 | `approve_uuid` | string | No | Token for the approve link (read-only); treat it as a credential. Returned only to the author and to users whose own ID is in `approver_ids` |
+
+!!! note "Shared links and one-time codes"
+    When the shared entry has a TOTP seed, the HTTPS shared-link page (`/shared/<open_uuid>`) shows the entry's current one-time code with a copy button to anyone who opens the link - regardless of `include_totp`. This includes a seed written through the REST API (see [One-Time Code Settings](entries.md#one-time-code-settings)). `include_totp` is stored with the secret only for as long as the server keeps it in memory; it is not read back from the secret store. This is the behaviour as of Server 20.0.0.
 
 **Approval/rejection entries:**
 
@@ -258,7 +261,7 @@ Creates a new shared secret for an entry. The caller must have **share permissio
 | `expires_at` | string (ISO 8601) | No | Expiration timestamp |
 | `notes` | string | No | Notes for approvers or recipients |
 | `access_max` | integer | No | Maximum number of openings (default: `1`) |
-| `include_totp` | boolean | No | Include TOTP codes (default: `true`) |
+| `include_totp` | boolean | No | Accepted for compatibility; without effect today (default: `true`, see [Full Representation](#full-representation)) |
 | `approval_required` | boolean | No | Require supervisor approval (default: `false`) |
 | `quorum_n` | integer | No | Approvals required (default: `1`) |
 | `quorum_m` | integer | No | Total approvers (default: `2`) |

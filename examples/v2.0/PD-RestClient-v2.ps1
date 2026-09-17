@@ -272,16 +272,31 @@ function Get-PDEntry {
 }
 
 function New-PDEntry {
+    <#
+    .SYNOPSIS
+        Creates an entry. -Totp stores a one-time code (TOTP) with it:
+        @{ secret = "<Base32 seed>"; algorithm = "SHA1"; digits = 6; period = 30 }.
+        secret is required; the other members default to SHA1 / 6 / 30.
+        The seed is never returned. Server 20.0.0 or later; older servers
+        ignore the key.
+    #>
     param(
         [Parameter(Mandatory)] [PSCustomObject] $Session,
         [Parameter(Mandatory)] [string] $DatabaseId,
         [Parameter(Mandatory)] [hashtable] $Fields,
-        [string] $ParentId
+        [string] $ParentId,
+        [hashtable] $Totp
     )
     $qp = @{}
     if ($ParentId) { $qp.parent = $ParentId }
 
-    return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries" -Method POST -Body $Fields -QueryParams $qp
+    $body = $Fields
+    if ($Totp) {
+        $body = $Fields.Clone()
+        $body.totp = $Totp
+    }
+
+    return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries" -Method POST -Body $body -QueryParams $qp
 }
 
 function Set-PDEntry {
@@ -343,6 +358,69 @@ function Get-PDEntryOneTimeCode {
         $headers["X-Second-Password"] = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($SecondPassword))
     }
     return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries/$EntryId/otp" -Headers $headers
+}
+
+function Set-PDEntryOneTimeCode {
+    <#
+    .SYNOPSIS
+        Sets, replaces or re-parameterises the entry's one-time code (TOTP)
+        through PATCH .../entries/{id} with a "totp" object. With -Secret the
+        seed is set or replaced and all four members are sent (the omitted ones
+        as SHA1 / 6 / 30). Without -Secret only the members you pass change and
+        the stored seed is kept. The seed is never returned. Long-lived API
+        tokens may write seeds. Server 20.0.0 or later.
+    .EXAMPLE
+        Set-PDEntryOneTimeCode -Session $s -DatabaseId $db -EntryId $id -Secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+        Set-PDEntryOneTimeCode -Session $s -DatabaseId $db -EntryId $id -Digits 8
+    #>
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [Parameter(Mandatory)] [string] $EntryId,
+        [string] $Secret,
+        [string] $Algorithm,
+        [int] $Digits,
+        [int] $Period,
+        [string] $SecondPassword
+    )
+    $totp = @{}
+    if ($Secret) {
+        # When a seed is sent, send all four members (documented client obligation).
+        $totp.secret = $Secret
+        $totp.algorithm = if ($Algorithm) { $Algorithm } else { "SHA1" }
+        $totp.digits = if ($Digits) { $Digits } else { 6 }
+        $totp.period = if ($Period) { $Period } else { 30 }
+    } else {
+        if ($Algorithm) { $totp.algorithm = $Algorithm }
+        if ($Digits) { $totp.digits = $Digits }
+        if ($Period) { $totp.period = $Period }
+    }
+    if ($totp.Count -eq 0) {
+        throw "Set-PDEntryOneTimeCode: pass -Secret, or at least one of -Algorithm, -Digits, -Period"
+    }
+    return Set-PDEntry -Session $Session -DatabaseId $DatabaseId -EntryId $EntryId -Fields @{ totp = $totp } -SecondPassword $SecondPassword
+}
+
+function Clear-PDEntryOneTimeCode {
+    <#
+    .SYNOPSIS
+        Removes the entry's one-time code (TOTP) through PATCH .../entries/{id}
+        with "totp": null. The seed cannot be read back first, and this API
+        cannot restore it (it stays in the entry's history where the database
+        keeps one). Server 20.0.0 or later.
+    #>
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [Parameter(Mandatory)] [string] $EntryId,
+        [string] $SecondPassword
+    )
+    $headers = @{}
+    if ($SecondPassword) {
+        $headers["X-Second-Password"] = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($SecondPassword))
+    }
+    $json = '{"totp":null}'
+    return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries/$EntryId" -Method PATCH -Body $json -Headers $headers
 }
 
 # --- Document Content ---

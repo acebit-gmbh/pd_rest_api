@@ -29,14 +29,22 @@ info:
     The `error.code` field normally equals the HTTP status, but may carry an
     application sub-code (`>= 1000`) for a finer machine-readable reason while
     the HTTP status stays the authority for the response class. The sub-codes
-    are `4012` (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED` -- e-mail two-factor
+    are `4001` (`PD_ERRCODE_TOTP_SECRET`), `4002` (`PD_ERRCODE_TOTP_ALGORITHM`),
+    `4003` (`PD_ERRCODE_TOTP_DIGITS`), `4004` (`PD_ERRCODE_TOTP_PERIOD`), `4005`
+    (`PD_ERRCODE_TOTP_SHAPE`) and `4006` (`PD_ERRCODE_TOTP_ENTRY_TYPE`) -- a
+    refused `totp` write in `createEntry` / `updateEntry` (Server 20.0.0 and
+    later; the first sub-codes of the `400` family, so match the HTTP status
+    rather than `error.code == 400`) with HTTP `400`; `4012`
+    (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED` -- e-mail two-factor
     authentication, the verification e-mail cannot be sent) and `4013`
     (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
     e-mail address), both with HTTP `401` from `POST /auth/login` (Server
     20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
-    missing second password) and `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
+    missing second password), `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
     licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
-    later) with HTTP `403`; and
+    later) and `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
+    `updateEntry` needs read permission on the entry, Server 20.0.0 and later)
+    with HTTP `403`; and
     `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with
     HTTP `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
     message. Always match the numeric code, never the localized message.
@@ -522,6 +530,19 @@ paths:
       description: |
         Create an entry in the database. Set `folder_id` to place it in a
         folder, or omit it to create at root level.
+
+        `totp` (Server 20.0.0 and later) stores a one-time-code (TOTP) seed
+        with the new entry: an `EntryTotpWrite` object whose `secret` is
+        required here; `algorithm`, `digits` and `period` default to `SHA1`,
+        `6` and `30`. `null` is accepted and does nothing. Only `password`,
+        `credit_card`, `license`, `banking` and `custom` entries may carry
+        one (`400` / `4006` otherwise; `501` for `encrypted_file` and
+        `certificate`). The server computes a code once before it writes
+        anything, so a refused `totp` creates nothing and an accepted one
+        always yields `has_otp: true`. The seed is never
+        returned. The write is audited as an entry creation, never as an
+        access. Servers older than 20.0.0 ignore the key; detect support by
+        the presence of `totp` in any entry response.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
       requestBody:
@@ -529,7 +550,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Entry"
+              allOf:
+                - $ref: "#/components/schemas/Entry"
+                - type: object
+                  properties:
+                    totp:
+                      $ref: "#/components/schemas/EntryTotpWrite"
       responses:
         "201":
           description: Entry created
@@ -537,12 +563,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Entry"
+        "400":
+          description: |
+            Invalid or missing fields (`error.code` 400), or a refused `totp`
+            object: `error.code` 4001 (secret), 4002 (algorithm), 4003
+            (digits), 4004 (period), 4005 (shape: `{}`, an unknown member, a
+            wrong JSON type, or no `secret`), 4006 (the entry's type cannot
+            carry a one-time code). The first failing member in the order
+            secret, algorithm, digits, period names the code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          description: "`totp` sent with `type` `encrypted_file` or `certificate`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /databases/{db}/entries/{id}:
     get:
@@ -585,6 +629,30 @@ paths:
         `403` (`error.code` `4031`). To change the second password, send the
         new value in `X-New-Second-Password` together with the correct current
         `X-Second-Password`. Entries without a second password are unaffected.
+
+        `totp` (Server 20.0.0 and later) writes the entry's one-time-code
+        (TOTP) settings. Key absent: untouched. `null`: the seed is removed
+        and the parameters reset to `SHA1` / `6` / `30` (an entry without a
+        seed is left unchanged). An `EntryTotpWrite` object with `secret`:
+        the seed is set or replaced in one call. An
+        object without `secret`: only the members sent change; the stored
+        seed is kept and not re-validated (`400` / `4005` when the entry has
+        no seed). One merge rule: members that arrive are validated and
+        applied, members that are absent keep their stored values -- so send
+        all four members whenever you send `secret`. The server computes a
+        code once before it writes anything; a refused `totp` changes nothing.
+        Besides update permission, a `totp` write needs read permission on
+        the entry (`403` / `4033`) and answers a plain `403` for an entry
+        sealed for the caller; the second password is checked first. Only
+        `password`, `credit_card`, `license`, `banking` and `custom` entries
+        accept the key (`400` / `4006`; `501` for `encrypted_file` and
+        `certificate`; `null` on an entry without a seed does nothing,
+        whatever the type). A link's `totp` is the link's own, the one
+        `getEntryOneTimeCode` computes from; the `409` link guard does not
+        apply, and a refused `totp` never answers `409`. The write is audited
+        as an entry update with an operation-specific message (set, replaced,
+        parameters changed, removed), never as an access. Long-lived API
+        tokens may write seeds like a session. The seed is never returned.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
@@ -610,7 +678,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Entry"
+              allOf:
+                - $ref: "#/components/schemas/Entry"
+                - type: object
+                  properties:
+                    totp:
+                      $ref: "#/components/schemas/EntryTotpWrite"
       responses:
         "200":
           description: Entry updated
@@ -618,6 +691,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Entry"
+        "400":
+          description: |
+            Invalid fields (`error.code` 400), or a refused `totp` write:
+            `error.code` 4001 (secret), 4002 (algorithm), 4003 (digits), 4004
+            (period), 4005 (shape: `{}`, an unknown member, a wrong JSON type,
+            or an object without `secret` on an entry that has no seed), 4006
+            (the entry's type cannot carry a one-time code). The first failing
+            member in the order secret, algorithm, digits, period names the
+            code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -626,13 +712,22 @@ paths:
             protected -- a wrong or missing `X-Second-Password`. The latter
             case returns `error.code` `4031`
             (`PD_ERRCODE_INVALID_SECOND_PASS`); a generic access-denied keeps
-            `error.code` `403`.
+            `error.code` `403`. A `totp` write without read permission on the
+            entry returns `error.code` `4033`
+            (`PD_ERRCODE_TOTP_READ_REQUIRED`); a `totp` write on an entry
+            sealed for the caller keeps `error.code` `403`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          description: "`totp` sent for an entry of type `encrypted_file` or `certificate`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: deleteEntry
       tags:
@@ -2942,6 +3037,21 @@ components:
             settings. False when the caller may not read the entry. Absent on
             servers older than 20.0.0.
           readOnly: true
+        totp:
+          description: |
+            One-time-code (TOTP) settings. In every response this is the
+            read form `EntryTotp`: always present on an entry (never on a
+            folder), always an object, never null, never withheld; compact
+            representations carry `state` only. In a `createEntry` or
+            `updateEntry` request body it is the write form `EntryTotpWrite`,
+            or `null` (`updateEntry`: remove the seed; `createEntry`: no
+            effect). The seed is never part of any response. Absent on
+            servers older than 20.0.0; its presence tells a client that the
+            server accepts the write form, because unknown request keys are
+            ignored silently.
+          oneOf:
+            - $ref: "#/components/schemas/EntryTotp"
+            - $ref: "#/components/schemas/EntryTotpWrite"
         icon:
           type: string
           readOnly: true
@@ -3304,6 +3414,135 @@ components:
           type: string
           enum: [SHA1, SHA256, SHA512]
           example: SHA1
+
+    EntryTotp:
+      type: object
+      description: |
+        Read form of an entry's `totp` key (Server 20.0.0 and later). Present
+        on every entry representation, compact and full; always an object,
+        never null, never withheld. The compact form carries `state` only.
+        The full form adds `writable` and, when `state` is `set` or
+        `invalid`, the stored `digits`, `period`, `algorithm` and
+        `conforming`, echoed as stored so that a repair UI can show them.
+        For `hidden`, only `state` is present. The seed is never a field.
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          enum: [none, set, invalid, unsupported, hidden]
+          readOnly: true
+          description: |
+            In order of precedence: `hidden` (the caller may not read the
+            entry; nothing else is reported), `unsupported` (entry type
+            `encrypted_file` or `certificate`), `set` (a code can be
+            computed; the same as `has_otp: true`), `invalid` (a seed is
+            stored but produces no code), `none` (no seed). Treat a value you
+            do not recognise conservatively, as `hidden`: show no code and
+            offer no editor.
+          example: set
+        writable:
+          type: boolean
+          readOnly: true
+          description: |
+            Full representation only. Whether the entry's type accepts the
+            write form: `password`, `credit_card`, `license`, `banking`,
+            `custom`.
+          example: true
+        digits:
+          type: integer
+          readOnly: true
+          description: |
+            Full representation, `state` set or invalid. The stored code
+            length, echoed as stored (an `invalid` entry may report a value
+            outside 6 to 8).
+          example: 6
+        period:
+          type: integer
+          readOnly: true
+          description: |
+            Full representation, `state` set or invalid. The stored period
+            in seconds, echoed as stored (an `invalid` entry may report a
+            value outside 15 to 120).
+          example: 30
+        algorithm:
+          type: string
+          enum: [SHA1, SHA256, SHA512]
+          nullable: true
+          readOnly: true
+          description: |
+            Full representation, `state` set or invalid. `null` when the
+            stored algorithm is one the server does not know.
+          example: SHA1
+        conforming:
+          type: boolean
+          readOnly: true
+          description: |
+            Full representation, `state` set or invalid. Whether the stored
+            seed and parameters would pass the admission rules of
+            `EntryTotpWrite` today.
+          example: true
+
+    EntryTotpWrite:
+      type: object
+      nullable: true
+      description: |
+        Write form of an entry's `totp` key in `createEntry` and
+        `updateEntry` bodies (Server 20.0.0 and later). Exactly these four
+        members exist; `{}`, any other member or a wrong JSON type answers
+        `400` / `4005`. `null` removes the seed in `updateEntry` and does
+        nothing in `createEntry`. In `createEntry`, `secret` is required and
+        the other members default to SHA1 / 6 / 30. In `updateEntry`, only
+        the members sent are validated and applied; absent members keep their
+        stored values, and an absent `secret` keeps the stored seed without
+        re-validating it -- send all four members whenever you send `secret`.
+        The admission ranges are those of the server's authenticator: the
+        first failing member, in the order secret, algorithm, digits, period,
+        names the sub-code (4001 to 4004). The server computes a code once
+        before it writes anything; a refused write changes nothing.
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        secret:
+          type: string
+          writeOnly: true
+          minLength: 16
+          description: |
+            The seed, Base32 (RFC 4648). Letters are upper-cased, whitespace
+            is dropped and trailing `=` padding is removed before the length
+            (16 to 128 characters) is checked; any other character is refused
+            (`400` / `4001`). The limits apply to the normalised form:
+            `minLength` holds for the raw value too, because normalisation
+            only removes characters, but a raw value with whitespace or
+            padding may be longer than 128 characters, so no `maxLength` is
+            declared. The normalised form is stored. Never returned
+            by any route. Required in `createEntry`; in `updateEntry`,
+            sending it replaces the stored seed in one call and omitting it
+            keeps the stored seed. `""` is not "remove" but an invalid seed.
+          example: GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
+        algorithm:
+          type: string
+          enum: [SHA1, SHA256, SHA512]
+          description: |
+            Case-insensitive. Default in `createEntry`: SHA1. Otherwise
+            `400` / `4002`; an empty string is refused, not read as SHA1.
+          example: SHA1
+        digits:
+          type: integer
+          minimum: 6
+          maximum: 8
+          description: |
+            Code length. Default in `createEntry`: 6. Otherwise `400` /
+            `4003`.
+          example: 6
+        period:
+          type: integer
+          minimum: 15
+          maximum: 120
+          description: |
+            Seconds each code is valid. Default in `createEntry`: 30.
+            Otherwise `400` / `4004`.
+          example: 30
 
     # --- Search ---
     # Search reuses the Entry schema in paginated responses.
@@ -3769,7 +4008,13 @@ components:
               description: How many times the secret has been accessed
             include_totp:
               type: boolean
-              description: Include a TOTP seed in the shared payload
+              description: |
+                Accepted and echoed back, but without effect today: the HTTPS
+                shared-link page shows the entry's current one-time code
+                whenever the entry has a TOTP seed, whatever this value says,
+                and the value is not read back when the server reloads its
+                stored secrets (for example after a restart), so it reverts to
+                true. No seed is ever included in any payload.
             approval_required:
               type: boolean
             quorum_n:
@@ -3877,14 +4122,22 @@ components:
                 code, but MAY carry an
                 application sub-code (`>= 1000`) for a finer machine-readable reason while
                 the HTTP status stays the authority for the response class. The sub-codes
-                are `4012` (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED` -- e-mail two-factor
+                are `4001` (`PD_ERRCODE_TOTP_SECRET`), `4002` (`PD_ERRCODE_TOTP_ALGORITHM`),
+                `4003` (`PD_ERRCODE_TOTP_DIGITS`), `4004` (`PD_ERRCODE_TOTP_PERIOD`), `4005`
+                (`PD_ERRCODE_TOTP_SHAPE`) and `4006` (`PD_ERRCODE_TOTP_ENTRY_TYPE`) -- a
+                refused `totp` write in `createEntry` / `updateEntry` (Server 20.0.0 and
+                later; the first sub-codes of the `400` family, so match the HTTP status
+                rather than `error.code == 400`) with HTTP `400`; `4012`
+                (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED` -- e-mail two-factor
                 authentication, the verification e-mail cannot be sent) and `4013`
                 (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
                 e-mail address), both with HTTP `401` from `POST /auth/login` (Server
                 20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
-                missing second password) and `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
+                missing second password), `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
                 licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
-                later) with HTTP `403`; and
+                later) and `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
+                `updateEntry` needs read permission on the entry, Server 20.0.0 and later)
+                with HTTP `403`; and
                 `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with
                 HTTP `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
                 message. Always match the numeric code, never the localized message.

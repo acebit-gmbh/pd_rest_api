@@ -24,6 +24,7 @@ Returned by list/children and search endpoints.
 | `name` | string | Yes | Entry display name |
 | `has_second_pass` | boolean | No | Whether the entry is protected by a second password |
 | `has_otp` | boolean | No | Whether a one-time code (TOTP) can be generated for this entry - see [Get One-Time Code](#get-one-time-code). For a link, whether the link's own TOTP settings produce one, as the Windows client shows. `false` when you may not read the entry. The seed is never returned. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
+| `totp` | object | No | State of the entry's one-time code: always an object, never `null`, never withheld. The compact form carries `state` only: `none` (no seed), `set` (a code can be computed; the same as `has_otp`), `invalid` (a seed is stored but produces no code), `unsupported` (type `encrypted_file` or `certificate`) or `hidden` (you may not read the entry). This read form is not writable; the write form, which shares the key, is described under [One-Time Code Settings](#one-time-code-settings). The presence of `totp` is how a client detects that the server accepts that write form. Absent on servers older than 20.0.0. |
 | `login` | string | Yes | Login/username (only for `password` and `custom` types). |
 | `url` | string | Yes | Primary URL (only for `password` and `custom` types). |
 | `icon` | string | No | Icon filename (e.g., `"ico12.svg"`). Served at `/file/{icon}`. |
@@ -48,6 +49,7 @@ Returned by the detail endpoint. Includes all compact fields plus:
 | `image_index` | integer | Yes | Standard icon index number |
 | `image_name` | string | Yes | Custom image filename (e.g., `"twitter.com"`) |
 | `comments` | string | Yes | Comments/notes. May require `X-Second-Password` header. |
+| `totp` | object | No | Full form of the one-time-code state (see [One-Time Code Settings](#one-time-code-settings)): `state` as in the compact form; `writable` (whether the entry's type accepts the write form: `password`, `credit_card`, `license`, `banking`, `custom`); and, when `state` is `set` or `invalid`, the stored `digits`, `period`, `algorithm` (`"SHA1"`, `"SHA256"`, `"SHA512"`, or `null` for a stored value the server does not know) and `conforming` (whether the stored seed and parameters would be accepted by the write form today). For `hidden`, only `state` is present. Stored values are echoed as they are - an `invalid` entry may report `digits` `12` or `period` `300`. Never the seed. |
 
 **Password and custom types only:**
 
@@ -404,7 +406,7 @@ The sub-object is present only in the **full representation**. Clients can gener
 
     Reading an entry's [one-time code](#get-one-time-code) requires `X-Second-Password` in the same way - for a link, also the second password of the entry it points to. `has_second_pass` on a link describes the link itself, so handle `4031` on `/otp` whatever it says.
 
-    Updating (`PATCH`) a protected entry **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`.
+    Updating (`PATCH`) a protected entry **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`. Writing the entry's [one-time-code settings](#one-time-code-settings) follows the same rule - the second password is checked before anything about `totp` is - but the seed itself is not encrypted with the second password.
 
     Both headers must be **Base64-encoded** (UTF-8 bytes → Base64). This ensures reliable transport of passwords containing non-ASCII characters (e.g., umlauts, accented letters).
 
@@ -462,6 +464,10 @@ Returns the **full representation** of a specific entry, including the password,
     "name": "GitHub Account",
     "has_second_pass": false,
     "has_otp": false,
+    "totp": {
+        "state": "none",
+        "writable": true
+    },
     "login": "devteam",
     "url": "https://github.com",
     "login_id": "",
@@ -584,6 +590,7 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 | `<type>` | object | No | Type-specific data sub-object keyed by type name (see [Type-Specific Fields](#type-specific-fields)) |
 | `urls` | array of strings | No | Associated URLs |
 | `expires_at` | string (ISO 8601) or null | No | Expiration date |
+| `totp` | object or null | No | One-time-code (TOTP) settings of the new entry, an object with the members `secret`, `algorithm`, `digits` and `period`. `secret` is **required** here and is write-only: it is never returned by any route. `algorithm` (`SHA1`, `SHA256` or `SHA512`), `digits` (`6` to `8`) and `period` (`15` to `120` seconds) default to `SHA1`, `6` and `30` when omitted. No other member is accepted, and `{}` is refused. `null` is accepted and does nothing, so a client may always send the key. Only `password`, `credit_card`, `license`, `banking` and `custom` entries can carry a code. Ignored by servers older than 20.0.0. See [One-Time Code Settings](#one-time-code-settings). |
 
 ```json
 {
@@ -596,11 +603,29 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 }
 ```
 
+With a one-time code (the seed is the RFC 6238 test vector):
+
+```json
+{
+    "type": "password",
+    "name": "Slack Workspace",
+    "login": "admin@company.com",
+    "pass": "Str0ng!P@ssword#2024",
+    "url": "https://company.slack.com",
+    "totp": {
+        "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+        "algorithm": "SHA1",
+        "digits": 6,
+        "period": 30
+    }
+}
+```
+
 ### Response
 
 `201 Created`
 
-Returns the compact representation of the created entry (without `pass`).
+Returns the compact representation of the created entry (without `pass`). When the body carried a `totp` object, the entry reports `has_otp: true` and `totp.state` `set`; a `totp` object that is refused creates nothing.
 
 ```json
 {
@@ -609,6 +634,9 @@ Returns the compact representation of the created entry (without `pass`).
     "name": "Slack Workspace",
     "has_second_pass": false,
     "has_otp": false,
+    "totp": {
+        "state": "none"
+    },
     "login": "admin@company.com",
     "url": "https://company.slack.com",
     "icon": "ico0.svg",
@@ -624,10 +652,11 @@ Returns the compact representation of the created entry (without `pass`).
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields |
+| `400 Bad Request` | Invalid or missing required fields (body `error.code` = `400`), **or** a refused `totp` object (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions |
 | `404 Not Found` | Database or parent folder not found |
+| `501 Not Implemented` | `totp` sent with `type` `encrypted_file` or `certificate` |
 
 ### Example
 
@@ -643,6 +672,27 @@ Returns the compact representation of the created entry (without `pass`).
             "login": "admin@company.com",
             "pass": "Str0ng!P@ssword#2024",
             "url": "https://company.slack.com"
+        }'
+    ```
+
+=== "curl (with one-time code)"
+
+    ```bash
+    curl -X POST "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries?parent=f1a2b3c4-d5e6-7890-abcd-ef1234567890" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "type": "password",
+            "name": "Slack Workspace",
+            "login": "admin@company.com",
+            "pass": "Str0ng!P@ssword#2024",
+            "url": "https://company.slack.com",
+            "totp": {
+                "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+                "algorithm": "SHA1",
+                "digits": 6,
+                "period": 30
+            }
         }'
     ```
 
@@ -685,6 +735,36 @@ Include only the fields you want to update.
 !!! warning
     To move an entry to a different folder, use the dedicated [Move Entry](#move-entry) endpoint.
 
+#### One-time code (`totp`)
+
+The `totp` key writes the entry's one-time-code (TOTP) settings. It has four forms; the admission rules, the entry types, the permissions and the sub-codes are described under [One-Time Code Settings](#one-time-code-settings).
+
+| Body | Effect |
+|------|--------|
+| key absent | The one-time-code settings are untouched |
+| `"totp": null` | Removes the seed and resets the parameters to `SHA1` / `6` / `30` (when a seed is stored; on an entry without one, nothing changes). The entry then reports `has_otp: false` and `totp.state` `none` |
+| `"totp": {"secret": "...", "algorithm": "SHA1", "digits": 6, "period": 30}` | Sets a seed, or replaces the stored one, in a single call - no removal first. Send all four members whenever you send `secret` |
+| `"totp": {"digits": 8}` - an object without `secret` | Changes only the members sent and keeps the stored seed. Refused with `400` / `4005` when the entry has no seed |
+
+**Merge rule** - there is only one: the members that arrive are validated and applied, and the members that are absent keep their stored values. An absent `secret` keeps the stored seed and does **not** re-validate it, so the parameters of an entry whose seed was imported or set by another client can be corrected even when that seed would not be admitted today. `{}`, any member other than the four, or a member of the wrong JSON type answers `400` / `4005`. Because an omitted member keeps whatever is stored, send all four members whenever you send `secret`.
+
+```json
+{
+    "totp": {
+        "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+        "algorithm": "SHA1",
+        "digits": 6,
+        "period": 30
+    }
+}
+```
+
+!!! warning "Sending `null` removes the seed"
+    The seed is never returned, so it cannot be read back before it is removed, and this API cannot restore it. Where the database keeps entry history, the version of the entry before the write - seed included - stays in that history, which native clients with read permission receive with the entry. Send `null` to remove the code and omit the key to leave it alone; a `secret` of `""` is not "remove" but an invalid seed (`400` / `4001`).
+
+!!! note "A refused one-time-code write is never `409`"
+    A refused `totp` answers `400` (`error.code` `4001` to `4006`), `403` (`403`, `4031` or `4033`) or `501` - never `409`. `409` on this route keeps its one meaning: the body tried to write a link's `custom_fields` or type sub-object through the link. A `totp` write on a link is allowed and changes the link's own settings.
+
 ### Response
 
 `200 OK`
@@ -698,6 +778,9 @@ Returns the compact representation of the updated entry.
     "name": "Slack Workspace (Admin)",
     "has_second_pass": false,
     "has_otp": false,
+    "totp": {
+        "state": "none"
+    },
     "login": "admin@company.com",
     "url": "https://company.slack.com",
     "icon": "ico0.svg",
@@ -713,10 +796,11 @@ Returns the compact representation of the updated entry.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields |
+| `400 Bad Request` | Invalid fields (body `error.code` = `400`), **or** a refused `totp` write (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (body `error.code` = `403`), **or** a missing/incorrect `X-Second-Password` for a protected entry (body `error.code` = `4031`) |
+| `403 Forbidden` | Insufficient permissions, or a `totp` write on an entry that is sealed for you (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`) |
 | `404 Not Found` | Database or entry not found |
+| `501 Not Implemented` | `totp` sent for an entry of type `encrypted_file` or `certificate` |
 
 !!! tip "Detecting a wrong second password"
     Updating a second-password-protected entry requires a correct `X-Second-Password`; a wrong or missing one returns `403` with the JSON body `error.code` = `4031` (`PD_ERRCODE_INVALID_SECOND_PASS`), distinct from a generic access-denied `403` (which keeps `error.code` = `403`). Detect the condition by checking `HTTP status == 403 && body.error.code == 4031` and re-prompt the user for the second password; on a generic `403`, do not re-prompt. Always match the numeric `error.code`, never the localized message.
@@ -732,6 +816,33 @@ Returns the compact representation of the updated entry.
         -d '{
             "name": "Slack Workspace (Admin)",
             "pass": "N3wStr0ng!P@ss#2025"
+        }'
+    ```
+
+=== "curl (set or replace the one-time code)"
+
+    ```bash
+    curl -X PATCH "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "totp": {
+                "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+                "algorithm": "SHA1",
+                "digits": 6,
+                "period": 30
+            }
+        }'
+    ```
+
+=== "curl (remove the one-time code)"
+
+    ```bash
+    curl -X PATCH "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "totp": null
         }'
     ```
 
@@ -817,6 +928,9 @@ Returns the compact representation of the moved entry.
     "name": "GitHub Account",
     "has_second_pass": false,
     "has_otp": false,
+    "totp": {
+        "state": "none"
+    },
     "login": "devteam",
     "url": "https://github.com",
     "icon": "ico12.svg",
@@ -873,7 +987,7 @@ Returns the entry's **current one-time code** (TOTP), computed on the server's c
 
 The code is valid for the rest of the current period: `expires_in` is the number of whole seconds until it changes (`1` to `period`), so the time actually left is between `expires_in - 1` and `expires_in` seconds. Do not cache a code, and do not fill one with `expires_in` of `2` or less - wait `expires_in` seconds and fetch the next one.
 
-The same rules apply as for [reading the entry](#get-entry): you need read permission, the entry must not be sealed for you, and a second-password-protected entry needs `X-Second-Password`. Long-lived API tokens cannot read one-time codes; log in to obtain a session. An entry whose [`has_otp`](#compact-representation) is `false` has no code to return.
+The same rules apply as for [reading the entry](#get-entry): you need read permission, the entry must not be sealed for you, and a second-password-protected entry needs `X-Second-Password`. Long-lived API tokens cannot read one-time codes; log in to obtain a session. An entry whose [`has_otp`](#compact-representation) is `false` (`totp.state` other than `set`) has no code to return. To store, replace or remove the settings a code is computed from, see [One-Time Code Settings](#one-time-code-settings).
 
 ### Path Parameters
 
@@ -930,7 +1044,7 @@ The same rules apply as for [reading the entry](#get-entry): you need read permi
     For a link, the code comes from the link's **own** TOTP settings - the same code the Windows client shows for that link. The entry it points to must still be readable by you and must not be in the recycle bin.
 
 !!! info "Audit"
-    Every call is recorded as an entry access in the server's audit log, and "password accessed" alerts fire for it - for a link, alerts set on the link and on the entry it points to.
+    Every successful call is recorded as an entry access in the server's audit log, and "password accessed" alerts fire for it - for a link, alerts set on the link and on the entry it points to. A refused call is recorded as a failed entry access and written to the server log, but fires no alert.
 
 !!! tip "Telling the errors apart"
     Match `error.code`, never the message. `403` with `4031` means prompt for the second password; a plain `403` means do not. `404` with `4041` means the entry exists but has no one-time code; a plain `404` means there is no such entry. A server older than 20.0.0 does not know this endpoint and answers a plain `404` - and omits `has_otp` from its entries, which is the better way to detect the feature.
@@ -950,6 +1064,149 @@ The same rules apply as for [reading the entry](#get-entry): you need read permi
     curl -X GET "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/e1a2b3c4-d5e6-7890-abcd-ef1234567890/otp" \
         -H "Authorization: Bearer <token>" \
         -H "X-Second-Password: $(echo -n 'mySecretPass' | base64)"
+    ```
+
+---
+
+## One-Time Code Settings
+
+*Server 20.0.0 and later.*
+
+Every REST consumer - the web client, the mobile apps, custom automation - can store a one-time-code (TOTP) seed with an entry, replace it, change its parameters or remove it. This is done through the `totp` key of [Create Entry](#create-entry) and [Update Entry](#update-entry); there is no separate route. The server never returns a stored seed: `GET /entries/{id}` reports the parameters, [Get One-Time Code](#get-one-time-code) returns the computed code, and that is everything a client can see. An editor can therefore show the stored `digits`, `period` and `algorithm`, but to change the seed it must ask the user for a whole new one.
+
+### The `totp` object in responses
+
+`totp` is part of every entry representation, compact and full, and is not on folders. It is always an object, never `null`, and never withheld: a caller who may not read the entry receives `{"state": "hidden"}`. Its presence is the way to detect that the server accepts the write form below. The server ignores request keys it does not know, so a client cannot find out by writing.
+
+| Field | Present in | Type | Description |
+|-------|------------|------|-------------|
+| `state` | compact and full | string | `hidden`, `unsupported`, `set`, `invalid` or `none` - see the table below |
+| `writable` | full | boolean | Whether the entry's type accepts the write form |
+| `digits` | full, `set` or `invalid` | integer | Stored code length |
+| `period` | full, `set` or `invalid` | integer | Stored period in seconds |
+| `algorithm` | full, `set` or `invalid` | string or null | `"SHA1"`, `"SHA256"` or `"SHA512"`; `null` when the stored algorithm is one the server does not know |
+| `conforming` | full, `set` or `invalid` | boolean | Whether the stored seed and parameters would pass the admission rules below today |
+
+| `state` | Meaning |
+|---------|---------|
+| `hidden` | You may not read the entry. Nothing else is reported - `{"state": "hidden"}` - not even `writable` |
+| `unsupported` | Entry type `encrypted_file` or `certificate` |
+| `set` | A code can be computed. `has_otp` is `true` in exactly this state |
+| `invalid` | A seed is stored but produces no code. The stored parameters are echoed as they are (for example `digits` `12` or `period` `300`) so that a repair UI can show them |
+| `none` | No seed |
+
+The states are listed in order of precedence: an entry you may not read is `hidden` whatever else is true. Treat a `state` you do not recognise as `hidden` - show no code and offer no editor.
+
+```json
+{
+    "state": "set",
+    "writable": true,
+    "digits": 6,
+    "period": 30,
+    "algorithm": "SHA1",
+    "conforming": true
+}
+```
+
+### The `totp` key in requests
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `secret` | string | The seed, Base32 (RFC 4648). Write-only: never returned by any route. Required on `POST`; on `PATCH` an absent `secret` keeps the stored seed (see the [merge rule](#one-time-code-totp)) |
+| `algorithm` | string | `SHA1`, `SHA256` or `SHA512`, case-insensitive. Default on `POST`: `SHA1`. An empty string is refused (`4002`), not read as `SHA1` |
+| `digits` | integer | `6` to `8`. Default on `POST`: `6` |
+| `period` | integer | `15` to `120` seconds. Default on `POST`: `30` |
+
+Only these four members exist. `{}`, any other member, or a member of the wrong JSON type answers `400` / `4005`; so does an object without `secret` on `POST`, or on `PATCH` for an entry that has no seed. `null` removes the code on `PATCH` and does nothing on `POST`. The four forms of the key and the merge rule are under [Update Entry](#one-time-code-totp).
+
+**Admission.** The seed is normalised first - letters are upper-cased, whitespace is dropped anywhere, `=` padding is dropped from the end - and must then be 16 to 128 Base32 characters (`A` to `Z`, `2` to `7`). Any other character is refused; nothing is silently dropped, because a swallowed typo would store a seed no authenticator app shares. The server stores the normalised form. After the sent and the stored values are merged, the server computes a code once; if that fails, the seed is refused as well. A refused write changes nothing, so an accepted write always leaves the entry with `has_otp: true` and `totp.state` `set`. On `PATCH`, only the members that arrive are validated - a stored seed is never re-judged by a parameter change. The first failing member, in the order `secret`, `algorithm`, `digits`, `period`, names the sub-code.
+
+**Entry types.** `password`, `credit_card`, `license`, `banking` and `custom` can carry a one-time code written over REST - the types whose Windows editor has the one-time-code fields. Any other type answers `400` / `4006`; `encrypted_file` and `certificate` answer `501`, as they do on every route. The one exception is `null` on an entry that has no seed: there is nothing to remove, so it does nothing whatever the type; `null` over a stored seed is judged by the type like an object. The check uses the type the entry has **after** the request: the `type` of a `POST` body, or a `type` change sent in the same `PATCH`. An entry of another type that already has a seed - an `rdp` entry, for example - keeps showing it (`has_otp`, `totp` and `/otp` are unchanged), but its seed cannot be changed or removed over REST.
+
+**Links.** A link may carry a one-time code. The write goes to the link's **own** settings - the ones `/otp` computes the link's code from - and the entry it points to is weighed as on every other write of a link. The `409` that guards a link's `custom_fields` and type sub-object does not apply to `totp`.
+
+**Permissions and tokens.** A `totp` write needs the rights of any other entry write - create permission on the folder for `POST`, update permission on the entry for `PATCH` - and, on `PATCH`, read permission on the entry as well (`403` / `4033`): a caller who may update but not read an entry cannot destroy a seed they cannot see. An entry that is sealed for you answers a plain `403`. Long-lived API tokens write seeds exactly like a session; they still cannot read one, because no route returns a seed, and they still cannot read codes.
+
+**Second password.** On `PATCH`, a protected entry needs the correct `X-Second-Password` (`403` / `4031`) before anything about `totp` is looked at; the seed itself is not encrypted with the second password. On `POST`, `totp` needs no `X-Second-Password`; `X-New-Second-Password` keeps its own rule (the `second_pass` permission).
+
+**Audit and alerts.** A one-time-code write is recorded as an entry **modification** - a creation or an update - never as an entry access, and the alerts that fire are the ones for a password added or modified, never "password accessed". The audit message names the operation: on `PATCH`, that the entry's one-time code has been set, replaced, had its parameters changed, or been removed; on `POST`, that a new entry with a one-time code has been added. A refused write is recorded as a failed modification. No audit entry, server-log line, alert or error message ever contains the submitted seed.
+
+### Order of checks
+
+`PATCH /v2.0/databases/{db}/entries/{id}` with a `totp` key:
+
+1. `404` when the database or entry does not exist, the id is a folder, or the entry is in the recycle bin; `403` without use permission
+2. `403` without update permission
+3. `400` when the body is not a JSON object
+4. `403` / `4031` for a wrong or missing `X-Second-Password` on a protected entry
+5. `403` when `X-New-Second-Password` is sent without the `second_pass` permission
+6. Without a `totp` key nothing below applies; the request behaves as before 20.0.0
+7. `400` / `4005` when `totp` is not `null` or an object of the four members
+8. `403` / `4033` without read permission on the entry
+9. `403` when the entry is sealed for you
+10. `400` / `4006` or `501` for the entry's type (after a `type` change in the same body)
+11. `400` / `4005` for an object without `secret` on an entry that has no seed
+12. `400` / `4001` to `4004` from the admission rules and the code computation
+13. Only now is the entry written, as one: the previous version goes to the history where the database keeps one, the body is applied, `updated_at` is bumped, and the write is audited
+
+`POST /v2.0/databases/{db}/entries` with a `totp` key: the parent folder and create permission (`404`, `403`), then the body (`400`), then `X-New-Second-Password`, then `totp` in the same order - `4005` for the shape, `4006` / `501` for the type, `4005` for an object without `secret` (required here), `4001` to `4004`. There is no read or seal check on `POST`, because there is nothing to hide yet.
+
+### Sub-codes
+
+| Status | `error.code` | Constant | Meaning |
+|:------:|:------------:|----------|---------|
+| `400` | `4001` | `PD_ERRCODE_TOTP_SECRET` | `secret` is not strict Base32 of 16 to 128 characters after normalisation, or yields no code |
+| `400` | `4002` | `PD_ERRCODE_TOTP_ALGORITHM` | `algorithm` is not `SHA1`, `SHA256` or `SHA512` |
+| `400` | `4003` | `PD_ERRCODE_TOTP_DIGITS` | `digits` outside `6` to `8` |
+| `400` | `4004` | `PD_ERRCODE_TOTP_PERIOD` | `period` outside `15` to `120` |
+| `400` | `4005` | `PD_ERRCODE_TOTP_SHAPE` | Wrong shape: `{}`, a member other than the four, a wrong JSON type, or no `secret` where one is required |
+| `400` | `4006` | `PD_ERRCODE_TOTP_ENTRY_TYPE` | The entry's type cannot carry a one-time code written over REST |
+| `403` | `403` | - | No update or create permission, or the entry is sealed for you |
+| `403` | `4031` | `PD_ERRCODE_INVALID_SECOND_PASS` | Wrong or missing second password (`PATCH`) |
+| `403` | `4033` | `PD_ERRCODE_TOTP_READ_REQUIRED` | No read permission on the entry (`PATCH`) |
+| `501` | `501` | - | Entry type `encrypted_file` or `certificate` |
+
+`4001` to `4006` are the first sub-codes of the `400` family. A client that recognised a bad request by `error.code == 400` must match the HTTP status instead, as the [error format](overview.md#error-format) has always asked.
+
+!!! warning "Shared links show the code"
+    The HTTPS shared-link page (`/shared/<open_uuid>`, see [Secrets](secrets.md)) shows the shared entry's current one-time code, with a copy button, to anyone who opens the link - whenever the entry has a seed, whatever the secret's `include_totp` says. A seed stored through this API is therefore visible, as the code current at the moment the page is opened, on every anonymous HTTPS shared link of that entry for as long as the link can be opened. This behaviour is unchanged in 20.0.0.
+
+!!! note "History and concurrent clients"
+    - Where the database keeps entry history, every `totp` write - a removal included - first stores the previous version of the entry, seed included, in that history. Native clients with read permission receive the history with the entry.
+    - `updated_at` is bumped by every accepted `totp` write, a parameter-only change included.
+    - REST writes carry no lock and no `If-Match`. A native client that holds an older copy of the entry and saves it afterwards overwrites the seed written here, as it would any other field.
+
+### Examples
+
+=== "curl (change the parameters only)"
+
+    ```bash
+    curl -X PATCH "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "totp": {
+                "digits": 8,
+                "period": 60
+            }
+        }'
+    ```
+
+=== "curl (with second password)"
+
+    ```bash
+    curl -X PATCH "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -H "X-Second-Password: $(echo -n 'mySecretPass' | base64)" \
+        -d '{
+            "totp": {
+                "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+                "algorithm": "SHA256",
+                "digits": 6,
+                "period": 30
+            }
+        }'
     ```
 
 ---
@@ -1048,6 +1305,9 @@ Returns the compact representation of the entry. Note that the `document` sub-ob
     "name": "Q4 Report",
     "has_second_pass": false,
     "has_otp": false,
+    "totp": {
+        "state": "none"
+    },
     "icon": "ico0.svg",
     "importance": "normal",
     "category": "",

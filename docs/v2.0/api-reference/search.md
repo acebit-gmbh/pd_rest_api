@@ -50,6 +50,9 @@ Returns a paginated list of matching items. Each item is a **compact representat
             "name": "Production Database",
             "has_second_pass": false,
             "has_otp": false,
+            "totp": {
+              "state": "none"
+            },
             "login": "admin",
             "url": "https://db.example.com",
             "icon": "ico5.svg",

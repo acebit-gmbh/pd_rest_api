@@ -114,6 +114,9 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/children?offset=0&li
       "name": "GitHub Account",
       "has_second_pass": false,
       "has_otp": false,
+      "totp": {
+        "state": "none"
+      },
       "login": "devteam",
       "url": "https://github.com",
       "icon": "ico12.svg",
@@ -129,6 +132,9 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/children?offset=0&li
       "name": "AWS Console",
       "has_second_pass": false,
       "has_otp": false,
+      "totp": {
+        "state": "none"
+      },
       "login": "admin@company.com",
       "url": "https://console.aws.amazon.com",
       "icon": "ico5.svg",
@@ -167,6 +173,10 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries/$ENTRY" \
   "name": "GitHub Account",
   "has_second_pass": false,
   "has_otp": false,
+  "totp": {
+    "state": "none",
+    "writable": true
+  },
   "login": "devteam",
   "url": "https://github.com",
   "login_id": "",
@@ -234,6 +244,9 @@ curl -k -X POST "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries" \
   "name": "Slack Workspace",
   "has_second_pass": false,
   "has_otp": false,
+  "totp": {
+    "state": "none"
+  },
   "login": "admin@company.com",
   "url": "https://company.slack.com",
   "icon": "ico0.svg",
@@ -280,6 +293,9 @@ Returns the compact representation of the updated entry.
   "name": "Slack Workspace (Admin)",
   "has_second_pass": false,
   "has_otp": false,
+  "totp": {
+    "state": "none"
+  },
   "login": "admin@company.com",
   "url": "https://company.slack.com",
   "icon": "ico0.svg",

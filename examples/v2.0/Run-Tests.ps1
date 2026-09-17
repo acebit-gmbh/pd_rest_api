@@ -651,6 +651,111 @@ if (-not $testDbId) {
             name = "BadType_$ts"
         }
     }) { Pass-Test "400 as expected" }
+
+    # 4.10 One-time code round trip (Server 20.0.0+). The 'totp' key on any
+    # entry representation is the feature switch: without it the server
+    # ignores the key in POST/PATCH bodies, so the whole block is skipped.
+    # The seed is the RFC 6238 test vector; it is never returned by the API.
+    $totpSupported = $false
+    Start-Test "One-time code: server support ('totp' key present)"
+    if ($testEntryId) {
+        try {
+            $probe = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $testEntryId
+            if ($null -ne $probe.PSObject.Properties['totp']) {
+                $totpSupported = $true
+                Pass-Test "state=$($probe.totp.state), writable=$($probe.totp.writable)"
+            } else {
+                Skip-Test "Server has no 'totp' key (older than 20.0.0)"
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Entry not created" }
+
+    $totpEntryId = $null
+    $totpSeed = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+
+    Start-Test "One-time code: create entry with seed -> has_otp true, state 'set'"
+    if ($totpSupported) {
+        try {
+            $otpEntry = New-PDEntry -Session $adminSession -DatabaseId $testDbId -ParentId $testFolderId -Fields @{
+                type = "password"
+                name = "TestTotp_$ts"
+                login = "totpuser"
+                pass = "S3cureP@ss!"
+            } -Totp @{ secret = $totpSeed; algorithm = "SHA1"; digits = 6; period = 30 }
+            $ok = (Assert-NotNull $otpEntry.id "id") -and
+                  (Assert-Equal $true $otpEntry.has_otp "has_otp") -and
+                  (Assert-Equal "set" $otpEntry.totp.state "totp.state")
+            if ($ok) {
+                $totpEntryId = $otpEntry.id
+                Pass-Test "id=$totpEntryId"
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No 'totp' support" }
+
+    Start-Test "One-time code: full representation reports parameters, never the seed"
+    if ($totpEntryId) {
+        try {
+            $full = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId
+            $ok = (Assert-Equal "set" $full.totp.state "totp.state") -and
+                  (Assert-Equal $true $full.totp.writable "totp.writable") -and
+                  (Assert-Equal 6 $full.totp.digits "totp.digits") -and
+                  (Assert-Equal 30 $full.totp.period "totp.period") -and
+                  (Assert-Equal "SHA1" $full.totp.algorithm "totp.algorithm") -and
+                  (Assert-Equal $true $full.totp.conforming "totp.conforming") -and
+                  (Assert-True ($null -eq $full.totp.PSObject.Properties['secret']) "no 'secret' member in response")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "TOTP entry not created" }
+
+    Start-Test "One-time code: GET /otp returns a 6-digit code"
+    if ($totpEntryId) {
+        try {
+            $otp = Get-PDEntryOneTimeCode -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId
+            $ok = (Assert-Equal 6 $otp.digits "digits") -and
+                  (Assert-Equal 6 $otp.code.Length "code length") -and
+                  (Assert-True ($otp.code -match '^[0-9]+$') "code is numeric") -and
+                  (Assert-GreaterThan $otp.expires_in 0 "expires_in")
+            if ($ok) { Pass-Test "code=******, expires_in=$($otp.expires_in)" }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "TOTP entry not created" }
+
+    Start-Test "One-time code: change digits only (seed kept) -> 8-digit code"
+    if ($totpEntryId) {
+        try {
+            $upd = Set-PDEntryOneTimeCode -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId -Digits 8
+            $otp8 = Get-PDEntryOneTimeCode -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId
+            $ok = (Assert-Equal "set" $upd.totp.state "totp.state after PATCH") -and
+                  (Assert-Equal 8 $otp8.digits "digits") -and
+                  (Assert-Equal 8 $otp8.code.Length "code length")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "TOTP entry not created" }
+
+    Start-Test "One-time code: invalid digits -> 400"
+    if ($totpEntryId) {
+        if (Assert-HttpError -ExpectedCode 400 -Action {
+            Set-PDEntryOneTimeCode -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId -Digits 12
+        }) { Pass-Test "400 as expected" }
+    } else { Skip-Test "TOTP entry not created" }
+
+    Start-Test "One-time code: clear -> has_otp false, state 'none'"
+    if ($totpEntryId) {
+        try {
+            $cleared = Clear-PDEntryOneTimeCode -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId
+            $ok = (Assert-Equal $false $cleared.has_otp "has_otp") -and
+                  (Assert-Equal "none" $cleared.totp.state "totp.state")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "TOTP entry not created" }
+
+    Start-Test "One-time code: GET /otp after clear -> 404"
+    if ($totpEntryId) {
+        if (Assert-HttpError -ExpectedCode 404 -Action {
+            Get-PDEntryOneTimeCode -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId
+        }) { Pass-Test "404 as expected" }
+        # Clean up
+        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId } catch {}
+    } else { Skip-Test "TOTP entry not created" }
 }
 
 $totalFailures += Write-TestSummary
