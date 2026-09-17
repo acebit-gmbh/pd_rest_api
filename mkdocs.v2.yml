@@ -1,0 +1,77 @@
+site_name: Password Depot Server REST API v2.0
+site_description: Official documentation for the Password Depot Enterprise Server REST API v2.0
+site_url: https://www.password-depot.de/en/documentation/rest-api/v2.0/
+docs_dir: docs/v2.0
+
+theme:
+  name: material
+  custom_dir: overrides
+  palette:
+    - scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+extra:
+  version:
+    provider: mike
+    default: v2.0
+  social:
+    - icon: fontawesome/solid/globe
+      link: https://www.password-depot.de
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Server Setup: getting-started/setup.md
+      - Authentication: getting-started/authentication.md
+      - Quick Start: getting-started/quick-start.md
+  - API Reference:
+      - Overview: api-reference/overview.md
+      - Authentication: api-reference/authentication.md
+      - Databases: api-reference/databases.md
+      - Folders: api-reference/folders.md
+      - Entries: api-reference/entries.md
+      - Search: api-reference/search.md
+      - Users: api-reference/users.md
+      - Groups: api-reference/groups.md
+      - Permissions: api-reference/permissions.md
+      - Alerts: api-reference/alerts.md
+      - Secrets: api-reference/secrets.md
+  - Changelog: changelog.md
