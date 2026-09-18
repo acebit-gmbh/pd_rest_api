@@ -1168,8 +1168,8 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 
 `4001` to `4006` are the first sub-codes of the `400` family. A client that recognised a bad request by `error.code == 400` must match the HTTP status instead, as the [error format](overview.md#error-format) has always asked.
 
-!!! warning "Shared links show the code"
-    The HTTPS shared-link page (`/shared/<open_uuid>`, see [Secrets](secrets.md)) shows the shared entry's current one-time code, with a copy button, to anyone who opens the link - whenever the entry has a seed, whatever the secret's `include_totp` says. A seed stored through this API is therefore visible, as the code current at the moment the page is opened, on every anonymous HTTPS shared link of that entry for as long as the link can be opened. This behaviour is unchanged in 20.0.0.
+!!! warning "Shared links pass the one-time code on"
+    A seed stored through this API is visible on a shared link of that entry (see [Secrets](secrets.md)) unless the link was created with `include_totp` `false`. `include_totp` defaults to `true`. On the anonymous HTTPS shared-link page (`/shared/<open_uuid>`), anyone who opens the link sees the code that is current at the moment the page is opened, with a copy button, for as long as the link can be opened; the page does not refresh the code and never shows the seed. Over `pd-server`, the seed itself travels with the entry, so the recipient's client computes the codes. With `include_totp` `false`, neither happens. Servers before 20.0.0 accepted and echoed `include_totp` but neither kept it across a restart nor applied it: every shared link behaved as `true`.
 
 !!! note "History and concurrent clients"
     - Where the database keeps entry history, every `totp` write - a removal included - first stores the previous version of the entry, seed included, in that history. Native clients with read permission receive the history with the entry.

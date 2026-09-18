@@ -4009,12 +4009,20 @@ components:
             include_totp:
               type: boolean
               description: |
-                Accepted and echoed back, but without effect today: the HTTPS
-                shared-link page shows the entry's current one-time code
-                whenever the entry has a TOTP seed, whatever this value says,
-                and the value is not read back when the server reloads its
-                stored secrets (for example after a restart), so it reverts to
-                true. No seed is ever included in any payload.
+                Whether the recipient gets the shared entry's one-time code.
+                Default `true`, also when omitted on create; on `PATCH` an
+                omitted value keeps the stored one. With `true`, the HTTPS
+                shared-link page shows the code that is current at the moment
+                the page is opened (the page does not refresh it and never
+                shows the seed), and over `pd-server` the TOTP seed travels
+                with the entry, so the recipient's client computes the codes.
+                With `false`, neither happens: the page shows no one-time
+                code and the entry is delivered without its seed. The value
+                is kept across server restarts and is read each time the
+                secret is opened. Servers before 20.0.0 accepted and echoed
+                the value but neither kept it across a restart nor applied
+                it: every shared link behaved as `true`. No REST response
+                ever carries the seed.
             approval_required:
               type: boolean
             quorum_n:

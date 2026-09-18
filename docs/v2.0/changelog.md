@@ -20,6 +20,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `importance` strings map to the levels the desktop and mobile clients show
 - a password change ends the account's REST sessions
 - `open_uuid` and `approve_uuid` are optional in the secret representation
+- `include_totp: false` on a shared secret is applied: the recipient no longer gets the entry's one-time code
 - deleted entries and folders answer `404`
 - writing a link's fields answers `409`
 - `super_admin` in `roles` is not applied
@@ -348,6 +349,22 @@ The list representation carries neither token, as before. No other field is affe
 
 !!! warning "Behavior change for clients"
     Handle `403` on this call. Detect it by the status and `error.code`, not by the message text, which is localized. No field names, response bodies or other status codes change.
+
+#### Fix: `include_totp` Applied to Shared Links (Behavior Change)
+
+`include_totp` on a shared secret decides whether the recipient gets the shared entry's one-time code. The default is `true`, also when the field is omitted on `POST /secrets` and `POST /admin/secrets`:
+
+| `include_totp` | `https` secret | `pd-server` secret |
+|----------------|----------------|--------------------|
+| `true` | The shared-link page (`/shared/<open_uuid>`) shows the code that is current at the moment the page is opened, with a copy button. The page does not refresh the code and never shows the seed. | The TOTP seed travels with the entry, so the recipient's client computes the codes itself. |
+| `false` | The page shows no one-time code. | The entry is delivered without its TOTP seed, the history it carries included. |
+
+Servers before 20.0.0 accepted and echoed the value but neither kept it across a restart nor applied it: every shared link behaved as `true`, and a secret created with `false` reported `true` again after the next restart. Server 20.0.0 applies the value each time a secret is opened and keeps it across restarts. The fix matters more now that a seed can be written with one REST call (see [One-Time Codes (TOTP)](#one-time-codes-totp)): "write a seed, then share the entry" handed out the code, or over `pd-server` the seed, even when the creator had asked for `false`.
+
+The page shows a code only when the entry can produce one -- the condition behind `has_otp`. An entry whose stored TOTP settings are invalid (`totp.state` `invalid`), or whose type is `encrypted_file` or `certificate` (`totp.state` `unsupported`), shows its other fields without a code. `PATCH /admin/secrets/{id}` accepts `include_totp` as before; an omitted value keeps the stored one. The server's shared-secret policy does not change the value, and secrets created in the Windows client carry `true`.
+
+!!! warning "Behavior change for clients"
+    A client that sent `include_totp: false` and relied on the code still showing must send `true` or omit the field. A client that sends `false` for every secret now shares entries without their one-time code. A secret that was created with `false` on an earlier server reports `true` after the upgrade (earlier servers never kept the value): read `include_totp` of the secrets that can still be opened, and set it to `false` with `PATCH /admin/secrets/{id}` where the creator had asked for that. No field names, status codes or response shapes change.
 
 ### Passkeys (WebAuthn)
 
