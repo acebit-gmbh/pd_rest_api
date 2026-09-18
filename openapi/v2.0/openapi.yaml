@@ -2612,7 +2612,8 @@ paths:
         an older server answers a plain `404`.
 
         Without `ids`: a paginated list of the database's icons WITHOUT image
-        data (`id`, `name`, `version`), ordered by position. With `ids` and
+        data (`id`, `name`, `version`), ordered by position; with `ids`, in
+        the order the ids were given. With `ids` and
         `include=data`: up to `batch_max` (32) icons with `state` and, for
         `state` `ok`, the image fields. `include=data` requires `ids`; there
         is no paged listing of images.
@@ -2620,10 +2621,10 @@ paths:
         Removed icons and icons without image data are never listed and do
         not count in `total`. A requested id that is unknown, removed or
         empty is silently left out: treat a requested id that does not come
-        back as gone. Images are added while the decoded image bytes of the
-        response stay within 2 MiB; later items carry `state` `deferred` and
-        are fetched with `getDatabaseIcon`. Icons uploaded over REST are
-        never deferred.
+        back as gone. Images are added until the decoded image bytes of the
+        response reach 2 MiB; the image that reaches the limit is returned
+        whole, and later items carry `state` `deferred` and are fetched with
+        `getDatabaseIcon`. Icons uploaded over REST are never deferred.
 
         Needs nothing beyond access to the database: client scope the
         database-level `use` right, admin scope management of the database;
@@ -2637,7 +2638,8 @@ paths:
           required: false
           description: |
             Comma-separated icon ids, 1 to 32 (`batch_max`), each 1 to 6
-            decimal digits; duplicates are collapsed. `offset` and `limit`
+            decimal digits; duplicates are collapsed, but the count is taken
+            before that, so more than 32 ids answer 400 even when some repeat. `offset` and `limit`
             are ignored when `ids` is given. More than 32 ids, or a
             malformed value, answers `400`.
           schema:

@@ -78,14 +78,14 @@ Without `ids`, returns a paginated list of the database's icons **without** imag
 |-----------|------|----------|-------------|
 | `offset` | integer | No | Pagination offset (default: `0`). Ignored when `ids` is given |
 | `limit` | integer | No | Pagination limit (default: `100`, clamped to `1000`). Ignored when `ids` is given |
-| `ids` | string | No | Comma-separated icon ids, `1` to `batch_max` (`32`) of them, each 1 to 6 decimal digits. Duplicates are collapsed. More than `32`, or a malformed value, answers `400` |
+| `ids` | string | No | Comma-separated icon ids, `1` to `batch_max` (`32`) of them, each 1 to 6 decimal digits. The count is taken before duplicates are collapsed, so more than `32` ids answers `400` even when some repeat. A malformed value answers `400` |
 | `include` | string | No | `data` adds `state` and the image fields to every item. Requires `ids` (`400` otherwise): there is no paged listing of images |
 
 ### Response
 
 `200 OK`
 
-The standard [paginated envelope](overview.md#pagination), ordered by the icons' position in the database.
+The standard [paginated envelope](overview.md#pagination), ordered by the icons' position in the database. With `ids`, the icons come back in the order the ids were given, so a client can match them up positionally.
 
 ```json
 {
@@ -132,7 +132,7 @@ With `ids=3,7&include=data`:
 
 **Removed icons.** Icons that were removed in another client, and icons without image data, are never listed and do not count in `total`. A requested id that is unknown, removed or empty is left out without an error: treat a requested id that does not come back as gone.
 
-**Byte budget.** Images are added while the decoded image bytes of the response stay within 2 MiB; the items after that come back with `state` `deferred` and no image. Icons uploaded through this API are at most `max_bytes` each, so 32 of them always fit; `deferred` concerns large icons stored by older clients.
+**Byte budget.** Images are added until the decoded image bytes of the response reach 2 MiB; the image that reaches the limit is still returned whole, so one response can exceed the budget by at most one image, and the items after it come back with `state` `deferred` and no image. Icons uploaded through this API are at most `max_bytes` each, so 32 of them always fit; `deferred` concerns large icons stored by older clients.
 
 ### Error Responses
 
