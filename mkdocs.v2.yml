@@ -68,6 +68,7 @@ nav:
       - Databases: api-reference/databases.md
       - Folders: api-reference/folders.md
       - Entries: api-reference/entries.md
+      - Database Icons: api-reference/icons.md
       - Search: api-reference/search.md
       - Users: api-reference/users.md
       - Groups: api-reference/groups.md

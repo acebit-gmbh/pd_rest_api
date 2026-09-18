@@ -423,6 +423,199 @@ function Clear-PDEntryOneTimeCode {
     return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries/$EntryId" -Method PATCH -Body $json -Headers $headers
 }
 
+# --- Database Icons ---
+
+function Get-PDDatabaseIcon {
+    <#
+    .SYNOPSIS
+        Reads the icons stored in a database ("custom icons"). Without -Id or
+        -Ids: the paginated list, without image data (id, name, version).
+        -Ids with -IncludeData: up to 32 icons with their images in one call.
+        -Id: one icon with its image; -OutFile also writes the decoded image
+        to a file. The image is Base64 in 'data'; 'content_type' is image/png,
+        or image/bmp for icons an older client stored. Detect support by the
+        'icons' object on the database. Server 20.0.0 or later.
+    .EXAMPLE
+        (Get-PDDatabaseIcon -Session $s -DatabaseId $db).data | Format-Table id, name, version
+        Get-PDDatabaseIcon -Session $s -DatabaseId $db -Ids "3","7" -IncludeData
+        Get-PDDatabaseIcon -Session $s -DatabaseId $db -Id "3" -OutFile ".\example.com.png"
+    #>
+    [CmdletBinding(DefaultParameterSetName = "List")]
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [Parameter(Mandatory, ParameterSetName = "One")] [string] $Id,
+        [Parameter(ParameterSetName = "One")] [string] $OutFile,
+        [Parameter(Mandatory, ParameterSetName = "Batch")] [string[]] $Ids,
+        [Parameter(ParameterSetName = "Batch")] [switch] $IncludeData,
+        [Parameter(ParameterSetName = "List")] [int] $Offset = 0,
+        [Parameter(ParameterSetName = "List")] [int] $Limit = 100
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq "One") {
+        if ($Id -notmatch '^[0-9]{1,6}$') { throw "Get-PDDatabaseIcon: -Id must be 1 to 6 decimal digits" }
+        $icon = Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/icons/$Id"
+        if ($OutFile) {
+            if ($icon.state -ne "ok" -or -not $icon.data) {
+                throw "Get-PDDatabaseIcon: icon $Id has no usable image (state '$($icon.state)')"
+            }
+            $target = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)
+            [System.IO.File]::WriteAllBytes($target, [Convert]::FromBase64String($icon.data))
+        }
+        return $icon
+    }
+
+    if ($PSCmdlet.ParameterSetName -eq "Batch") {
+        foreach ($one in $Ids) {
+            if ($one -notmatch '^[0-9]{1,6}$') { throw "Get-PDDatabaseIcon: every id must be 1 to 6 decimal digits ('$one')" }
+        }
+        # The order matters for nothing, but keep the hashtable small and explicit.
+        $qp = @{ ids = ($Ids -join ",") }
+        if ($IncludeData) { $qp.include = "data" }
+        return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/icons" -QueryParams $qp
+    }
+
+    return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/icons" -QueryParams @{ offset = $Offset; limit = $Limit }
+}
+
+function Add-PDDatabaseIcon {
+    <#
+    .SYNOPSIS
+        Uploads an icon to a database: POST .../icons with {"name","data"}, the
+        image as Base64 inside JSON. The server accepts PNG only, at most
+        icons.max_side (64) pixels per side and icons.max_bytes (32768) bytes;
+        both limits are read from the database's 'icons' object. -Resize turns
+        any picture System.Drawing can read (PNG, JPEG, GIF, BMP, ICO) into
+        what the Password Depot clients send: the picture scaled to fit a
+        transparent 64x64 canvas, saved as PNG. Without -Resize the bytes must
+        already be such a PNG. Returns id, name, version and created; USE THE
+        RETURNED name for image_name - it may be "<name> (2)" when an icon of
+        that name with a different image exists. The upload is database-wide,
+        visible to every user of the database, and cannot be deleted over
+        REST. Server 20.0.0 or later.
+    .EXAMPLE
+        $icon = Add-PDDatabaseIcon -Session $s -DatabaseId $db -Name "example.com" -Path ".\logo.jpg" -Resize
+        Set-PDEntryIcon -Session $s -DatabaseId $db -EntryId $id -Name $icon.name
+    #>
+    [CmdletBinding(DefaultParameterSetName = "Path")]
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [Parameter(Mandatory)] [string] $Name,
+        [Parameter(Mandatory, ParameterSetName = "Path")] [string] $Path,
+        [Parameter(Mandatory, ParameterSetName = "Bytes")] [byte[]] $Bytes,
+        [switch] $Resize
+    )
+
+    # Capability first: a server without the 'icons' object has no such route,
+    # and the contract forbids probing by upload.
+    $db = Get-PDDatabase -Session $Session -DatabaseId $DatabaseId
+    if ($null -eq $db.PSObject.Properties['icons']) {
+        throw "Add-PDDatabaseIcon: this server has no database-icon support (older than 20.0.0)"
+    }
+    if (-not $db.icons.can_upload) {
+        throw "Add-PDDatabaseIcon: icons.can_upload is false (mirror server, or the database has no icon slot left)"
+    }
+    $maxBytes = [int] $db.icons.max_bytes
+    $maxSide = [int] $db.icons.max_side
+
+    if ($PSCmdlet.ParameterSetName -eq "Path") {
+        $source = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+        $raw = [System.IO.File]::ReadAllBytes($source)
+    } else {
+        $raw = $Bytes
+    }
+
+    if ($Resize) {
+        Add-Type -AssemblyName System.Drawing
+        $side = [Math]::Min(64, $maxSide)   # 64x64 is the native size of a Password Depot icon
+        $inStream = New-Object System.IO.MemoryStream(, $raw)
+        $src = $null; $canvas = $null; $g = $null
+        $outStream = New-Object System.IO.MemoryStream
+        try {
+            $src = [System.Drawing.Image]::FromStream($inStream)
+            $canvas = New-Object System.Drawing.Bitmap($side, $side, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $g = [System.Drawing.Graphics]::FromImage($canvas)
+            $g.Clear([System.Drawing.Color]::Transparent)
+            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+            $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+
+            # "contain": the whole picture, centred, aspect ratio kept
+            $scale = [Math]::Min($side / $src.Width, $side / $src.Height)
+            $w = [Math]::Max(1, [int] [Math]::Round($src.Width * $scale))
+            $h = [Math]::Max(1, [int] [Math]::Round($src.Height * $scale))
+            $x = [int] [Math]::Floor(($side - $w) / 2)
+            $y = [int] [Math]::Floor(($side - $h) / 2)
+            $g.DrawImage($src, (New-Object System.Drawing.Rectangle($x, $y, $w, $h)))
+
+            $canvas.Save($outStream, [System.Drawing.Imaging.ImageFormat]::Png)
+            $raw = $outStream.ToArray()
+        }
+        finally {
+            if ($g) { $g.Dispose() }
+            if ($canvas) { $canvas.Dispose() }
+            if ($src) { $src.Dispose() }
+            $inStream.Dispose()
+            $outStream.Dispose()
+        }
+    } else {
+        # Refuse locally what the server would refuse: not a PNG, or too many pixels.
+        $sig = [byte[]] @(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        $isPng = ($raw.Length -ge 24)
+        for ($i = 0; $isPng -and $i -lt 8; $i++) { if ($raw[$i] -ne $sig[$i]) { $isPng = $false } }
+        if (-not $isPng) { throw "Add-PDDatabaseIcon: the image is not a PNG; pass -Resize to convert it" }
+        $pngW = ([int64] $raw[16] -shl 24) -bor ([int64] $raw[17] -shl 16) -bor ([int64] $raw[18] -shl 8) -bor [int64] $raw[19]
+        $pngH = ([int64] $raw[20] -shl 24) -bor ([int64] $raw[21] -shl 16) -bor ([int64] $raw[22] -shl 8) -bor [int64] $raw[23]
+        if ($pngW -gt $maxSide -or $pngH -gt $maxSide) {
+            throw "Add-PDDatabaseIcon: the PNG is ${pngW}x${pngH}; the server accepts at most ${maxSide}x${maxSide}. Pass -Resize"
+        }
+    }
+
+    # No step-down: the canvas is always 64x64. A PNG that is still too large is refused here.
+    if ($raw.Length -gt $maxBytes) {
+        throw "Add-PDDatabaseIcon: the PNG has $($raw.Length) bytes; the server accepts at most $maxBytes"
+    }
+
+    $body = @{ name = $Name; data = [Convert]::ToBase64String($raw) }
+    return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/icons" -Method POST -Body $body
+}
+
+function Set-PDEntryIcon {
+    <#
+    .SYNOPSIS
+        Selects an entry's icon through PATCH .../entries/{id}: -Name assigns
+        the database icon of that name (as Add-PDDatabaseIcon or
+        Get-PDDatabaseIcon returned it), -StandardIndex one of the standard
+        icons 0 to 134, -Reset the standard icon of the entry's type. A name
+        that is not an icon of this database answers 400 with error.code 4007
+        and changes nothing. Returns the compact entry: 'database_icon' names
+        the icon, 'icon' the standard icon to fall back on.
+        Server 20.0.0 or later.
+    .EXAMPLE
+        Set-PDEntryIcon -Session $s -DatabaseId $db -EntryId $id -Name "example.com"
+        Set-PDEntryIcon -Session $s -DatabaseId $db -EntryId $id -StandardIndex 12
+        Set-PDEntryIcon -Session $s -DatabaseId $db -EntryId $id -Reset
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [Parameter(Mandatory)] [string] $EntryId,
+        [Parameter(Mandatory, ParameterSetName = "Name")] [string] $Name,
+        [Parameter(Mandatory, ParameterSetName = "Standard")] [ValidateRange(0, 134)] [int] $StandardIndex,
+        [Parameter(Mandatory, ParameterSetName = "Reset")] [switch] $Reset,
+        [string] $SecondPassword
+    )
+    switch ($PSCmdlet.ParameterSetName) {
+        "Name"     { $fields = @{ image_custom = $true; image_name = $Name } }
+        "Standard" { $fields = @{ image_custom = $false; image_index = $StandardIndex } }
+        default    { $fields = @{ image_custom = $false; image_index = -1 } }
+    }
+    return Set-PDEntry -Session $Session -DatabaseId $DatabaseId -EntryId $EntryId -Fields $fields -SecondPassword $SecondPassword
+}
+
 # --- Document Content ---
 
 function Set-PDDocumentContent {

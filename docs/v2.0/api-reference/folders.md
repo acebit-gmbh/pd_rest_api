@@ -22,7 +22,8 @@ Returned by list/children endpoints and create/update responses.
 | `type` | string | No | Always `"folder"` |
 | `id` | string (UUID) | No | Unique identifier (server-generated) |
 | `name` | string | Yes | Folder name |
-| `icon` | string | No | Icon filename (e.g., `"ico3.svg"`). Served at `/file/{icon}`. |
+| `icon` | string | No | File name of a standard icon, always `ico0.svg` to `ico134.svg`, served at [`/file/{icon}`](overview.md#entry-icons): the standard icon selected by `image_index`, otherwise the standard folder icon `ico3.svg`. When `database_icon` is set, this is `ico3.svg` and serves as the fallback. *Changed in Server 20.0.0:* earlier servers returned `ico3.svg` whatever `image_index` said, or `<image_name>.ico` for some custom icons. |
+| `database_icon` | object or null | No | The [database icon](icons.md) the folder uses: `{"id", "name", "version"}` of an icon in the folder's own database, or `null` when the folder uses a standard icon or its custom icon no longer exists. It carries no image data - fetch the image with [List Icons](icons.md#list-icons) or [Get Icon](icons.md#get-icon) and cache it by `version`. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
 | `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show (default: `"normal"`) |
 | `category` | string | Yes | Category label |
 | `tags` | string | Yes | Tags (comma-separated) |
@@ -36,9 +37,9 @@ Returned by the detail endpoint (`GET /v2.0/databases/{db}/folders/{id}`). Inclu
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `author` | string | No | Author of the folder (read-only) |
-| `image_custom` | boolean | Yes | Whether a custom image is used instead of a standard icon |
-| `image_index` | integer | Yes | Standard icon index number |
-| `image_name` | string | Yes | Custom image filename (e.g., `"twitter.com"`) |
+| `image_custom` | boolean | Yes | `true` when the folder uses a [database icon](icons.md), `false` when it uses a standard icon. See [Assigning an icon](#assigning-an-icon) |
+| `image_index` | integer | Yes | With `image_custom` `false`: the number of the standard icon, `0` to `134`. With `image_custom` `true`: a position the server maintains for the desktop clients - ignore it when reading; it is ignored when written |
+| `image_name` | string | Yes | With `image_custom` `true`: the `name` of an icon stored in this database (e.g., `"example.com"`) - not a file name. Empty otherwise |
 | `comments` | string | Yes | Folder comments/notes. May require `X-Second-Password` header if `has_second_pass` is `true`. |
 
 !!! info "Second Password Protection"
@@ -151,6 +152,7 @@ The `path` array contains the ancestor chain from the database root down to the 
             "id": "f1a2b3c4-d5e6-7890-abcd-ef1234567890",
             "name": "Production",
             "icon": "ico3.svg",
+            "database_icon": null,
             "importance": "normal",
             "category": "",
             "tags": "",
@@ -162,6 +164,7 @@ The `path` array contains the ancestor chain from the database root down to the 
             "id": "f2b3c4d5-e6f7-8901-bcde-f12345678901",
             "name": "Staging",
             "icon": "ico3.svg",
+            "database_icon": null,
             "importance": "high",
             "category": "Infrastructure",
             "tags": "cloud,aws,azure",
@@ -180,6 +183,7 @@ The `path` array contains the ancestor chain from the database root down to the 
             "login": "devteam",
             "url": "https://github.com",
             "icon": "ico12.svg",
+            "database_icon": null,
             "importance": "normal",
             "category": "",
             "tags": "",
@@ -264,6 +268,7 @@ Returns the **full representation** of a specific folder, including `comments` a
     "id": "f1a2b3c4-d5e6-7890-abcd-ef1234567890",
     "name": "Servers",
     "icon": "ico3.svg",
+    "database_icon": null,
     "importance": "normal",
     "category": "Infrastructure",
     "tags": "production,servers",
@@ -334,6 +339,7 @@ Creates a new folder within a database. Use the `parent` query parameter to plac
 | `category` | string | No | Category label |
 | `tags` | string | No | Tags (comma-separated) |
 | `comments` | string | No | Folder comments/notes |
+| `image_custom`, `image_index`, `image_name` | boolean, integer, string | No | The folder's icon: a [database icon](icons.md) or one of the 135 standard icons. Omit all three for the standard folder icon. Refused with `400` / `4007` when they do not name a usable icon; servers older than 20.0.0 store any value. See [Assigning an icon](#assigning-an-icon). |
 
 ### Request Headers
 
@@ -361,6 +367,7 @@ Returns the compact representation of the created folder.
     "id": "f3c4d5e6-f7a8-9012-cdef-123456789012",
     "name": "Web Applications",
     "icon": "ico3.svg",
+    "database_icon": null,
     "importance": "high",
     "category": "Web",
     "tags": "",
@@ -373,7 +380,7 @@ Returns the compact representation of the created folder.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields |
+| `400 Bad Request` | Invalid or missing required fields (`error.code` `400`), or `image_*` keys that do not name a usable icon (`error.code` `4007`, see [Assigning an icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions |
 | `404 Not Found` | Database or parent folder not found |
@@ -426,6 +433,19 @@ Updates an existing folder. Include only the fields you want to update.
 }
 ```
 
+#### Assigning an icon
+
+*Server 20.0.0 and later.* A folder's icon is written with the same three keys, and under the same rules, as an entry's - see [Assigning an Icon](entries.md#assigning-an-icon) for the checks, the echo rule and the sub-code. The same keys are accepted by [Create Folder](#create-folder).
+
+| Intent | Body |
+|--------|------|
+| A [database icon](icons.md) | `{"image_custom": true, "image_name": "example.com"}` - the name of an icon in this database, as the upload or the icon list returned it |
+| A standard icon | `{"image_custom": false, "image_index": 46}` (`0` to `134`) |
+| The standard folder icon | `{"image_custom": false, "image_index": -1}` |
+| Leave the icon alone | none of the three keys |
+
+A body that does not name a usable icon answers `400` with `error.code` `4007` and writes nothing: the folder keeps its name, its other fields, its second password and its previous icon. A body that repeats the stored values is never refused. The check runs after `X-Second-Password` has been verified and before `X-New-Second-Password` is applied, and it never answers `409`.
+
 ### Response
 
 `200 OK`
@@ -438,6 +458,7 @@ Returns the compact representation of the updated folder.
     "id": "f1a2b3c4-d5e6-7890-abcd-ef1234567890",
     "name": "Production Servers",
     "icon": "ico3.svg",
+    "database_icon": null,
     "importance": "high",
     "category": "Infrastructure",
     "tags": "production,servers",
@@ -450,7 +471,7 @@ Returns the compact representation of the updated folder.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields |
+| `400 Bad Request` | Invalid fields (`error.code` `400`), or `image_*` keys that do not name a usable icon (`error.code` `4007`, see [Assigning an icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), or a missing/incorrect `X-Second-Password` on a protected folder (`error.code` `4031`) |
 | `404 Not Found` | Database or folder not found |
@@ -550,6 +571,7 @@ Returns the compact representation of the moved folder.
     "id": "f1a2b3c4-d5e6-7890-abcd-ef1234567890",
     "name": "Servers",
     "icon": "ico3.svg",
+    "database_icon": null,
     "importance": "normal",
     "category": "Infrastructure",
     "tags": "production,servers",

@@ -27,6 +27,9 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - stricter passkey verification
 - new one-time-code endpoint and `has_otp` field; new sub-codes `4012` and `4013` (`401`) and `4032` (`403`)
 - one-time-code settings can be written: `totp` in `POST` and `PATCH` entry bodies, a `totp` object in every entry payload; new sub-codes `4001` to `4006` (`400`, the first of that family) and `4033` (`403`)
+- database icons: new `/databases/{db}/icons` endpoints, an `icons` object on every database, a `database_icon` field on every entry and folder; new sub-codes `4007` and `4008` (`400`), `4034` (`403`), `4042` (`404`) and `4131` (`413`, the first of that family)
+- `icon` follows `image_index` and is never `<name>.ico`; `image_custom`, `image_index` and `image_name` are validated when written (`400` / `4007`); documents show `ico133.svg`
+- `/file/` serves the 135 standard icons only
 
 ### Breaking Changes
 
@@ -71,6 +74,22 @@ An entry without a one-time code answers `404` with `error.code` = `4041` (`PD_E
 A refused `totp` write answers `400` with `error.code` `4001` (`PD_ERRCODE_TOTP_SECRET`), `4002` (`PD_ERRCODE_TOTP_ALGORITHM`), `4003` (`PD_ERRCODE_TOTP_DIGITS`), `4004` (`PD_ERRCODE_TOTP_PERIOD`), `4005` (`PD_ERRCODE_TOTP_SHAPE`: `{}`, an unknown member, a wrong JSON type, or no `secret` where one is required) or `4006` (`PD_ERRCODE_TOTP_ENTRY_TYPE`); the first failing member in the order `secret`, `algorithm`, `digits`, `period` names the code. These are the first sub-codes of the `400` family. `403` / `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED`) is new as well. See [One-Time Code Settings](api-reference/entries.md#one-time-code-settings).
 
 **Client guidance:** detect the code read by the presence of `has_otp`, and the settings write by the presence of the `totp` key on any entry - the server ignores unknown request keys, so a write cannot be probed. Servers before 20.0.0 omit both and have no `/otp` route. Match `error.code`, never the message: prompt for the second password only on `4031`, never on a plain `403`. A client that recognised a bad request by `error.code == 400` must test the HTTP status instead. To leave a one-time code alone, omit the key; to remove it, send `null`, never `""`. Treat a `totp.state` you do not recognise as `hidden`.
+
+#### Database Icons
+
+- **`GET /databases/{db}/icons`** lists the icons stored in a database - what the Windows client calls custom icons - as `id`, `name` and `version`, without image data, in the standard paginated envelope. With `ids=3,7&include=data` it returns up to 32 icons **with** their images in one call, so a list view can draw a page of rows with one request. Removed icons are never listed. Images are added while the response stays within 2 MiB of decoded image data; later items come back with `state` `deferred`.
+- **`GET /databases/{db}/icons/{icon_id}`** returns one icon with its image: `state`, `content_type` (`image/png`, or `image/bmp` for icons an older client stored), `width`, `height` and `data` (Base64). Icons are a property of the database, so no `X-Second-Password` is involved.
+- **`POST /databases/{db}/icons`** uploads an icon as JSON - `{"name": "...", "data": "<Base64 PNG>"}`. PNG only, 1 to 64 pixels per side, at most 32768 bytes decoded; 64x64 is the native size of a Password Depot icon and what the Password Depot clients always send. The server keeps only the image chunks of the PNG, proves that the Windows client's decoder can read the result, and builds the 16x16 rendition that client needs, so the stored image is not byte-identical to the upload. `201` with `created` `true` for a new icon, `200` with `created` `false` when an identical icon of that name already exists. An existing icon with a different image is never touched: the upload is stored as `name (2)`. There is no `DELETE` and no replace.
+- **`icons`** (object, read-only) is part of every database representation, client and admin scope, list and detail: `can_upload`, `accepted_types`, `max_bytes`, `max_side`, `max_count`, `batch_max`. Its presence is the capability marker for everything in this section. `can_upload` is `false` on a mirror server and when the database has no icon slot left. The admin-only `icons_count` is unrelated and also counts removed icons.
+- **`database_icon`** (object or `null`, read-only) follows `icon` in every entry and folder representation, compact and full: `{"id", "name", "version"}` of the icon the item uses, in the item's own database, or `null`. It carries no image data. An item whose `image_name` no longer names an existing icon reports `null`.
+- **Identifier, handle, change token.** `name` identifies an icon and is the value for `image_name`. `id` is a fetch handle of decimal digits, valid only inside its database - the one identifier of this API that is not a UUID. `version` changes whenever the stored image changes; responses are `no-store`, so cache images in memory by (database, `id`, `version`).
+- **Permissions.** Whoever can open a database can list its icons, fetch them and upload to it - the desktop and mobile clients already receive every icon with the database, and an upload can never change or remove an existing icon. Long-lived API tokens may upload. Every upload attempt is audited, never with image data. A mirror server answers the upload, like every non-`GET` request, with `403`.
+- **Isolation.** Every lookup goes through the database in the URL, or the item's own database. The same name in two databases is two icons, and an `id` from one database never returns another database's image.
+- **Windows clients** store and read the same icons. A Windows client that has the database open sees an uploaded icon after it reopens the database.
+
+A refused upload answers `400` / `4008` (`PD_ERRCODE_ICON_IMAGE`: `data` is not a usable PNG - JPEG, GIF, BMP, ICO, WebP, SVG and animated PNG included), `413` / `4131` (`PD_ERRCODE_ICON_TOO_LARGE`: too many bytes, too many pixels, or too large a stored record) or `403` / `4034` (`PD_ERRCODE_ICON_QUOTA`: 1024 icon slots or 8 MiB of icon data per database); a bad `name` or a body that is not a JSON object is a plain `400`. [Get Icon](api-reference/icons.md#get-icon) answers `404` / `4042` (`PD_ERRCODE_ICON_NOT_FOUND`) when the database has no usable icon with that id, and a plain `404` when the database itself is not there. `4131` is the first sub-code of the `413` family. A request over 1 MB is still refused with a plain `413` before the body is read - without CORS headers, so a browser sees a network error: check sizes before sending. See [Database Icons](api-reference/icons.md).
+
+**Client guidance:** detect support by the `icons` object on the database, never by calling `/icons` or by uploading. Use the `name` the upload **returns**, not the one you sent. Cache images by `version`, and fetch the images of a page of rows in one `ids` call. Validate size and format before sending, and read the limits from `icons`. Draw `database_icon` when it is set, the standard `icon` otherwise, your own symbol last.
 
 ### Authentication and Sessions
 
@@ -256,9 +275,31 @@ The custom and type-specific fields of a link belong to the entry it points to, 
 !!! warning "Behavior change for clients"
     To change the fields shown through a link, update the entry named in `linked_item`. Do not send a link's `GET` response back unchanged in a `PATCH`.
 
+#### Icon Fields Validated and `icon` Corrected (Behavior Change)
+
+`image_custom`, `image_index` and `image_name` have always been writable on entries and folders, and `icon` has always been part of every representation. Server 20.0.0 makes the four agree with each other and with the other Password Depot clients:
+
+- **`icon` follows `image_index`.** With `image_custom` `false` and `image_index` `0` to `134`, `icon` is `ico<image_index>.svg`. In every other case - a database icon, or an index outside that range - it is the standard icon of the item's type. Earlier servers returned the type's icon whatever `image_index` said.
+- **`icon` is never `<name>.ico`.** Earlier servers returned `<image_name>.ico` for an item with `image_custom` `true` when a favicon file of that name happened to exist on the server. `icon` is now always `ico0.svg` to `ico134.svg`; the item's own image is named by the new `database_icon` field and fetched through [Database Icons](api-reference/icons.md).
+- **Writes are validated.** A `POST` or `PATCH` whose `image_*` keys would change the item's icon to something unusable - `image_custom` `true` with an `image_name` that names no icon of this database, `image_custom` `false` together with a non-empty `image_name`, or `image_custom` `false` with an `image_index` outside `-1` to `134` - answers `400` with `error.code` `4007` (`PD_ERRCODE_ICON_ASSIGNMENT`). Earlier servers stored any value and answered `2xx`. Nothing is written on a refusal, not even a second-password change sent in the same request. A body that repeats the stored values is never refused, and a body without the three keys is not checked at all.
+- **`image_index` of a database icon is the server's.** With `image_custom` `true` the server sets `image_index` itself, for the desktop clients; a value sent by the client is ignored.
+- **A chosen standard icon `0` sticks.** Earlier servers replaced `image_index` `0` on a non-`password` entry with the type's icon on the next write, and removed a nameless custom icon in slot `0` the same way. `{"image_custom": false, "image_index": -1}` is now the explicit way to ask for the type's icon.
+
+!!! warning "Behavior change for clients"
+    A client that showed `/file/<icon>` keeps working, and now shows the selected standard icon instead of always the type's icon. A client that relied on `<host>.ico` favicons loses them until it draws `database_icon`; `icon` is the fallback it should already handle. A client that wrote `image_*` values without checking them must handle `400` / `4007` - match the status `400` and the code, never the message - and should take icon names from [List Icons](api-reference/icons.md#list-icons) or from the upload response. To leave an item's icon alone, omit all three keys.
+
+See [Assigning an Icon](api-reference/entries.md#assigning-an-icon).
+
+#### `/file/` Serves Standard Icons Only (Behavior Change)
+
+The unauthenticated `/file/<name>` path serves the 135 standard icons `ico0.svg` to `ico134.svg` (the name in any letter case) and nothing else. It answers `GET` and `HEAD` only, always with `Content-Type: image/svg+xml` and a restrictive `Content-Security-Policy`; any other name answers `404`. Earlier servers also served other files of the server's icon folder under this path, such as the favicons behind a `<name>.ico` value of `icon`. Images of that kind are now reachable only as database icons, per database and with a bearer token. `/temp/` is unchanged.
+
+!!! warning "Behavior change for clients"
+    Request only the names that `icon` delivers. A `404` from `/file/` for any other name is final.
+
 #### A Rejected Entry Write Leaves the Entry Unchanged
 
-A `PATCH /databases/{db}/entries/{id}` can be refused while its body is being applied -- for example with `400` when a field has the wrong JSON type (such as a string for `image_index`) or a `custom_fields` element is not an object, or with `409` when `custom_fields` or a type-specific sub-object is sent for an entry that is, or in the same body becomes, a link. Every value the body had already written is then restored before the error is returned, so a client can correct the body and retry against the entry's previous values. A second-password change requested in the same call with `X-New-Second-Password` is applied before the body and stays in effect when the body is rejected.
+A `PATCH /databases/{db}/entries/{id}` can be refused while its body is being applied -- for example with `400` when a field has the wrong JSON type (such as a string for `image_index`) or a `custom_fields` element is not an object, or with `409` when `custom_fields` or a type-specific sub-object is sent for an entry that is, or in the same body becomes, a link. Every value the body had already written is then restored before the error is returned, so a client can correct the body and retry against the entry's previous values. A second-password change requested in the same call with `X-New-Second-Password` is applied before the body and stays in effect when the body is rejected. The icon check described above (`400` / `4007`) is the exception: it runs before the second-password change, so after that refusal nothing at all has been written.
 
 #### Importance Levels Corrected (Behavior Change)
 
@@ -449,6 +490,22 @@ The server counts every one-time code on its clock in true UTC:
 - the authenticator-app (TOTP) codes checked at two-factor login
 
 Standard authenticator apps count on the same UTC time base. With a correctly set server clock, codes stay in step with those apps across daylight saving time changes, including the hour that repeats when daylight saving time ends. No fields, formats or status codes change.
+
+#### Default Icon of Document Entries
+
+A `document` entry without an icon of its own reports `icon` `ico133.svg`, the document icon every other Password Depot client shows. Earlier servers reported `ico132.svg`, the icon of encrypted-file entries.
+
+### Documentation Corrections
+
+These correct the documentation only; the server's behavior is described as it has been.
+
+- **`PUT /databases/{db}/entries/{id}/content` over 64 MB answers `413`, not `400`.** The server refuses a `Content-Length` above the limit before it reads the body. `400` is left for a body sent without `Content-Length` (chunked) that turns out to be too large, and for an entry that is not a `document`. The OpenAPI document and the test suite already said `413`.
+- **`Content-Type` is not required on that upload, and is not stored.** The server does not read it. The type reported by `document.type`, and sent as `Content-Type` by `GET .../content`, is derived from the extension of the file name.
+- **The file name field is `document.name`.** The reference called it `content_name` in two places; v2.0 has no such field. `Content-Disposition` on the upload sets `document.name`, and the download sends it back.
+- **v2.0 responses have no `rights` string.** The overview described a permission string such as `"RMIDCFAPE-Y-HL"` on database and entry responses. That field belongs to REST API v1.0; v2.0 expresses permissions only as token arrays in the [permission rules](api-reference/permissions.md#rights-values).
+- **`410`, `413` and `501` were missing from the status tables** of the overview: `410` for `/v1.0/` paths on Server 20.0.0, `413` for oversized request bodies, `501` for the entry types `encrypted_file` and `certificate`.
+- **Mirror servers.** The overview now says that a mirror server answers every request other than `GET` that carries a bearer token with `403`, `POST /auth/logout` included. This is not new in Server 20.0.0; it was not documented.
+- **The JSON examples** of entries and folders showed an `icon` that the server of the time would not have returned for them (it ignored `image_index`). With the change above they are now what Server 20.0.0 returns.
 
 ---
 

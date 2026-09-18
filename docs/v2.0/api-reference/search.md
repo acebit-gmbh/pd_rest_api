@@ -38,6 +38,7 @@ Returns a paginated list of matching items. Each item is a **compact representat
             "id": "f1a2b3c4-d5e6-7890-abcd-ef1234567890",
             "name": "Production Servers",
             "icon": "ico3.svg",
+            "database_icon": null,
             "importance": "normal",
             "category": "Infrastructure",
             "tags": "production,servers",
@@ -55,7 +56,12 @@ Returns a paginated list of matching items. Each item is a **compact representat
             },
             "login": "admin",
             "url": "https://db.example.com",
-            "icon": "ico5.svg",
+            "icon": "ico0.svg",
+            "database_icon": {
+                "id": "3",
+                "name": "db.example.com",
+                "version": "9c1e5f2a-10f4-2b1"
+            },
             "importance": "high",
             "category": "Databases",
             "tags": "production,database",
@@ -68,6 +74,9 @@ Returns a paginated list of matching items. Each item is a **compact representat
     "limit": 100
 }
 ```
+
+!!! info "Icons"
+    The second item uses a [database icon](icons.md): `database_icon` names it, and `icon` is the standard icon of the item's type, to be shown as the fallback. Fetch the images of a result page in one call with [List Icons](icons.md#list-icons) (`ids` and `include=data`). Servers older than 20.0.0 do not send `database_icon`.
 
 !!! info
     Search results use compact representations only. Sensitive fields such as `pass`, `comments`, and `custom_fields` are **not** included. Use the [Get Entry](entries.md#get-entry) or [Get Folder](folders.md#get-folder) endpoint to retrieve the full representation.

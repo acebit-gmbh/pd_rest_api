@@ -27,7 +27,8 @@ Returned by list/children and search endpoints.
 | `totp` | object | No | State of the entry's one-time code: always an object, never `null`, never withheld. The compact form carries `state` only: `none` (no seed), `set` (a code can be computed; the same as `has_otp`), `invalid` (a seed is stored but produces no code), `unsupported` (type `encrypted_file` or `certificate`) or `hidden` (you may not read the entry). This read form is not writable; the write form, which shares the key, is described under [One-Time Code Settings](#one-time-code-settings). The presence of `totp` is how a client detects that the server accepts that write form. Absent on servers older than 20.0.0. |
 | `login` | string | Yes | Login/username (only for `password` and `custom` types). |
 | `url` | string | Yes | Primary URL (only for `password` and `custom` types). |
-| `icon` | string | No | Icon filename (e.g., `"ico12.svg"`). Served at `/file/{icon}`. |
+| `icon` | string | No | File name of a standard icon, always `ico0.svg` to `ico134.svg`, served at [`/file/{icon}`](overview.md#entry-icons): the standard icon selected by `image_index`, otherwise the standard icon of the entry's type (see [Assigning an Icon](#assigning-an-icon)). When `database_icon` is set, this is the icon of the entry's type and serves as the fallback. *Changed in Server 20.0.0:* earlier servers returned the icon of the entry's type whatever `image_index` said, or `<image_name>.ico` for some custom icons. |
+| `database_icon` | object or null | No | The [database icon](icons.md) the entry uses: `{"id", "name", "version"}` of an icon in the entry's own database, or `null` when the entry uses a standard icon or its custom icon no longer exists. It carries no image data - fetch the image with [List Icons](icons.md#list-icons) or [Get Icon](icons.md#get-icon) and cache it by `version`. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
 | `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show (default: `"normal"`) |
 | `category` | string | Yes | Category label |
 | `tags` | string | Yes | Tags (comma-separated) |
@@ -45,9 +46,9 @@ Returned by the detail endpoint. Includes all compact fields plus:
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `author` | string | No | Author of the entry (read-only) |
-| `image_custom` | boolean | Yes | Whether a custom image is used instead of a standard icon |
-| `image_index` | integer | Yes | Standard icon index number |
-| `image_name` | string | Yes | Custom image filename (e.g., `"twitter.com"`) |
+| `image_custom` | boolean | Yes | `true` when the entry uses a [database icon](icons.md), `false` when it uses a standard icon. See [Assigning an Icon](#assigning-an-icon) |
+| `image_index` | integer | Yes | With `image_custom` `false`: the number of the standard icon, `0` to `134`. With `image_custom` `true`: a position the server maintains for the desktop clients - ignore it when reading; it is ignored when written |
+| `image_name` | string | Yes | With `image_custom` `true`: the `name` of an icon stored in this database (e.g., `"example.com"`) - not a file name. Empty otherwise |
 | `comments` | string | Yes | Comments/notes. May require `X-Second-Password` header. |
 | `totp` | object | No | Full form of the one-time-code state (see [One-Time Code Settings](#one-time-code-settings)): `state` as in the compact form; `writable` (whether the entry's type accepts the write form: `password`, `credit_card`, `license`, `banking`, `custom`); and, when `state` is `set` or `invalid`, the stored `digits`, `period`, `algorithm` (`"SHA1"`, `"SHA256"`, `"SHA512"`, or `null` for a stored value the server does not know) and `conforming` (whether the stored seed and parameters would be accepted by the write form today). For `hidden`, only `state` is present. Stored values are echoed as they are - an `invalid` entry may report `digits` `12` or `period` `300`. Never the seed. |
 
@@ -494,6 +495,7 @@ Returns the **full representation** of a specific entry, including the password,
     "info_template": null,
     "param_str": "",
     "icon": "ico12.svg",
+    "database_icon": null,
     "importance": "normal",
     "category": "",
     "tags": "development,git",
@@ -590,6 +592,7 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 | `<type>` | object | No | Type-specific data sub-object keyed by type name (see [Type-Specific Fields](#type-specific-fields)) |
 | `urls` | array of strings | No | Associated URLs |
 | `expires_at` | string (ISO 8601) or null | No | Expiration date |
+| `image_custom`, `image_index`, `image_name` | boolean, integer, string | No | The entry's icon: a [database icon](icons.md) or one of the 135 standard icons. Omit all three for the standard icon of the entry's type. Refused with `400` / `4007` when they do not name a usable icon; servers older than 20.0.0 store any value. See [Assigning an Icon](#assigning-an-icon). |
 | `totp` | object or null | No | One-time-code (TOTP) settings of the new entry, an object with the members `secret`, `algorithm`, `digits` and `period`. `secret` is **required** here and is write-only: it is never returned by any route. `algorithm` (`SHA1`, `SHA256` or `SHA512`), `digits` (`6` to `8`) and `period` (`15` to `120` seconds) default to `SHA1`, `6` and `30` when omitted. No other member is accepted, and `{}` is refused. `null` is accepted and does nothing, so a client may always send the key. Only `password`, `credit_card`, `license`, `banking` and `custom` entries can carry a code. Ignored by servers older than 20.0.0. See [One-Time Code Settings](#one-time-code-settings). |
 
 ```json
@@ -640,6 +643,7 @@ Returns the compact representation of the created entry (without `pass`). When t
     "login": "admin@company.com",
     "url": "https://company.slack.com",
     "icon": "ico0.svg",
+    "database_icon": null,
     "importance": "normal",
     "category": "",
     "tags": "",
@@ -652,7 +656,7 @@ Returns the compact representation of the created entry (without `pass`). When t
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields (body `error.code` = `400`), **or** a refused `totp` object (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)) |
+| `400 Bad Request` | Invalid or missing required fields (body `error.code` = `400`), **or** a refused `totp` object (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions |
 | `404 Not Found` | Database or parent folder not found |
@@ -765,6 +769,10 @@ The `totp` key writes the entry's one-time-code (TOTP) settings. It has four for
 !!! note "A refused one-time-code write is never `409`"
     A refused `totp` answers `400` (`error.code` `4001` to `4006`), `403` (`403`, `4031` or `4033`) or `501` - never `409`. `409` on this route keeps its one meaning: the body tried to write a link's `custom_fields` or type sub-object through the link. A `totp` write on a link is allowed and changes the link's own settings.
 
+#### Icon (`image_custom`, `image_index`, `image_name`)
+
+*Server 20.0.0 and later.* The three keys select the entry's icon: `{"image_custom": true, "image_name": "<name>"}` for a [database icon](icons.md), `{"image_custom": false, "image_index": 12}` for a standard icon, `{"image_custom": false, "image_index": -1}` for the standard icon of the entry's type. A body with none of the three keys leaves the icon alone. A body that does not name a usable icon answers `400` / `4007` and writes nothing at all. The forms, the checks and the echo rule are described under [Assigning an Icon](#assigning-an-icon).
+
 ### Response
 
 `200 OK`
@@ -784,6 +792,7 @@ Returns the compact representation of the updated entry.
     "login": "admin@company.com",
     "url": "https://company.slack.com",
     "icon": "ico0.svg",
+    "database_icon": null,
     "importance": "normal",
     "category": "",
     "tags": "",
@@ -796,7 +805,7 @@ Returns the compact representation of the updated entry.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields (body `error.code` = `400`), **or** a refused `totp` write (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)) |
+| `400 Bad Request` | Invalid fields (body `error.code` = `400`), **or** a refused `totp` write (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, or a `totp` write on an entry that is sealed for you (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`) |
 | `404 Not Found` | Database or entry not found |
@@ -934,6 +943,7 @@ Returns the compact representation of the moved entry.
     "login": "devteam",
     "url": "https://github.com",
     "icon": "ico12.svg",
+    "database_icon": null,
     "importance": "normal",
     "category": "",
     "tags": "development,git",
@@ -1139,17 +1149,18 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 2. `403` without update permission
 3. `400` when the body is not a JSON object
 4. `403` / `4031` for a wrong or missing `X-Second-Password` on a protected entry
-5. `403` when `X-New-Second-Password` is sent without the `second_pass` permission
-6. Without a `totp` key nothing below applies; the request behaves as before 20.0.0
-7. `400` / `4005` when `totp` is not `null` or an object of the four members
-8. `403` / `4033` without read permission on the entry
-9. `403` when the entry is sealed for you
-10. `400` / `4006` or `501` for the entry's type (after a `type` change in the same body)
-11. `400` / `4005` for an object without `secret` on an entry that has no seed
-12. `400` / `4001` to `4004` from the admission rules and the code computation
-13. Only now is the entry written, as one: the previous version goes to the history where the database keeps one, the body is applied, `updated_at` is bumped, and the write is audited
+5. `400` / `4007` when the body carries `image_custom`, `image_index` or `image_name` and they do not name a usable icon (see [Assigning an Icon](#assigning-an-icon)); a body without these keys is not checked
+6. `403` when `X-New-Second-Password` is sent without the `second_pass` permission
+7. Without a `totp` key nothing below applies
+8. `400` / `4005` when `totp` is not `null` or an object of the four members
+9. `403` / `4033` without read permission on the entry
+10. `403` when the entry is sealed for you
+11. `400` / `4006` or `501` for the entry's type (after a `type` change in the same body)
+12. `400` / `4005` for an object without `secret` on an entry that has no seed
+13. `400` / `4001` to `4004` from the admission rules and the code computation
+14. Only now is the entry written, as one: the previous version goes to the history where the database keeps one, the body is applied, `updated_at` is bumped, and the write is audited
 
-`POST /v2.0/databases/{db}/entries` with a `totp` key: the parent folder and create permission (`404`, `403`), then the body (`400`), then `X-New-Second-Password`, then `totp` in the same order - `4005` for the shape, `4006` / `501` for the type, `4005` for an object without `secret` (required here), `4001` to `4004`. There is no read or seal check on `POST`, because there is nothing to hide yet.
+`POST /v2.0/databases/{db}/entries` with a `totp` key: the parent folder and create permission (`404`, `403`), then the body (`400`), then the `image_*` keys (`400` / `4007`), then `X-New-Second-Password`, then `totp` in the same order - `4005` for the shape, `4006` / `501` for the type, `4005` for an object without `secret` (required here), `4001` to `4004`. There is no read or seal check on `POST`, because there is nothing to hide yet.
 
 ### Sub-codes
 
@@ -1211,6 +1222,113 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 
 ---
 
+## Assigning an Icon
+
+*Server 20.0.0 and later.*
+
+An entry or folder shows either one of the 135 standard icons or a [database icon](icons.md) - an image stored in the entry's own database. Three keys of the full representation decide which: `image_custom`, `image_index` and `image_name`. They are written through the same keys in [Create Entry](#create-entry), [Update Entry](#update-entry), [Create Folder](folders.md#create-folder) and [Update Folder](folders.md#update-folder); there is no separate route, and no right of its own is needed. Everything in this section applies to folders in the same way.
+
+| Intent | Body | Result |
+|--------|------|--------|
+| A database icon | `{"image_custom": true, "image_name": "example.com"}` | The entry uses the icon of that name in its own database. Take the name from the [upload response](icons.md#upload-icon) or from [List Icons](icons.md#list-icons). It is matched case-insensitively and stored in the icon's own spelling. An `image_index` in the same body is ignored: for a database icon the server maintains that value for the desktop clients |
+| A standard icon | `{"image_custom": false, "image_index": 12}` | The entry uses standard icon `12` (`0` to `134`), `icon` becomes `ico12.svg`, and `image_name` is cleared |
+| The icon of the entry's type | `{"image_custom": false, "image_index": -1}` | `image_index` becomes the number of the type's standard icon (see below). `{"image_custom": false}` alone does the same on an entry that had a database icon |
+| Leave the icon alone | none of the three keys | Nothing about the icon is checked, and nothing changes |
+
+**What is checked.** Only a body that carries at least one of the three keys is checked. A key that is absent counts with its stored value - on `POST`, with `false`, `""` and `-1`. The request answers `400` with `error.code` `4007` (`PD_ERRCODE_ICON_ASSIGNMENT`) when the result would be one of these:
+
+- `image_custom` `true`, and `image_name` is empty or names no icon that exists, with an image, in **this** database
+- `image_custom` `false`, and the body carries a non-empty `image_name`
+- `image_custom` `false`, and `image_index` is outside `-1` to `134`
+
+A value of the wrong JSON type - a string for `image_index`, for example - is a plain `400`, as it always was.
+
+**Echo rule.** A body that repeats what is stored - the same `image_custom`, the same `image_name` in any letter case and, for a standard icon, the same `image_index` - is never refused, even when the stored name points to an icon that no longer exists. A client that sends the three values back exactly as it read them is always safe.
+
+**Nothing is written on a refusal.** After `400` / `4007` the entry has all the fields it had before, no new history item, its previous icon, and its previous second password - also when the same request carried `X-New-Second-Password` or a `totp` key, because the icon is checked before either of them. The check never answers `409`. Reload [List Icons](icons.md#list-icons) and let the user pick again.
+
+**Reading it back.** After a database icon was assigned, the full representation reports `image_custom` `true` and `image_name` in the icon's spelling; every representation reports `database_icon` with the icon's `id`, `name` and `version`, and `icon` with the standard icon of the entry's type as the fallback. When that icon is later removed in the Windows client, `database_icon` becomes `null` and `icon` keeps naming the fallback; the three stored values stay as they are until somebody assigns another icon. An item last saved by a client older than version 17 can report `image_custom` `true` with an empty `image_name`; the server then finds the icon by the stored position. In every case `database_icon` is the answer - do not resolve `image_name` or `image_index` yourself.
+
+```json
+{
+    "type": "password",
+    "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+    "name": "Slack Workspace",
+    "has_second_pass": false,
+    "has_otp": false,
+    "totp": {
+        "state": "none"
+    },
+    "login": "admin@example.com",
+    "url": "https://example.com",
+    "icon": "ico0.svg",
+    "database_icon": {
+        "id": "3",
+        "name": "example.com",
+        "version": "9c1e5f2a-10f4-2b1"
+    },
+    "importance": "normal",
+    "category": "",
+    "tags": "",
+    "updated_at": "2025-01-15T14:22:00.000Z",
+    "expires_at": null
+}
+```
+
+**Standard icon of a type.** `password` and `custom` `0`, `folder` `3`, `rdp` `123`, `teamviewer` `124`, `putty` `125`, `credit_card` `126`, `banking` `127`, `license` `128`, `identity` `129`, `information` `131`, `document` `133`, `passkey` `134`.
+
+**Older servers.** A server older than 20.0.0 stores whatever the three keys carry, checks nothing and resolves nothing. Detect the feature by the [`icons`](databases.md#icons-capability) object on the database, or by the `database_icon` key on any entry or folder.
+
+**Windows clients.** A Windows client that has the database open sees an icon uploaded through this API, and the entries that use it, after it reopens the database.
+
+### Examples
+
+=== "curl (database icon)"
+
+    ```bash
+    curl -X PATCH "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "image_custom": true,
+            "image_name": "example.com"
+        }'
+    ```
+
+=== "curl (standard icon 12)"
+
+    ```bash
+    curl -X PATCH "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "image_custom": false,
+            "image_index": 12
+        }'
+    ```
+
+=== "curl (icon of the entry's type)"
+
+    ```bash
+    curl -X PATCH "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "image_custom": false,
+            "image_index": -1
+        }'
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    Set-PDEntryIcon -Session $session -DatabaseId $db -EntryId $entryId -Name "example.com"
+    Set-PDEntryIcon -Session $session -DatabaseId $db -EntryId $entryId -StandardIndex 12
+    Set-PDEntryIcon -Session $session -DatabaseId $db -EntryId $entryId -Reset
+    ```
+
+---
+
 ## Document Content
 
 These endpoints manage the binary content (BLOB) of entries with `type: "document"`. The content is transferred as raw binary data, not JSON.
@@ -1237,12 +1355,12 @@ Downloads the binary content of a document entry.
 
 `200 OK`
 
-The response body contains the raw binary content. The `Content-Type` header reflects the stored MIME type (e.g., `application/pdf`), and `Content-Disposition` includes the original filename.
+The response body contains the raw binary content. No MIME type is stored with a document: the `Content-Type` header is derived from the extension of the stored file name (`document.name`), exactly like `document.type`. `Content-Disposition` carries that file name.
 
 | Response Header | Description |
 |-----------------|-------------|
-| `Content-Type` | MIME type of the document (e.g., `application/pdf`) |
-| `Content-Disposition` | `attachment; filename="<content_name>"` |
+| `Content-Type` | MIME type derived from the extension of `document.name` (e.g., `application/pdf` for `report.pdf`) |
+| `Content-Disposition` | `attachment; filename="<document.name>"` |
 | `Content-Length` | Size of the content in bytes |
 
 #### Error Responses
@@ -1285,8 +1403,8 @@ Uploads or replaces the binary content of a document entry. The entire content i
 
 | Header | Required | Description |
 |--------|----------|-------------|
-| `Content-Type` | Yes | MIME type of the uploaded file (e.g., `application/pdf`, `image/png`) |
-| `Content-Disposition` | No | `attachment; filename="<filename>"` -- used to set `content_name` on the entry |
+| `Content-Type` | No | Not read by the server. The type reported by `document.type` and by [Get Document Content](#get-document-content) comes from the extension of the file name, so send the name |
+| `Content-Disposition` | No | `attachment; filename="<filename>"` -- sets `document.name` on the entry |
 
 #### Request Body
 
@@ -1308,7 +1426,8 @@ Returns the compact representation of the entry. Note that the `document` sub-ob
     "totp": {
         "state": "none"
     },
-    "icon": "ico0.svg",
+    "icon": "ico133.svg",
+    "database_icon": null,
     "importance": "normal",
     "category": "",
     "tags": "reports",
@@ -1321,10 +1440,11 @@ Returns the compact representation of the entry. Note that the `document` sub-ob
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Entry is not of type `document`, missing `Content-Type` header, or content exceeds 64 MB |
+| `400 Bad Request` | Entry is not of type `document`; or a body sent without `Content-Length` (chunked) that turns out to exceed 64 MB |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions |
 | `404 Not Found` | Database or entry not found |
+| `413 Payload Too Large` | `Content-Length` exceeds 64 MB. The request is refused before the body is read |
 
 #### Example
 

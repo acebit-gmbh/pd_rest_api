@@ -57,13 +57,29 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases" \
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "name": "Company Passwords.pswe",
       "description": "Main corporate password database",
-      "updated_at": "2024-11-20T16:45:00.000Z"
+      "updated_at": "2024-11-20T16:45:00.000Z",
+      "icons": {
+        "can_upload": true,
+        "accepted_types": ["image/png"],
+        "max_bytes": 32768,
+        "max_side": 64,
+        "max_count": 1024,
+        "batch_max": 32
+      }
     },
     {
       "id": "660e8400-e29b-41d4-a716-446655440001",
       "name": "IT Infrastructure.pswe",
       "description": "Infrastructure credentials",
-      "updated_at": "2024-12-01T09:00:00.000Z"
+      "updated_at": "2024-12-01T09:00:00.000Z",
+      "icons": {
+        "can_upload": true,
+        "accepted_types": ["image/png"],
+        "max_bytes": 32768,
+        "max_side": 64,
+        "max_count": 1024,
+        "batch_max": 32
+      }
     }
   ],
   "total": 2,
@@ -71,6 +87,8 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases" \
   "limit": 100
 }
 ```
+
+The `icons` object is sent by Server 20.0.0 and later; it tells a client whether the server supports [database icons](../api-reference/icons.md) and what an upload may contain.
 
 Note the `id` of the database you want to work with. We will use `550e8400-e29b-41d4-a716-446655440000` in the following steps.
 
@@ -102,6 +120,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/children?offset=0&li
       "id": "f1a2b3c4-d5e6-7890-abcd-ef1234567890",
       "name": "Servers",
       "icon": "ico3.svg",
+      "database_icon": null,
       "importance": "normal",
       "category": "",
       "tags": "",
@@ -120,6 +139,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/children?offset=0&li
       "login": "devteam",
       "url": "https://github.com",
       "icon": "ico12.svg",
+      "database_icon": null,
       "importance": "normal",
       "category": "",
       "tags": "development,git",
@@ -138,6 +158,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/children?offset=0&li
       "login": "admin@company.com",
       "url": "https://console.aws.amazon.com",
       "icon": "ico5.svg",
+      "database_icon": null,
       "importance": "normal",
       "category": "Infrastructure",
       "tags": "cloud,aws",
@@ -203,6 +224,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries/$ENTRY" \
   "info_template": null,
   "param_str": "",
   "icon": "ico12.svg",
+  "database_icon": null,
   "importance": "normal",
   "category": "",
   "tags": "development,git",
@@ -250,6 +272,7 @@ curl -k -X POST "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries" \
   "login": "admin@company.com",
   "url": "https://company.slack.com",
   "icon": "ico0.svg",
+  "database_icon": null,
   "importance": "normal",
   "category": "",
   "tags": "",
@@ -299,6 +322,7 @@ Returns the compact representation of the updated entry.
   "login": "admin@company.com",
   "url": "https://company.slack.com",
   "icon": "ico0.svg",
+  "database_icon": null,
   "importance": "normal",
   "category": "",
   "tags": "",
@@ -338,6 +362,27 @@ curl -k -X POST "https://YOUR_SERVER:8714/v2.0/auth/logout" \
 **Response:**
 
 **Status:** `204 No Content`
+
+## Optional: Show an Entry's Icon
+
+*Server 20.0.0 and later.* Every entry and folder carries `icon`, the file name of a standard icon, and `database_icon`, which is `null` or names an image stored in the database. Use the database icon when there is one and fall back to the standard icon:
+
+```bash
+ROW=$(curl -k -s "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries/$ENTRY" \
+  -H "Authorization: Bearer $TOKEN")
+ICON_ID=$(echo "$ROW" | jq -r '.database_icon.id // empty')
+
+if [ -n "$ICON_ID" ]; then
+  # A database icon: JSON with the image as Base64 (image/png, or image/bmp for old icons)
+  curl -k -s "https://YOUR_SERVER:8714/v2.0/databases/$DB/icons/$ICON_ID" \
+    -H "Authorization: Bearer $TOKEN" | jq -r '.data' | base64 -d > entry-icon.png
+else
+  # A standard icon: ico0.svg to ico134.svg, served without authentication
+  curl -k -s "https://YOUR_SERVER:8714/file/$(echo "$ROW" | jq -r '.icon')" -o entry-icon.svg
+fi
+```
+
+See [Database Icons](../api-reference/icons.md) for uploading an icon and for fetching many images in one call.
 
 ## Complete Script
 

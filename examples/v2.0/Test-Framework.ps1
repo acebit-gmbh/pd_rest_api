@@ -184,3 +184,85 @@ function Assert-HttpError {
         }
     }
 }
+
+function Get-HttpErrorInfo {
+    <#
+    .SYNOPSIS
+        Extracts the HTTP status and the JSON body's error.code from the error
+        record of a failed Invoke-WebRequest / Invoke-RestMethod call.
+        Returns @{ Status = <int or $null>; Code = <int or $null>; Body = <string or $null> }.
+        Works with Windows PowerShell 5.1 (WebException) and PowerShell 7
+        (HttpResponseException).
+    #>
+    param([Parameter(Mandatory)] $ErrorRecord)
+
+    $status = $null
+    $code = $null
+    $body = $null
+
+    $response = $null
+    if ($ErrorRecord.Exception.Response) {
+        $response = $ErrorRecord.Exception.Response
+    } elseif ($ErrorRecord.Exception.InnerException -and $ErrorRecord.Exception.InnerException.Response) {
+        $response = $ErrorRecord.Exception.InnerException.Response
+    }
+    if ($response) { $status = [int] $response.StatusCode }
+
+    # The parsed error body: ErrorDetails first, the raw response stream (5.1) as a fallback
+    if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
+        $body = $ErrorRecord.ErrorDetails.Message
+    } elseif ($response -and ($response | Get-Member -Name GetResponseStream -MemberType Method)) {
+        try {
+            $stream = $response.GetResponseStream()
+            if ($stream.CanSeek) { $stream.Position = 0 }
+            $reader = New-Object System.IO.StreamReader($stream)
+            $body = $reader.ReadToEnd()
+        } catch {}
+    }
+    if ($body) {
+        try {
+            $parsed = $body | ConvertFrom-Json
+            if ($null -ne $parsed.error -and $null -ne $parsed.error.code) { $code = [int] $parsed.error.code }
+        } catch {}
+    }
+
+    if (-not $status -and $ErrorRecord.Exception.Message -match '\((\d{3})\)') {
+        $status = [int] $Matches[1]
+    }
+
+    return @{ Status = $status; Code = $code; Body = $body }
+}
+
+function Assert-HttpErrorCode {
+    <#
+    .SYNOPSIS
+        Executes a script block and asserts that it fails with the expected HTTP
+        status AND the expected error.code in the JSON body, for example
+        400 / 4008. Assert-HttpError checks the status only; the API's sub-codes
+        (error.code >= 1000) need both. Pass the status as -ExpectedCode as well
+        to assert a plain error (400 / 400).
+    #>
+    param(
+        [Parameter(Mandatory)] [int] $ExpectedStatus,
+        [Parameter(Mandatory)] [int] $ExpectedCode,
+        [Parameter(Mandatory)] [scriptblock] $Action,
+        [string] $Label = ""
+    )
+    try {
+        & $Action | Out-Null
+        $msg = "Expected HTTP $ExpectedStatus / error.code $ExpectedCode but no error was thrown"
+        if ($Label) { $msg = "$Label -- $msg" }
+        Fail-Test $msg
+        return $false
+    }
+    catch {
+        $info = Get-HttpErrorInfo $_
+        if ($info.Status -eq $ExpectedStatus -and $info.Code -eq $ExpectedCode) {
+            return $true
+        }
+        $msg = "Expected HTTP $ExpectedStatus / error.code $ExpectedCode, got $($info.Status) / $($info.Code) ($($_.Exception.Message))"
+        if ($Label) { $msg = "$Label -- $msg" }
+        Fail-Test $msg
+        return $false
+    }
+}

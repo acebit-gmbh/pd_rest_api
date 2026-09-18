@@ -4,7 +4,11 @@
 
 .DESCRIPTION
     Tests the full API lifecycle: authentication, databases, folders, entries,
-    search, users, groups, alerts, permissions, and /me endpoint.
+    database icons, search, users, groups, alerts, permissions, and /me endpoint.
+
+    The database-icon suite (4c, Server 20.0.0 or later) stores two small test
+    icons in the test database on its first run. REST cannot delete icons, so
+    they stay; later runs reuse them. Use a dedicated test database.
 
     Requires an admin account on a running PD Enterprise Server with at least
     one database accessible by the test user.
@@ -953,6 +957,400 @@ if (-not $testDbId) {
 $totalFailures += Write-TestSummary
 
 # ============================================================
+#  4c. DATABASE ICONS (Server 20.0.0+)
+# ============================================================
+#
+# The whole suite sits behind a presence probe: the 'icons' object on the
+# database is the capability marker. A server without it has no /icons route
+# and must never be probed by an upload.
+#
+# REST cannot delete an icon. To keep the test database clean the suite uses
+# FIXED names and FIXED images: the first run stores two icons
+# ("pd-rest-api-test" and "pd-rest-api-test (2)"); every later run finds them
+# and gets 200 / created=false. Use a dedicated test database all the same.
+
+Start-TestSuite "Database Icons"
+
+# 32x32 RGBA, two colours; a 1x1 RGBA; a 200x200 grey (tiny file, too many pixels)
+$pngA    = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAL0lEQVR42u3OIQEAAAgDMJrQkwx0hhg3E/Ornr2kEhAQEBAQEBAQEBAQEBAQSAcet4mQeXR9gYcAAAAASUVORK5CYII="
+$pngB    = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAL0lEQVR42u3OIQEAAAgDMPqQgPY0gxg3E/Ornb6kEhAQEBAQEBAQEBAQEBAQSAcee+WMeV0BSMIAAAAASUVORK5CYII="
+$png1x1  = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mOQr+r5DwAEBgIlx3agJQAAAABJRU5ErkJggg=="
+$png200  = "iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAAAAACIM/FCAAAAtklEQVR42u3PQREAAAwCIKMb3ddK7KAB6RMRERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERETkDnJgkk7vm1XgAAAAASUVORK5CYII="
+
+$iconsCap = $null
+$iconBaseName = "pd-rest-api-test"
+$iconA = $null
+$iconEntryId = $null
+$iconEntryName = $null
+
+if (-not $testDbId) {
+    Start-Test "All database icon tests"
+    Skip-Test "No database available"
+} else {
+    # 4c.1 Capability probe
+    Start-Test "Icons: capability ('icons' object on the database)"
+    try {
+        $dbProbe = Get-PDDatabase -Session $adminSession -DatabaseId $testDbId
+        if ($null -ne $dbProbe.PSObject.Properties['icons']) {
+            $ok = (Assert-Equal 64 $dbProbe.icons.max_side "icons.max_side") -and
+                  (Assert-Equal 32768 $dbProbe.icons.max_bytes "icons.max_bytes") -and
+                  (Assert-Contains $dbProbe.icons.accepted_types "image/png" "icons.accepted_types") -and
+                  (Assert-GreaterThan $dbProbe.icons.max_count 0 "icons.max_count") -and
+                  (Assert-GreaterThan $dbProbe.icons.batch_max 0 "icons.batch_max") -and
+                  (Assert-True ($dbProbe.icons.can_upload -is [bool]) "icons.can_upload is a boolean")
+            if ($ok) {
+                $iconsCap = $dbProbe.icons
+                Pass-Test "can_upload=$($iconsCap.can_upload), max_side=$($iconsCap.max_side), max_bytes=$($iconsCap.max_bytes)"
+            }
+        } else {
+            Skip-Test "Server has no 'icons' object (older than 20.0.0)"
+        }
+    } catch { Fail-Test $_.Exception.Message }
+}
+
+if ($testDbId -and -not $iconsCap) {
+    Start-Test "All database icon tests"
+    Skip-Test "No database-icon support"
+}
+elseif ($iconsCap) {
+    $iconsPath = "/databases/$testDbId/icons"
+
+    # 4c.2 The list representation of the same database carries the marker too
+    # (the client-scope list is checked in suite 8, where a client session exists)
+    Start-Test "Icons: capability also on the list representation"
+    try {
+        $listed = (Get-PDDatabases -Session $adminSession).data | Where-Object { $_.id -eq $testDbId }
+        if ($listed) {
+            if (Assert-True ($null -ne $listed.PSObject.Properties['icons']) "'icons' on the list item") { Pass-Test }
+        } else { Skip-Test "Test database not on the first page" }
+    } catch { Fail-Test $_.Exception.Message }
+
+    # 4c.3 Upload -> 201 created=true on the first run, 200 created=false afterwards
+    Start-Test "Icons: upload a 32x32 PNG"
+    if ($iconsCap.can_upload) {
+        try {
+            $r = Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = $iconBaseName; data = $pngA }
+            $ok = (Assert-True ($r.id -match '^[0-9]{1,6}$') "id is 1 to 6 digits") -and
+                  (Assert-True ($r.name -like "$iconBaseName*") "name starts with the requested name") -and
+                  (Assert-NotNull $r.version "version") -and
+                  (Assert-True ($r.created -is [bool]) "created is a boolean")
+            if ($ok) {
+                $iconA = $r
+                Pass-Test "id=$($r.id), name='$($r.name)', created=$($r.created)"
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "icons.can_upload is false" }
+
+    # 4c.4 The same upload again is idempotent
+    Start-Test "Icons: same upload again -> created=false, same id and version"
+    if ($iconA) {
+        try {
+            $again = Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = $iconA.name; data = $pngA }
+            $ok = (Assert-Equal $false $again.created "created") -and
+                  (Assert-Equal $iconA.id $again.id "id") -and
+                  (Assert-Equal $iconA.name $again.name "name") -and
+                  (Assert-Equal $iconA.version $again.version "version")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No icon uploaded" }
+
+    # 4c.5 Same name, different image: the existing icon is never touched
+    Start-Test "Icons: same name + different image -> stored under another name"
+    if ($iconA) {
+        try {
+            $all = (Get-PDDatabaseIcon -Session $adminSession -DatabaseId $testDbId -Limit 1000).data
+            $second = $all | Where-Object { $_.name -eq "$($iconA.name) (2)" }
+            if ($second) {
+                # An earlier run created it. Do not grow the collection: prove idempotency instead.
+                $r2 = Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = "$($iconA.name) (2)"; data = $pngB }
+                $ok = (Assert-Equal $false $r2.created "created") -and (Assert-Equal $second.id $r2.id "id")
+                if ($ok) { Pass-Test "'$($r2.name)' exists from an earlier run; upload was idempotent" }
+            } else {
+                $r2 = Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = $iconA.name; data = $pngB }
+                $ok = (Assert-Equal $true $r2.created "created") -and
+                      (Assert-True ($r2.name -ne $iconA.name) "a different name was assigned") -and
+                      (Assert-True ($r2.name -match ' \([0-9]+\)$') "name ends with ' (n)'") -and
+                      (Assert-True ($r2.id -ne $iconA.id) "a different id")
+                if ($ok) {
+                    $stillA = Get-PDDatabaseIcon -Session $adminSession -DatabaseId $testDbId -Id $iconA.id
+                    if (Assert-Equal $iconA.version $stillA.version "the first icon's version is unchanged") { Pass-Test "stored as '$($r2.name)'" }
+                }
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No icon uploaded" }
+
+    # 4c.6 JPEG bytes -> 400 / 4008
+    Start-Test "Icons: JPEG bytes -> 400 / 4008"
+    if ($iconsCap.can_upload) {
+        $jpeg = [byte[]] (@(0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00) + @(0) * 117)
+        $jpegB64 = [Convert]::ToBase64String($jpeg)
+        if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 4008 -Action {
+            Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = "$iconBaseName-jpeg"; data = $jpegB64 }
+        }) { Pass-Test "400 / 4008 as expected" }
+    } else { Skip-Test "icons.can_upload is false" }
+
+    # 4c.7 Not Base64 -> 400 / 4008
+    Start-Test "Icons: data is not Base64 -> 400 / 4008"
+    if ($iconsCap.can_upload) {
+        if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 4008 -Action {
+            Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = "$iconBaseName-b64"; data = "this is not base64 !!" }
+        }) { Pass-Test "400 / 4008 as expected" }
+    } else { Skip-Test "icons.can_upload is false" }
+
+    # 4c.8 200x200 PNG (a 239-byte file) -> 413 / 4131: pixels, not bytes
+    Start-Test "Icons: 200x200 PNG -> 413 / 4131"
+    if ($iconsCap.can_upload) {
+        if (Assert-HttpErrorCode -ExpectedStatus 413 -ExpectedCode 4131 -Action {
+            Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = "$iconBaseName-200"; data = $png200 }
+        }) { Pass-Test "413 / 4131 as expected" }
+    } else { Skip-Test "icons.can_upload is false" }
+
+    # 4c.9 Bad names -> plain 400
+    Start-Test "Icons: name with a control character -> 400"
+    if ($iconsCap.can_upload) {
+        $badName = "bad" + [char] 1 + "name"
+        if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+            Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = $badName; data = $png1x1 }
+        }) { Pass-Test "400 as expected" }
+    } else { Skip-Test "icons.can_upload is false" }
+
+    Start-Test "Icons: blank name -> 400"
+    if ($iconsCap.can_upload) {
+        if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+            Invoke-PDRequest -Session $adminSession -Path $iconsPath -Method POST -Body @{ name = "   "; data = $png1x1 }
+        }) { Pass-Test "400 as expected" }
+    } else { Skip-Test "icons.can_upload is false" }
+
+    # 4c.10 The list names the icon and carries no image data
+    Start-Test "Icons: list contains the icon, without image data"
+    if ($iconA) {
+        try {
+            $list = Get-PDDatabaseIcon -Session $adminSession -DatabaseId $testDbId -Limit 1000
+            $mine = $list.data | Where-Object { $_.id -eq $iconA.id }
+            $ok = (Assert-NotNull $mine "icon in the list") -and
+                  (Assert-Equal $iconA.name $mine.name "name") -and
+                  (Assert-Equal $iconA.version $mine.version "version") -and
+                  (Assert-True ($null -eq $mine.PSObject.Properties['data']) "no 'data' in the plain list") -and
+                  (Assert-GreaterThan $list.total 0 "total")
+            if ($ok) { Pass-Test "$($list.total) icon(s)" }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No icon uploaded" }
+
+    # 4c.11 Batch fetch with image data
+    Start-Test "Icons: ids + include=data returns the PNG"
+    if ($iconA) {
+        try {
+            $batch = Get-PDDatabaseIcon -Session $adminSession -DatabaseId $testDbId -Ids $iconA.id, $iconA.id, "999999" -IncludeData
+            $item = $batch.data | Where-Object { $_.id -eq $iconA.id }
+            $ok = (Assert-Equal 1 (@($batch.data).Count) "duplicates collapsed, unknown id left out") -and
+                  (Assert-Equal "ok" $item.state "state") -and
+                  (Assert-Equal "image/png" $item.content_type "content_type") -and
+                  (Assert-Equal 32 $item.width "width") -and
+                  (Assert-Equal 32 $item.height "height") -and
+                  (Assert-True ($item.data -like "iVBORw0KGgo*") "data starts with the PNG signature")
+            if ($ok) { Pass-Test "$($item.width)x$($item.height), $($item.data.Length) Base64 characters" }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No icon uploaded" }
+
+    Start-Test "Icons: include=data without ids -> 400"
+    if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+        Invoke-PDRequest -Session $adminSession -Path $iconsPath -QueryParams @{ include = "data" }
+    }) { Pass-Test "400 as expected" }
+
+    Start-Test "Icons: more than batch_max ids -> 400"
+    $tooMany = (1..([int] $iconsCap.batch_max + 1)) -join ","
+    if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+        Invoke-PDRequest -Session $adminSession -Path $iconsPath -QueryParams @{ ids = $tooMany }
+    }) { Pass-Test "400 as expected" }
+
+    # 4c.12 One icon
+    Start-Test "Icons: GET one icon"
+    if ($iconA) {
+        try {
+            $one = Get-PDDatabaseIcon -Session $adminSession -DatabaseId $testDbId -Id $iconA.id
+            $ok = (Assert-Equal "ok" $one.state "state") -and
+                  (Assert-Equal $iconA.name $one.name "name") -and
+                  (Assert-Equal $iconA.version $one.version "version") -and
+                  (Assert-True ($one.data -like "iVBORw0KGgo*") "data starts with the PNG signature")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No icon uploaded" }
+
+    Start-Test "Icons: unknown icon id -> 404 / 4042"
+    if (Assert-HttpErrorCode -ExpectedStatus 404 -ExpectedCode 4042 -Action {
+        Invoke-PDRequest -Session $adminSession -Path "$iconsPath/999999"
+    }) { Pass-Test "404 / 4042 as expected" }
+
+    Start-Test "Icons: icon id that is not a number -> plain 404"
+    if (Assert-HttpErrorCode -ExpectedStatus 404 -ExpectedCode 404 -Action {
+        Invoke-PDRequest -Session $adminSession -Path "$iconsPath/not-a-number"
+    }) { Pass-Test "404 as expected" }
+
+    Start-Test "Icons: DELETE on an icon -> 405"
+    if (Assert-HttpError -ExpectedCode 405 -Action {
+        Invoke-PDRequest -Session $adminSession -Path "$iconsPath/999999" -Method DELETE
+    }) { Pass-Test "405 as expected" }
+
+    # 4c.13 Assign the icon when creating an entry
+    Start-Test "Icons: create entry with image_custom + image_name"
+    if ($iconA) {
+        try {
+            $iconEntryName = "TestIcon_$ts"
+            $created = New-PDEntry -Session $adminSession -DatabaseId $testDbId -ParentId $testFolderId -Fields @{
+                type = "password"
+                name = $iconEntryName
+                login = "iconuser"
+                pass = "S3cureP@ss!"
+                image_custom = $true
+                image_name = $iconA.name
+                image_index = 999          # ignored: the server owns the index of a database icon
+            }
+            $ok = (Assert-NotNull $created.id "id") -and
+                  (Assert-Equal "ico0.svg" $created.icon "icon is the type's standard icon (fallback)") -and
+                  (Assert-Equal $iconA.id $created.database_icon.id "database_icon.id (compact)") -and
+                  (Assert-Equal $iconA.version $created.database_icon.version "database_icon.version (compact)")
+            if ($ok) {
+                $iconEntryId = $created.id
+                $full = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId
+                $ok = (Assert-Equal $true $full.image_custom "image_custom") -and
+                      (Assert-Equal $iconA.name $full.image_name "image_name") -and
+                      (Assert-True ($full.image_index -ne 999) "client-sent image_index was ignored") -and
+                      (Assert-Equal $iconA.id $full.database_icon.id "database_icon.id (full)") -and
+                      (Assert-Equal $iconA.name $full.database_icon.name "database_icon.name (full)")
+                if ($ok) { Pass-Test "id=$iconEntryId, image_index=$($full.image_index)" }
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No icon uploaded" }
+
+    # 4c.14 Standard icon 12
+    Start-Test "Icons: PATCH to standard icon 12 -> icon 'ico12.svg', database_icon null"
+    if ($iconEntryId) {
+        try {
+            $upd = Set-PDEntryIcon -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId -StandardIndex 12
+            $full = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId
+            $ok = (Assert-Equal "ico12.svg" $upd.icon "icon") -and
+                  (Assert-True ($null -ne $upd.PSObject.Properties['database_icon']) "'database_icon' key present") -and
+                  (Assert-True ($null -eq $upd.database_icon) "database_icon is null") -and
+                  (Assert-Equal $false $full.image_custom "image_custom") -and
+                  (Assert-Equal 12 $full.image_index "image_index") -and
+                  (Assert-Equal "" $full.image_name "image_name cleared")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Icon entry not created" }
+
+    # 4c.15 Back to the icon of the entry's type
+    Start-Test "Icons: reset with image_index -1 -> icon 'ico0.svg'"
+    if ($iconEntryId) {
+        try {
+            $upd = Set-PDEntryIcon -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId -Reset
+            $full = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId
+            $ok = (Assert-Equal "ico0.svg" $upd.icon "icon") -and
+                  (Assert-Equal $false $full.image_custom "image_custom") -and
+                  (Assert-Equal 0 $full.image_index "image_index is the type's standard icon")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Icon entry not created" }
+
+    # 4c.16 A refused assignment writes nothing - not even the other fields of the body
+    Start-Test "Icons: unknown image_name -> 400 / 4007, entry unchanged"
+    if ($iconEntryId) {
+        if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 4007 -Action {
+            Set-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId -Fields @{
+                name = "MustNotStick_$ts"
+                image_custom = $true
+                image_name = "no-such-icon-$ts"
+            }
+        }) {
+            try {
+                $full = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId
+                $ok = (Assert-Equal $iconEntryName $full.name "name unchanged") -and
+                      (Assert-Equal $false $full.image_custom "image_custom unchanged") -and
+                      (Assert-Equal 0 $full.image_index "image_index unchanged") -and
+                      (Assert-Equal "" $full.image_name "image_name unchanged")
+                if ($ok) { Pass-Test "400 / 4007, nothing written" }
+            } catch { Fail-Test $_.Exception.Message }
+        }
+    } else { Skip-Test "Icon entry not created" }
+
+    Start-Test "Icons: image_index 135 -> 400 / 4007"
+    if ($iconEntryId) {
+        if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 4007 -Action {
+            Set-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId -Fields @{ image_custom = $false; image_index = 135 }
+        }) { Pass-Test "400 / 4007 as expected" }
+    } else { Skip-Test "Icon entry not created" }
+
+    # 4c.17 Echo rule: sending the stored values back is never refused
+    Start-Test "Icons: echo of the stored values is accepted"
+    if ($iconEntryId) {
+        try {
+            $full = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId
+            $echo = Set-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId -Fields @{
+                image_custom = $full.image_custom
+                image_index = $full.image_index
+                image_name = $full.image_name
+            }
+            if (Assert-Equal "ico0.svg" $echo.icon "icon") { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Icon entry not created" }
+
+    # 4c.18 Isolation: the id of this database's icon, sent to ANOTHER database, never
+    # returns this database's image. Read-only - nothing is uploaded to the other database.
+    Start-Test "Icons: an icon id does not cross databases"
+    if ($iconA) {
+        try {
+            $otherDb = (Get-PDDatabases -Session $adminSession).data | Where-Object { $_.id -ne $testDbId } | Select-Object -First 1
+            if (-not $otherDb) {
+                Skip-Test "Only one database available"
+            } else {
+                $foreign = $null
+                $status = 200
+                try {
+                    $foreign = Get-PDDatabaseIcon -Session $adminSession -DatabaseId $otherDb.id -Id $iconA.id
+                } catch {
+                    $info = Get-HttpErrorInfo $_
+                    $status = $info.Status
+                    if ($status -ne 404) { throw }
+                }
+                if ($status -eq 404) {
+                    Pass-Test "404 in the other database"
+                } elseif ($foreign.name -ne $iconA.name -or $foreign.version -ne $iconA.version) {
+                    Pass-Test "the other database answered with its own icon '$($foreign.name)'"
+                } else {
+                    Skip-Test "The other database holds an identical icon under the same id; cannot tell them apart"
+                }
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No icon uploaded" }
+
+    # 4c.19 /file/ serves the 135 standard icons and nothing else (no token on purpose)
+    Start-Test "Icons: GET /file/example.com.ico -> 404"
+    if (Assert-HttpError -ExpectedCode 404 -Action {
+        Invoke-WebRequest -Uri "https://${Server}:${Port}/file/example.com.ico" -UseBasicParsing | Out-Null
+    }) { Pass-Test "404 as expected" }
+
+    Start-Test "Icons: GET /file/ico0.svg -> 200 image/svg+xml"
+    try {
+        $svg = Invoke-WebRequest -Uri "https://${Server}:${Port}/file/ico0.svg" -UseBasicParsing
+        $ok = (Assert-Equal 200 ([int] $svg.StatusCode) "status") -and
+              (Assert-True ("$($svg.Headers['Content-Type'])" -like "image/svg+xml*") "Content-Type")
+        if ($ok) { Pass-Test }
+    } catch { Fail-Test $_.Exception.Message }
+
+    # 4c.20 No token -> 401
+    Start-Test "Icons: list without a token -> 401"
+    if (Assert-HttpError -ExpectedCode 401 -Action {
+        Invoke-WebRequest -Uri "https://${Server}:${Port}/v2.0$iconsPath" -UseBasicParsing | Out-Null
+    }) { Pass-Test "401 as expected" }
+
+    # Clean up the entry. The icons stay: REST has no icon delete.
+    if ($iconEntryId) {
+        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId } catch {}
+    }
+}
+
+$totalFailures += Write-TestSummary
+
+# ============================================================
 #  5. USERS & GROUPS (Admin CRUD)
 # ============================================================
 
@@ -1651,6 +2049,21 @@ if ($clientSession2) {
         $dbs = Get-PDDatabases -Session $clientSession2
         if (Assert-NotNull $dbs "response") { Pass-Test "$($dbs.total) database(s)" }
     } catch { Fail-Test $_.Exception.Message }
+
+    # 8.3b Client scope: every database carries the database-icon capability marker
+    # (Server 20.0.0+; $iconsCap was set by suite 4c)
+    Start-Test "Client: 'icons' capability on the database list"
+    if ($iconsCap) {
+        try {
+            $cdbs = @((Get-PDDatabases -Session $clientSession2).data)
+            if ($cdbs.Count -eq 0) {
+                Skip-Test "No database visible in client scope"
+            } else {
+                $missing = @($cdbs | Where-Object { $null -eq $_.PSObject.Properties['icons'] })
+                if (Assert-Equal 0 $missing.Count "databases without 'icons'") { Pass-Test "$($cdbs.Count) database(s) carry 'icons'" }
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No database-icon support" }
 
     # 8.4 Client cannot access admin endpoints
     Start-Test "Client: admin/alerts -> 403"

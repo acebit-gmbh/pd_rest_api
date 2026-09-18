@@ -15,15 +15,21 @@ Replace `<YOUR_SERVER>` with your Password Depot Server's hostname or IP address
 
 ### Entry Icons
 
-Entry icons are served at a separate path outside the API version prefix:
+An entry or folder shows one of two kinds of icon.
+
+**Standard icons.** The 135 icons that ship with Password Depot are served at a separate path outside the API version prefix:
 
 ```
 https://<YOUR_SERVER>:8714/file/<filename>
 ```
 
-Each entry has an `icon` field (e.g., `"ico12.svg"`). To display the icon, request it from this URL. **No authentication is required** for icon requests.
+Each entry and folder has an `icon` field that names one of them - always `ico0.svg` to `ico134.svg`. **No authentication is required** for these requests, and from Server 20.0.0 on the path serves nothing else: only `GET` and `HEAD`, only those 135 names (in any letter case), as `image/svg+xml`; any other name answers `404`. The files are single-colour SVG templates that take their colour from the page (`currentColor`), so a client may just as well bundle its own set and use `icon` only as the number.
 
-**Example:** `https://127.0.0.1:8714/file/ico12.svg`
+**Example:** `https://<YOUR_SERVER>:8714/file/ico12.svg`
+
+**Database icons.** *Server 20.0.0 and later.* Images that belong to one database - what the Windows client calls custom icons - are never served from `/file/`. They are per database, need a bearer token like everything else under `/v2.0/`, and travel as Base64 inside JSON; see [Database Icons](icons.md). An entry or folder that uses one names it in its `database_icon` field, and its `icon` field then names the standard icon to fall back on.
+
+**Fallback chain.** Show the `database_icon` image when the field is not `null` and the image can be fetched; otherwise the standard icon named by `icon`; otherwise your client's own symbol for the item's `type`.
 
 ## Authentication
 
@@ -47,6 +53,7 @@ The token expires after **10 minutes of inactivity**. Each successful request re
 - All request bodies must be **JSON** with `Content-Type: application/json`
 - Character encoding: **UTF-8**
 - Query parameters are passed in the URL
+- The one binary request body is the document upload (`PUT .../entries/{id}/content`). A [database icon](icons.md#upload-icon) is uploaded as JSON, with the image as Base64 in the `data` field - there is no multipart or binary icon upload
 
 ## Response Format
 
@@ -141,14 +148,19 @@ On error, the server returns a JSON object with a nested `error` object:
     | `4004` | `400` | `PD_ERRCODE_TOTP_PERIOD` | Entry `totp` write: `period` outside `15` to `120` |
     | `4005` | `400` | `PD_ERRCODE_TOTP_SHAPE` | Entry `totp` write: wrong shape (`{}`, an unknown member, a wrong JSON type, or no `secret` where one is required) |
     | `4006` | `400` | `PD_ERRCODE_TOTP_ENTRY_TYPE` | Entry `totp` write: the entry's type cannot carry a one-time code written over REST |
+    | `4007` | `400` | `PD_ERRCODE_ICON_ASSIGNMENT` | Entry or folder `POST` / `PATCH`: `image_custom`, `image_index` and `image_name` do not name a usable icon; nothing was written |
+    | `4008` | `400` | `PD_ERRCODE_ICON_IMAGE` | `POST /databases/{db}/icons`: `data` is not a usable PNG |
     | `4012` | `401` | `PD_ERRCODE_2FA_EMAIL_SEND_FAILED` | Login: e-mail two-factor authentication is required, but the server cannot send the verification e-mail |
     | `4013` | `401` | `PD_ERRCODE_2FA_EMAIL_MISSING` | Login: e-mail two-factor authentication is required, but the account has no e-mail address |
     | `4031` | `403` | `PD_ERRCODE_INVALID_SECOND_PASS` | Wrong or missing second password; a generic access-denied `403` keeps `error.code = 403` |
     | `4032` | `403` | `PD_ERRCODE_LICENSE_LIMIT` | `POST /admin/users`: the server's licensed number of users is reached |
     | `4033` | `403` | `PD_ERRCODE_TOTP_READ_REQUIRED` | Entry `totp` write on `PATCH`: read permission on the entry is required as well |
+    | `4034` | `403` | `PD_ERRCODE_ICON_QUOTA` | `POST /databases/{db}/icons`: the database cannot hold another icon |
     | `4041` | `404` | `PD_ERRCODE_NO_ONE_TIME_CODE` | The entry has no one-time code; a `404` for an entry that does not exist keeps `error.code = 404` |
+    | `4042` | `404` | `PD_ERRCODE_ICON_NOT_FOUND` | `GET /databases/{db}/icons/{icon_id}`: no usable icon with that id in this database; a `404` for a database that does not exist keeps `error.code = 404` |
+    | `4131` | `413` | `PD_ERRCODE_ICON_TOO_LARGE` | `POST /databases/{db}/icons`: too many bytes, too many pixels, or too large a stored record |
 
-    *Changed in Server 20.0.0.* `4001` to `4006`, `4012`, `4013`, `4032`, `4033` and `4041` are new. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
+    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4032`, `4033`, `4034`, `4041`, `4042` and `4131` are new. `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
 
 ## Error Codes
 
@@ -159,9 +171,12 @@ On error, the server returns a JSON object with a nested `error` object:
 | `403` | Forbidden | Authenticated but insufficient permissions for the requested action |
 | `404` | Not Found | The requested resource (database, entry, folder, user, etc.) does not exist |
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification) |
+| `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
+| `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document content; `4131` for an icon upload over its own, smaller limits |
 | `459` | TFA Not Activated | Two-factor authentication needs initial setup (QR code URL returned in `error.message`) |
 | `460` | TFA Code Required | A valid 6-digit 2FA code must be provided to complete login |
 | `500` | Internal Server Error | Unexpected server-side error |
+| `501` | Not Implemented | The entry is of a type this API does not support (`encrypted_file`, `certificate`) |
 
 ## HTTP Methods
 
@@ -210,10 +225,13 @@ On error, the server returns a JSON object with a nested `error` object:
 | `404` | Not Found | Resource does not exist |
 | `405` | Method Not Allowed | HTTP method not supported for this endpoint; `Allow` header lists supported methods |
 | `409` | Conflict | Resource conflict |
+| `410` | Gone | REST API v1.0 path on Server 20.0.0 or later |
+| `413` | Payload Too Large | Request body over the size limit |
 | `429` | Too Many Requests | IP lockout / rate limit; see `Retry-After` header |
 | `459` | TFA Not Activated | 2FA initial setup required |
 | `460` | TFA Code Required | 2FA code needed |
 | `500` | Internal Server Error | Server-side failure |
+| `501` | Not Implemented | Entry type not supported by this API |
 
 !!! info "Method Not Allowed (`405`)"
     When a method is not supported for a given endpoint the server returns `405 Method Not Allowed`, and the response includes an `Allow` header listing the supported methods (per [RFC 7231 §6.5.5](https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.5)).
@@ -237,6 +255,12 @@ On error, the server returns a JSON object with a nested `error` object:
 
 !!! info "IP lockout (`429`)"
     After repeated failed `POST /auth/login` attempts from the same IP address, the server blocks that IP for a configurable period (Server Manager &rarr; *Options* &rarr; *Security* &rarr; *Login Attempts*). While the block is active **every** request from that IP is rejected with `429 Too Many Requests` and a `Retry-After` header containing the number of seconds until the block expires. Clients should honor `Retry-After` and back off; retrying immediately will not shorten the lockout. Login responses with `error.code` `4012` or `4013` do not count as failed attempts (*Server 20.0.0 and later*).
+
+!!! info "Payload too large (`413`)"
+    The server reads the `Content-Length` header before it reads the body and refuses a request over the limit - 1 MB for JSON bodies, 64 MB for `PUT .../entries/{id}/content` - with `413` and `error.code` `413`. This happens before authentication and before the CORS headers are added, and the connection is closed: a browser reports a network error rather than a status, so a web client must check sizes before it sends. The [icon upload](icons.md#upload-icon) has smaller limits of its own, which it reports as a regular JSON error with `413` and `error.code` `4131`.
+
+!!! note "Mirror servers are read-only"
+    A Password Depot server that runs as a mirror of another server accepts only `GET` on authenticated routes. Every other request that carries a bearer token - `POST`, `PUT`, `PATCH`, `DELETE`, including `POST /auth/logout` - answers `403 Forbidden` with `error.code` `403` ("The mirror server does not support this operation.", localized), before the token itself is examined. `POST /auth/login` and the other routes that need no token are not affected. Send writes to the primary server. The `icons.can_upload` flag of a [database](databases.md#icons-capability) is `false` on a mirror.
 
 ---
 
@@ -311,6 +335,14 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `GET` | [`/databases/{db}/entries/{id}/otp`](entries.md#get-one-time-code) | Get the entry's current one-time code (TOTP) | Any |
 | `GET` | [`/databases/{db}/entries/{id}/content`](entries.md#get-document-content) | Download document content (BLOB) | Any |
 | `PUT` | [`/databases/{db}/entries/{id}/content`](entries.md#upload-document-content) | Upload/replace document content (BLOB) | Any |
+
+### Database Icons
+
+| Method | Path | Description | Scope |
+|--------|------|-------------|:-----:|
+| `GET` | [`/databases/{db}/icons`](icons.md#list-icons) | List a database's icons, or fetch several images in one call | Any |
+| `GET` | [`/databases/{db}/icons/{icon_id}`](icons.md#get-icon) | Get one icon with its image | Any |
+| `POST` | [`/databases/{db}/icons`](icons.md#upload-icon) | Upload a new icon (PNG, Base64 in JSON) | Any |
 
 ### Search
 
@@ -445,23 +477,10 @@ All resources use UUID-style string identifiers:
 }
 ```
 
-### Permission Strings
+The one exception is a [database icon](icons.md#icon-object): its `id` is a short string of decimal digits that is valid only inside its database, and the icon's `name` is its identifier.
 
-Database and entry responses include a `rights` field (e.g., `"RMIDCFAPE-Y-HL"`). Each character represents a permission:
+### Permissions
 
-| Character | Permission |
-|:---------:|------------|
-| `R` | Read |
-| `M` | Modify |
-| `I` | Insert (create) |
-| `D` | Delete |
-| `C` | Create folders |
-| `F` | Modify folders |
-| `A` | Admin |
-| `P` | Print |
-| `E` | Export |
-| `Y` | History |
-| `H` | View passwords |
-| `L` | List |
+v2.0 responses do not carry a permission string. Database, folder and entry representations have no `rights` field - that was part of REST API v1.0. A request you lack the permission for answers `403`.
 
-A dash (`-`) indicates a separator or unused position.
+Where permissions appear as data - in the permission rules under [`/admin/databases/{db}/permissions`](permissions.md) - they are JSON arrays of tokens such as `"read"`, `"update"` or `"share"`; see [Rights Values](permissions.md#rights-values).

@@ -34,7 +34,12 @@ info:
     (`PD_ERRCODE_TOTP_SHAPE`) and `4006` (`PD_ERRCODE_TOTP_ENTRY_TYPE`) -- a
     refused `totp` write in `createEntry` / `updateEntry` (Server 20.0.0 and
     later; the first sub-codes of the `400` family, so match the HTTP status
-    rather than `error.code == 400`) with HTTP `400`; `4012`
+    rather than `error.code == 400`), `4007` (`PD_ERRCODE_ICON_ASSIGNMENT` --
+    `image_custom` / `image_index` / `image_name` in `createEntry`,
+    `updateEntry`, `createFolder` or `updateFolder` do not name a usable icon,
+    nothing was written) and `4008` (`PD_ERRCODE_ICON_IMAGE` -- `data` in
+    `uploadDatabaseIcon` is not a usable PNG), all with HTTP `400` (`4007` and
+    `4008`: Server 20.0.0 and later); `4012`
     (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED` -- e-mail two-factor
     authentication, the verification e-mail cannot be sent) and `4013`
     (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
@@ -42,11 +47,18 @@ info:
     20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
     missing second password), `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
     licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
-    later) and `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
+    later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
     `updateEntry` needs read permission on the entry, Server 20.0.0 and later)
-    with HTTP `403`; and
-    `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with
-    HTTP `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
+    and `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
+    cannot hold another icon, Server 20.0.0 and later)
+    with HTTP `403`;
+    `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
+    `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
+    that id in this database, Server 20.0.0 and later) with HTTP `404`; and
+    `4131` (`PD_ERRCODE_ICON_TOO_LARGE` -- `uploadDatabaseIcon`: too many bytes,
+    too many pixels or too large a stored record, Server 20.0.0 and later; the
+    first sub-code of the `413` family) with
+    HTTP `413`. Do not infer a reason from an unrecognised sub-code; show a neutral
     message. Always match the numeric code, never the localized message.
 
     ## Response headers
@@ -72,8 +84,14 @@ info:
     - `400 Bad Request` -- malformed JSON body or unknown enum value.
     - `405 Method Not Allowed` -- includes an `Allow` header listing
       supported methods (RFC 7231 §6.5.5).
+    - `403 Forbidden` -- on a mirror server, every request other than `GET`
+      that carries a bearer token (`POST /auth/logout` included).
     - `413 Payload Too Large` -- JSON bodies cap at 1 MB, document-content
-      uploads at 64 MB.
+      uploads at 64 MB. This check reads `Content-Length` before the body,
+      before authentication and before the CORS headers are added, and the
+      connection is closed, so a browser reports a network error.
+      `uploadDatabaseIcon` reports its own, smaller limits as a regular JSON
+      error with `error.code` `4131`.
     - `429 Too Many Requests` -- IP-lockout triggered by repeated failed
       logins. Includes a `Retry-After` header (seconds).
   version: "2.0"
@@ -106,6 +124,8 @@ tags:
     description: Folder management within a database
   - name: Entries
     description: Entry (credential) management within a database
+  - name: Icons
+    description: Icons stored in a database ("custom icons"); list, fetch and upload (Server 20.0.0 and later)
   - name: Search
     description: Full-text search across database entries
   - name: Users (directory)
@@ -360,6 +380,20 @@ paths:
       description: |
         Create a folder in the database. Set `parent` to an existing folder ID
         to create a subfolder, or omit it to create at root level.
+
+        `image_custom`, `image_index` and `image_name` (validated from Server
+        20.0.0 on) select the folder's icon: `image_custom: true` with
+        `image_name` = the `name` of an icon of this database (see
+        `listDatabaseIcons`, `uploadDatabaseIcon`; a client-sent `image_index`
+        is ignored), `image_custom: false` with `image_index` `0` to `134` for a
+        standard icon, or `image_custom: false` with `image_index` `-1` for the
+        standard folder icon. A body with none of the three keys
+        leaves the icon alone and is not checked; a body that repeats the
+        stored values is never refused. Anything else that does not name a
+        usable icon answers `400` with `error.code` `4007`
+        (`PD_ERRCODE_ICON_ASSIGNMENT`), and nothing is written. Never `409`.
+        Servers older than 20.0.0 store any value; detect support by the
+        `icons` object on the database.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
       requestBody:
@@ -375,6 +409,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Folder"
+        "400":
+          description: |
+            Invalid or missing fields (`error.code` 400), or
+            `error.code` 4007 (`PD_ERRCODE_ICON_ASSIGNMENT`, Server 20.0.0 and
+            later): `image_custom`, `image_index` and `image_name` do not name
+            a usable icon -- `image_custom` true with an `image_name` that names
+            no icon of this database, `image_custom` false with a non-empty
+            `image_name`, or `image_custom` false with `image_index` outside
+            -1 to 134. Nothing was written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -415,6 +462,23 @@ paths:
         `403` (`error.code` `4031`). To change the second password, send the
         new value in `X-New-Second-Password` together with the correct current
         `X-Second-Password`. Folders without a second password are unaffected.
+
+        `image_custom`, `image_index` and `image_name` (validated from Server
+        20.0.0 on) select the folder's icon: `image_custom: true` with
+        `image_name` = the `name` of an icon of this database (see
+        `listDatabaseIcons`, `uploadDatabaseIcon`; a client-sent `image_index`
+        is ignored), `image_custom: false` with `image_index` `0` to `134` for a
+        standard icon, or `image_custom: false` with `image_index` `-1` for the
+        standard folder icon. A body with none of the three keys
+        leaves the icon alone and is not checked; a body that repeats the
+        stored values is never refused. Anything else that does not name a
+        usable icon answers `400` with `error.code` `4007`
+        (`PD_ERRCODE_ICON_ASSIGNMENT`), and nothing is written:
+        the folder keeps its name, its other fields, its second password and
+        its previous icon. The check runs after `X-Second-Password` is verified
+        and before `X-New-Second-Password` is applied. Never `409`.
+        Servers older than 20.0.0 store any value; detect support by the
+        `icons` object on the database.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/FolderId"
@@ -448,6 +512,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Folder"
+        "400":
+          description: |
+            Invalid fields (`error.code` 400), or
+            `error.code` 4007 (`PD_ERRCODE_ICON_ASSIGNMENT`, Server 20.0.0 and
+            later): `image_custom`, `image_index` and `image_name` do not name
+            a usable icon -- `image_custom` true with an `image_name` that names
+            no icon of this database, `image_custom` false with a non-empty
+            `image_name`, or `image_custom` false with `image_index` outside
+            -1 to 134. Nothing was written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -543,6 +620,22 @@ paths:
         returned. The write is audited as an entry creation, never as an
         access. Servers older than 20.0.0 ignore the key; detect support by
         the presence of `totp` in any entry response.
+
+        `image_custom`, `image_index` and `image_name` (validated from Server
+        20.0.0 on) select the entry's icon: `image_custom: true` with
+        `image_name` = the `name` of an icon of this database (see
+        `listDatabaseIcons`, `uploadDatabaseIcon`; a client-sent `image_index`
+        is ignored), `image_custom: false` with `image_index` `0` to `134` for a
+        standard icon, or `image_custom: false` with `image_index` `-1` for the
+        standard icon of the entry's type. A body with none of the three keys
+        leaves the icon alone and is not checked; a body that repeats the
+        stored values is never refused. Anything else that does not name a
+        usable icon answers `400` with `error.code` `4007`
+        (`PD_ERRCODE_ICON_ASSIGNMENT`), and nothing is written -- the entry is not
+        created. The icon is checked before `X-New-Second-Password` and before
+        `totp`. Never `409`.
+        Servers older than 20.0.0 store any value; detect support by the
+        `icons` object on the database.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
       requestBody:
@@ -571,6 +664,13 @@ paths:
             wrong JSON type, or no `secret`), 4006 (the entry's type cannot
             carry a one-time code). The first failing member in the order
             secret, algorithm, digits, period names the code.
+
+            `error.code` 4007 (`PD_ERRCODE_ICON_ASSIGNMENT`, Server 20.0.0 and
+            later): `image_custom`, `image_index` and `image_name` do not name
+            a usable icon -- `image_custom` true with an `image_name` that names
+            no icon of this database, `image_custom` false with a non-empty
+            `image_name`, or `image_custom` false with `image_index` outside
+            -1 to 134. Nothing was written.
           content:
             application/json:
               schema:
@@ -653,6 +753,23 @@ paths:
         as an entry update with an operation-specific message (set, replaced,
         parameters changed, removed), never as an access. Long-lived API
         tokens may write seeds like a session. The seed is never returned.
+
+        `image_custom`, `image_index` and `image_name` (validated from Server
+        20.0.0 on) select the entry's icon: `image_custom: true` with
+        `image_name` = the `name` of an icon of this database (see
+        `listDatabaseIcons`, `uploadDatabaseIcon`; a client-sent `image_index`
+        is ignored), `image_custom: false` with `image_index` `0` to `134` for a
+        standard icon, or `image_custom: false` with `image_index` `-1` for the
+        standard icon of the entry's type. A body with none of the three keys
+        leaves the icon alone and is not checked; a body that repeats the
+        stored values is never refused. Anything else that does not name a
+        usable icon answers `400` with `error.code` `4007`
+        (`PD_ERRCODE_ICON_ASSIGNMENT`), and nothing is written: no field, no
+        history item, no second-password change. The check runs after
+        `X-Second-Password` is verified and before `X-New-Second-Password` and
+        `totp` are looked at. Never `409`.
+        Servers older than 20.0.0 store any value; detect support by the
+        `icons` object on the database.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
@@ -700,6 +817,13 @@ paths:
             (the entry's type cannot carry a one-time code). The first failing
             member in the order secret, algorithm, digits, period names the
             code.
+
+            `error.code` 4007 (`PD_ERRCODE_ICON_ASSIGNMENT`, Server 20.0.0 and
+            later): `image_custom`, `image_index` and `image_name` do not name
+            a usable icon -- `image_custom` true with an `image_name` that names
+            no icon of this database, `image_custom` false with a non-empty
+            `image_name`, or `image_custom` false with `image_index` outside
+            -1 to 134. Nothing was written.
           content:
             application/json:
               schema:
@@ -2471,6 +2595,248 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  # ---------------------------------------------------------------------------
+  # Database icons (Server 20.0.0 and later)
+  # ---------------------------------------------------------------------------
+  /databases/{db}/icons:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    get:
+      operationId: listDatabaseIcons
+      tags:
+        - Icons
+      summary: List the icons of a database, or fetch several images in one call
+      description: |
+        Server 20.0.0 and later; detect support by the `icons` object on the
+        database (`DatabaseIconsCapability`), never by calling this route --
+        an older server answers a plain `404`.
+
+        Without `ids`: a paginated list of the database's icons WITHOUT image
+        data (`id`, `name`, `version`), ordered by position. With `ids` and
+        `include=data`: up to `batch_max` (32) icons with `state` and, for
+        `state` `ok`, the image fields. `include=data` requires `ids`; there
+        is no paged listing of images.
+
+        Removed icons and icons without image data are never listed and do
+        not count in `total`. A requested id that is unknown, removed or
+        empty is silently left out: treat a requested id that does not come
+        back as gone. Images are added while the decoded image bytes of the
+        response stay within 2 MiB; later items carry `state` `deferred` and
+        are fetched with `getDatabaseIcon`. Icons uploaded over REST are
+        never deferred.
+
+        Needs nothing beyond access to the database: client scope the
+        database-level `use` right, admin scope management of the database;
+        otherwise a plain `404`. Works on a mirror server. Responses are
+        `no-store`; cache images by (database, `id`, `version`).
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+        - name: ids
+          in: query
+          required: false
+          description: |
+            Comma-separated icon ids, 1 to 32 (`batch_max`), each 1 to 6
+            decimal digits; duplicates are collapsed. `offset` and `limit`
+            are ignored when `ids` is given. More than 32 ids, or a
+            malformed value, answers `400`.
+          schema:
+            type: string
+            pattern: "^[0-9]{1,6}(,[0-9]{1,6}){0,31}$"
+          example: "3,7"
+        - name: include
+          in: query
+          required: false
+          description: "`data` adds `state` and the image fields to every item. Requires `ids`."
+          schema:
+            type: string
+            enum:
+              - data
+      responses:
+        "200":
+          description: Icons of the database
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseIconList"
+        "400":
+          description: |
+            Bad `offset`, `limit` or `ids`, more than `batch_max` ids, an
+            `include` other than `data`, or `include=data` without `ids`
+            (`error.code` 400).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            Database not found or not accessible to the caller; also the
+            answer of a server older than 20.0.0 (`error.code` 404).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+    post:
+      operationId: uploadDatabaseIcon
+      tags:
+        - Icons
+      summary: Upload a new icon
+      description: |
+        Server 20.0.0 and later. Stores a new icon in the database's icon
+        collection -- the one the Windows client uses. The request is JSON;
+        the image travels as Base64 in `data`. PNG only (detected by
+        signature, never by a declared type), 1 to `max_side` (64) pixels per
+        side, 67 to `max_bytes` (32768) bytes decoded; 64x64 is the native
+        size of a Password Depot icon and what first-party clients always
+        send. JPEG, GIF, BMP, ICO, WebP, SVG and animated PNG are refused.
+        The request body may be at most 65536 bytes.
+
+        The server keeps only the chunks `IHDR`, `PLTE`, `tRNS`, `IDAT` and
+        `IEND`, proves that the Windows client's decoder reads the result,
+        and builds a 16x16 rendition; the stored image is therefore not
+        byte-identical to the upload, and `version` is computed from what
+        was stored.
+
+        Name collisions: no icon of that name, or a removed one (brought
+        back in place, same `id`) -> `201`, `created` true. An icon of that
+        name with exactly the same image -> `200`, `created` false, nothing
+        written (retries are safe). An icon of that name with a DIFFERENT
+        image is never touched: the upload is stored under a free name such
+        as `example.com (2)` -> `201`. The `name` in the response is
+        authoritative and is the value for `image_name`. There is no delete
+        and no replace.
+
+        Permission: whoever can open the database (published as
+        `icons.can_upload`); long-lived API tokens included. A mirror server
+        answers a plain `403`. An upload is database-wide: every user of the
+        database sees the icon's name and image. Every attempt past the
+        permission check is audited, never with image data. A refused or
+        failed upload leaves no icon, no half-written icon and no changed
+        icon. A connected Windows client sees the icon after it reopens the
+        database.
+
+        Order of checks: token (`401`), mirror (`403`), database (`404`),
+        method (`405`), upload right (`403`), body (`400`; over 65536 bytes
+        `413` / `4131`), `name` (`400`), `data` (`400` / `4008`; too long or
+        too many bytes `413` / `4131`), PNG structure (`400` / `4008`; too
+        many pixels `413` / `4131`), decoding (`400` / `4008`), then under
+        the database lock the collision rule, the quota (`403` / `4034`) and
+        the record size (`413` / `4131`). Only then is the icon stored, in
+        one step.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DatabaseIconUpload"
+      responses:
+        "200":
+          description: An identical icon of that name already exists; nothing was written (`created` false)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseIconUploadResult"
+        "201":
+          description: Icon stored (`created` true). `name` may differ from the requested one
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseIconUploadResult"
+        "400":
+          description: |
+            `error.code` 400: the body is missing or not a JSON object, or
+            `name` is missing, not a string, empty after trimming, too long
+            or contains a refused character.
+            `error.code` 4008 (`PD_ERRCODE_ICON_IMAGE`): `data` is missing,
+            not a string, not strict Base64, shorter than 67 bytes, or not
+            a usable, non-animated PNG.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            `error.code` 4034 (`PD_ERRCODE_ICON_QUOTA`): a new icon would
+            exceed `max_count` slots (removed icons included) or 8 MiB of
+            stored icon data in this database.
+            `error.code` 403: mirror server, or the caller may not upload to
+            this database.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: |
+            `error.code` 4131 (`PD_ERRCODE_ICON_TOO_LARGE`): body over 65536
+            bytes, `data` over 43692 characters or over `max_bytes` decoded,
+            width or height over `max_side`, or a stored record over 65535
+            bytes. Scale down and retry.
+            `error.code` 413: `Content-Length` over 1 MB, refused before the
+            body is read (see `PayloadTooLarge`; no CORS headers).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /databases/{db}/icons/{icon_id}:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - name: icon_id
+        in: path
+        required: true
+        description: The icon's `id` -- 1 to 6 decimal digits, valid only inside this database
+        schema:
+          type: string
+          pattern: "^[0-9]{1,6}$"
+    get:
+      operationId: getDatabaseIcon
+      tags:
+        - Icons
+      summary: Get one icon with its image
+      description: |
+        Server 20.0.0 and later. Returns the icon with `state` `ok` and the
+        image fields. No query parameters and no `X-Second-Password`: icons
+        belong to the database, not to an entry. Works on a mirror server.
+        Store the image under the `version` this response carries; when it
+        differs from the `version` on the entry or folder row, the row is
+        stale. The `id` of an icon of another database addresses this
+        database's own icon or answers `404` / `4042`, never the other
+        database's image.
+      responses:
+        "200":
+          description: The icon with its image
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseIcon"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            `error.code` 4042 (`PD_ERRCODE_ICON_NOT_FOUND`): no usable icon
+            with that id in THIS database -- unknown id, removed icon, no
+            image, or a stored image that cannot be served. Show the item's
+            standard `icon` and do not ask again in this session.
+            `error.code` 404: database not found or not accessible, a server
+            older than 20.0.0, an `icon_id` that is not 1 to 6 digits, or a
+            further path segment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
 # =============================================================================
 # Components
 # =============================================================================
@@ -2714,7 +3080,12 @@ components:
     PayloadTooLarge:
       description: |
         The request body exceeds the allowed size limit. JSON endpoints cap at
-        1 MB; the document-content upload endpoint caps at 64 MB.
+        1 MB; the document-content upload endpoint caps at 64 MB. These caps
+        are applied to `Content-Length` before the body is read: the
+        response carries `error.code` `413` and no CORS headers, and the
+        connection is closed. `uploadDatabaseIcon` additionally answers `413`
+        with `error.code` `4131` (`PD_ERRCODE_ICON_TOO_LARGE`) for its own
+        limits.
       content:
         application/json:
           schema:
@@ -2873,6 +3244,8 @@ components:
           type: string
           format: date-time
           readOnly: true
+        icons:
+          $ref: "#/components/schemas/DatabaseIconsCapability"
 
     Database:
       description: |
@@ -2894,7 +3267,10 @@ components:
               readOnly: true
             icons_count:
               type: integer
-              description: Number of custom icons stored with the database
+              description: |
+                Number of icon slots in the database's icon collection,
+                removed icons included. Not a capability marker and unrelated
+                to `icons`; it can exceed the `total` of `listDatabaseIcons`.
               readOnly: true
             disabled:
               type: boolean
@@ -2913,6 +3289,211 @@ components:
             include_server_supervisors:
               type: boolean
               description: Whether server-level supervisors can also act on this database
+
+    # --- Database icons ---
+    DatabaseIconsCapability:
+      type: object
+      readOnly: true
+      description: |
+        Database-icon capability of a database for the current caller
+        (Server 20.0.0 and later). Present on EVERY database object -- client
+        and admin scope, list and detail. Its presence means the server
+        implements database icons as a whole: `listDatabaseIcons`,
+        `getDatabaseIcon`, `uploadDatabaseIcon`, `database_icon` on entries
+        and folders, validated `image_*` writes, and an `icon` that follows
+        `image_index`. Absent on older servers: never call the icon routes,
+        never probe by uploading, treat `icon` as the legacy value.
+      required:
+        - can_upload
+        - accepted_types
+        - max_bytes
+        - max_side
+        - max_count
+        - batch_max
+      properties:
+        can_upload:
+          type: boolean
+          description: |
+            Whether the caller can upload an icon to this database right now:
+            not a mirror server, the caller holds the upload right (everyone
+            who can open the database does), and the database has fewer than
+            `max_count` icon slots. An upload can still answer `403` / `4034`.
+        accepted_types:
+          type: array
+          items:
+            type: string
+          description: Image types an upload accepts
+          example: ["image/png"]
+        max_bytes:
+          type: integer
+          description: Largest accepted image in bytes, after Base64 decoding
+          example: 32768
+        max_side:
+          type: integer
+          description: Largest accepted width and height in pixels
+          example: 64
+        max_count:
+          type: integer
+          description: Largest number of icon slots per database, removed icons included
+          example: 1024
+        batch_max:
+          type: integer
+          description: Largest number of ids in one `listDatabaseIcons` call
+          example: 32
+
+    DatabaseIconRef:
+      type: object
+      nullable: true
+      readOnly: true
+      description: |
+        The database icon an entry or folder uses, in the item's OWN
+        database, or `null` (Server 20.0.0 and later; the key is always
+        present there and absent on older servers). `null` when
+        `image_custom` is false, and when `image_name` names no icon that
+        exists with an image. An item with `image_custom` true and an empty
+        `image_name` (last saved by a client older than version 17) is
+        resolved by its stored position. Carries no image data: fetch it with
+        `listDatabaseIcons` (`ids`, `include=data`) or `getDatabaseIcon` and
+        cache it by `version`. Fallback chain for clients: this image, then
+        the standard icon named by `icon`, then the client's own symbol.
+      required:
+        - id
+        - name
+        - version
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9]{1,6}$"
+          description: Fetch handle (decimal digits), valid only inside this database
+          example: "3"
+        name:
+          type: string
+          description: The icon's identifier; the value stored in `image_name`
+          example: example.com
+        version:
+          type: string
+          description: Opaque change token of the stored image
+          example: 9c1e5f2a-10f4-2b1
+
+    DatabaseIcon:
+      type: object
+      description: |
+        An icon stored in a database. `name` is THE identifier (unique per
+        database, compared case-insensitively) and the value for
+        `image_name`. `id` is an opaque fetch handle of decimal digits, valid
+        only inside this database -- not a UUID -- and may be reassigned
+        after an administrator removed all icons, so it always travels with
+        `version`. `version` changes whenever the stored image changes.
+        `max_side` and `max_bytes` limit uploads only: icons stored by the
+        desktop clients are served in their stored size, up to 512 pixels per side
+        and 1 MiB of image data; beyond that the icon is `unusable`.
+      required:
+        - id
+        - name
+        - version
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9]{1,6}$"
+          example: "3"
+        name:
+          type: string
+          example: example.com
+        version:
+          type: string
+          example: 9c1e5f2a-10f4-2b1
+        state:
+          type: string
+          enum:
+            - ok
+            - unusable
+            - deferred
+          description: |
+            Present on `getDatabaseIcon` and on `listDatabaseIcons` with
+            `include=data`. `ok`: the image fields follow. `unusable`: the
+            stored image cannot be served -- show the fallback and remember
+            that for this `id` and `version`. `deferred`: the response's
+            byte budget was reached -- fetch with `getDatabaseIcon`. Treat an
+            unknown value as `unusable`.
+        content_type:
+          type: string
+          enum:
+            - image/png
+            - image/bmp
+          description: Only with `state` `ok`. `image/bmp` for icons an older client stored. Accept exactly these two
+        width:
+          type: integer
+          description: Pixels, from the image header (only with `state` `ok`); 1 to 512, so it can exceed `max_side`
+        height:
+          type: integer
+          description: Pixels, from the image header (only with `state` `ok`); 1 to 512, so it can exceed `max_side`
+        data:
+          type: string
+          format: byte
+          description: |
+            The image as Base64 (RFC 4648, standard alphabet, no line
+            breaks, no `data:` prefix). Only with `state` `ok`.
+
+    DatabaseIconList:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResponse"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/DatabaseIcon"
+
+    DatabaseIconUpload:
+      type: object
+      required:
+        - name
+        - data
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: |
+            Name of the icon. Trimmed by the server; then 1 to 100 characters
+            and at most 240 bytes in UTF-8. Refused: U+0000 to U+001F,
+            U+007F to U+009F, U+FFFE, U+FFFF and unpaired surrogates. Dots,
+            spaces, parentheses, `&`, `/` and non-ASCII letters are legal.
+          example: example.com
+        data:
+          type: string
+          format: byte
+          maxLength: 43692
+          description: |
+            The PNG as strict Base64 (no line breaks, no `data:` prefix), at
+            most 43692 characters; 67 to 32768 bytes decoded; 1 to 64 pixels
+            per side. First-party clients always send 64x64.
+
+    DatabaseIconUploadResult:
+      type: object
+      required:
+        - id
+        - name
+        - version
+        - created
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9]{1,6}$"
+          example: "7"
+        name:
+          type: string
+          description: The name the icon is stored under -- authoritative; may be `<requested name> (2)`
+          example: example.com
+        version:
+          type: string
+          example: 9c1e5f2a-10f4-2b1
+        created:
+          type: boolean
+          description: |
+            true (`201`): a new icon was stored, or a removed icon of that
+            name was brought back. false (`200`): an identical icon of that
+            name already existed and nothing was written.
 
     # --- Folders ---
     FolderBasic:
@@ -2940,8 +3521,17 @@ components:
           description: Folder display name
         icon:
           type: string
-          description: Icon identifier (numeric or custom name, see `image_index`/`image_name`)
+          description: |
+            File name of a standard icon, always `ico0.svg` to `ico134.svg`
+            (served without authentication at `/file/{icon}`, outside
+            `/v2.0`): `ico<image_index>.svg` when `image_custom` is false and
+            `image_index` is 0 to 134, otherwise the standard folder icon
+            `ico3.svg`. With a `database_icon` it is `ico3.svg` and serves as
+            the fallback. Servers older than 20.0.0 ignored `image_index`
+            here and could return `<image_name>.ico`.
           readOnly: true
+        database_icon:
+          $ref: "#/components/schemas/DatabaseIconRef"
         importance:
           type: string
           description: Importance level ("low", "normal" or "high"), the same level the Windows, macOS, iOS and Android clients show; any other string is stored as "normal"
@@ -2974,13 +3564,21 @@ components:
               description: ID of the user who originally created the folder
             image_custom:
               type: boolean
-              description: If true, use `image_name` as the custom image; otherwise use `image_index`
+              description: true when the folder uses a database icon (`image_name`), false when it uses a standard icon (`image_index`)
             image_index:
               type: integer
-              description: Standard icon index (when `image_custom` is false)
+              description: |
+                With `image_custom` false: the number of the standard icon, 0
+                to 134 (write -1 for the standard folder icon). With
+                `image_custom` true: a position the server maintains for the
+                desktop clients; ignore it when reading, it is ignored when
+                written.
             image_name:
               type: string
-              description: Custom image name (when `image_custom` is true), e.g. "twitter.com"
+              description: |
+                With `image_custom` true: the `name` of an icon stored in
+                this database (see `listDatabaseIcons`), e.g. "example.com"
+                -- not a file name. Empty otherwise.
             comments:
               type: string
 
@@ -3054,7 +3652,20 @@ components:
             - $ref: "#/components/schemas/EntryTotpWrite"
         icon:
           type: string
+          description: |
+            File name of a standard icon, always `ico0.svg` to `ico134.svg`
+            (served without authentication at `/file/{icon}`, outside
+            `/v2.0`): `ico<image_index>.svg` when `image_custom` is false and
+            `image_index` is 0 to 134, otherwise the standard icon of the
+            entry's type (password and custom 0, rdp 123, teamviewer 124,
+            putty 125, credit_card 126, banking 127, license 128, identity
+            129, information 131, document 133, passkey 134). With a
+            `database_icon` it is the type's icon and serves as the fallback.
+            Servers older than 20.0.0 ignored `image_index` here, could
+            return `<image_name>.ico`, and reported 132 for documents.
           readOnly: true
+        database_icon:
+          $ref: "#/components/schemas/DatabaseIconRef"
         importance:
           type: string
           description: Importance level ("low", "normal" or "high"), the same level the Windows, macOS, iOS and Android clients show; any other string is stored as "normal"
@@ -3113,10 +3724,22 @@ components:
           readOnly: true
         image_custom:
           type: boolean
+          description: true when the entry uses a database icon (`image_name`), false when it uses a standard icon (`image_index`). Full representation only
         image_index:
           type: integer
+          description: |
+            With `image_custom` false: the number of the standard icon, 0 to
+            134 (write -1 for the standard icon of the entry's type). With
+            `image_custom` true: a position the server maintains for the
+            desktop clients; ignore it when reading, it is ignored when
+            written. Full representation only.
         image_name:
           type: string
+          description: |
+            With `image_custom` true: the `name` of an icon stored in this
+            database (see `listDatabaseIcons`, `uploadDatabaseIcon`), e.g.
+            "example.com" -- not a file name. Empty otherwise. Full
+            representation only.
         comments:
           type: string
         # Type-specific sub-objects. Only one of these is present per entry,
@@ -4135,7 +4758,12 @@ components:
                 (`PD_ERRCODE_TOTP_SHAPE`) and `4006` (`PD_ERRCODE_TOTP_ENTRY_TYPE`) -- a
                 refused `totp` write in `createEntry` / `updateEntry` (Server 20.0.0 and
                 later; the first sub-codes of the `400` family, so match the HTTP status
-                rather than `error.code == 400`) with HTTP `400`; `4012`
+                rather than `error.code == 400`), `4007` (`PD_ERRCODE_ICON_ASSIGNMENT` --
+                `image_custom` / `image_index` / `image_name` in `createEntry`,
+                `updateEntry`, `createFolder` or `updateFolder` do not name a usable icon,
+                nothing was written) and `4008` (`PD_ERRCODE_ICON_IMAGE` -- `data` in
+                `uploadDatabaseIcon` is not a usable PNG), all with HTTP `400` (`4007` and
+                `4008`: Server 20.0.0 and later); `4012`
                 (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED` -- e-mail two-factor
                 authentication, the verification e-mail cannot be sent) and `4013`
                 (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
@@ -4143,11 +4771,18 @@ components:
                 20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
                 missing second password), `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
                 licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
-                later) and `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
+                later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
                 `updateEntry` needs read permission on the entry, Server 20.0.0 and later)
-                with HTTP `403`; and
-                `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) with
-                HTTP `404`. Do not infer a reason from an unrecognised sub-code; show a neutral
+                and `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
+                cannot hold another icon, Server 20.0.0 and later)
+                with HTTP `403`;
+                `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
+                `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
+                that id in this database, Server 20.0.0 and later) with HTTP `404`; and
+                `4131` (`PD_ERRCODE_ICON_TOO_LARGE` -- `uploadDatabaseIcon`: too many bytes,
+                too many pixels or too large a stored record, Server 20.0.0 and later; the
+                first sub-code of the `413` family) with
+                HTTP `413`. Do not infer a reason from an unrecognised sub-code; show a neutral
                 message. Always match the numeric code, never the localized message.
             message:
               type: string

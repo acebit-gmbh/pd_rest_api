@@ -13,7 +13,7 @@ Reference for database endpoints. Databases are accessible in both **client** an
 
 The database object uses different representations depending on scope and context:
 
-- **Client scope** and **admin list** responses return a **compact representation**: `id`, `name`, `description`, `updated_at`.
+- **Client scope** and **admin list** responses return a **compact representation**: `id`, `name`, `description`, `updated_at`, `icons`.
 - **Admin detail** responses (`GET /v2.0/admin/databases/{id}`) return the **full representation** with all fields.
 
 | Field | Type | Writable | Description |
@@ -23,15 +23,33 @@ The database object uses different representations depending on scope and contex
 | `description` | string | Yes | Database description |
 | `size` | integer | No | File size in bytes (admin detail only) |
 | `entries_count` | integer | No | Number of password entries (admin detail only) |
-| `icons_count` | integer | No | Number of custom icons (admin detail only) |
+| `icons_count` | integer | No | Number of icon slots in the database's icon collection, removed icons included (admin detail only). Unrelated to `icons`: it is not a capability marker, and it can be larger than the `total` of [List Icons](icons.md#list-icons), which leaves removed icons out |
 | `disabled` | boolean | Restricted | Whether the database is disabled (admin detail only). Requires database management permission. |
 | `db_admins` | array of UUIDs | Restricted | User IDs designated as Database Administrators (admin detail only). Requires database management permission. |
 | `db_supervisors` | array of UUIDs | Restricted | User IDs designated as Database Supervisors (admin detail only). Requires database management permission. |
 | `include_server_supervisors` | boolean | Restricted | Whether server-level supervisors have access to this database (admin detail only). Requires database management permission. |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp |
+| `icons` | object | No | [Database icon](icons.md) capability of this database for the current caller, in every representation and both scopes - see [Icons Capability](#icons-capability). Absent on servers older than 20.0.0 |
 
 !!! warning "Field-Level Authorization"
     The `disabled`, `db_admins`, `db_supervisors`, and `include_server_supervisors` fields can only be modified by users with database management permission (Server Administrators or Database Administrators for this database). If an unauthorized user attempts to change these fields, the server returns `403 Forbidden`.
+
+### Icons Capability
+
+*Server 20.0.0 and later.*
+
+Every database object - client and admin scope, list and detail, compact and full - carries a read-only `icons` object. Its presence is how a client detects that the server implements [Database Icons](icons.md) as a whole: the `/icons` endpoints, the `database_icon` field on entries and folders, the validated `image_*` writes and the corrected `icon` field. When it is absent, the server is older than 20.0.0: never call `/icons`, never probe by uploading, and treat `icon` as the legacy value. A client whose JSON layer cannot tell `null` from an absent key should use this marker rather than `database_icon`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `can_upload` | boolean | Whether the current caller can upload an icon to this database right now: the server is not a mirror, the caller holds the upload right (everyone who can open the database does), and the database has fewer than `max_count` icon slots. An upload can still answer `403` / `4034`, for example when the byte quota is reached |
+| `accepted_types` | array of strings | The image types an upload accepts: `["image/png"]` |
+| `max_bytes` | integer | Largest accepted image, in bytes after Base64 decoding: `32768` |
+| `max_side` | integer | Largest accepted width and height in pixels: `64` |
+| `max_count` | integer | Largest number of icon slots a database can hold, removed icons included: `1024` |
+| `batch_max` | integer | Largest number of ids in one [List Icons](icons.md#list-icons) call with `ids`: `32` |
+
+Read the limits from this object rather than hard-coding them.
 
 ---
 
@@ -68,7 +86,15 @@ Returns a paginated list of databases accessible by the authenticated user. Only
             "id": "E79BDEB2-1A58-4715-B74C-28A87A2AFD37",
             "name": "Corporate Passwords.pswe",
             "description": "Main corporate password database",
-            "updated_at": "2025-02-28T13:22:22.753Z"
+            "updated_at": "2025-02-28T13:22:22.753Z",
+            "icons": {
+                "can_upload": true,
+                "accepted_types": ["image/png"],
+                "max_bytes": 32768,
+                "max_side": 64,
+                "max_count": 1024,
+                "batch_max": 32
+            }
         }
     ],
     "total": 1,
@@ -117,7 +143,15 @@ Returns details of a specific database that the user has access to. Returns the 
     "id": "E79BDEB2-1A58-4715-B74C-28A87A2AFD37",
     "name": "Corporate Passwords.pswe",
     "description": "Main corporate password database",
-    "updated_at": "2025-02-28T13:22:22.753Z"
+    "updated_at": "2025-02-28T13:22:22.753Z",
+    "icons": {
+        "can_upload": true,
+        "accepted_types": ["image/png"],
+        "max_bytes": 32768,
+        "max_side": 64,
+        "max_count": 1024,
+        "batch_max": 32
+    }
 }
 ```
 
@@ -173,13 +207,29 @@ Returns a paginated list of databases on the server. Returns the compact represe
             "id": "E79BDEB2-1A58-4715-B74C-28A87A2AFD37",
             "name": "Corporate Passwords.pswe",
             "description": "Main corporate password database",
-            "updated_at": "2025-02-28T13:22:22.753Z"
+            "updated_at": "2025-02-28T13:22:22.753Z",
+            "icons": {
+                "can_upload": true,
+                "accepted_types": ["image/png"],
+                "max_bytes": 32768,
+                "max_side": 64,
+                "max_count": 1024,
+                "batch_max": 32
+            }
         },
         {
             "id": "CD089F93-A0CF-475E-A7A0-7F060D005A8D",
             "name": "IT Department.pswe",
             "description": "Shared IT team credentials",
-            "updated_at": "2022-10-17T10:58:40.349Z"
+            "updated_at": "2022-10-17T10:58:40.349Z",
+            "icons": {
+                "can_upload": true,
+                "accepted_types": ["image/png"],
+                "max_bytes": 32768,
+                "max_side": 64,
+                "max_count": 1024,
+                "batch_max": 32
+            }
         }
     ],
     "total": 64,
@@ -259,7 +309,15 @@ The same rules are enforced when renaming a database via `PATCH /v2.0/admin/data
     "id": "F5A6B7C8-D9E0-1234-ABCD-567890123456",
     "name": "New Database.pswe",
     "description": "A new password database",
-    "updated_at": "2025-02-17T09:00:00.000Z"
+    "updated_at": "2025-02-17T09:00:00.000Z",
+    "icons": {
+        "can_upload": true,
+        "accepted_types": ["image/png"],
+        "max_bytes": 32768,
+        "max_side": 64,
+        "max_count": 1024,
+        "batch_max": 32
+    }
 }
 ```
 
@@ -322,7 +380,15 @@ Returns the **full representation** of a specific database, including size, entr
         "83664092-DF61-45F0-AEA5-DD9E14C8C519"
     ],
     "include_server_supervisors": true,
-    "updated_at": "2025-02-28T13:22:22.753Z"
+    "updated_at": "2025-02-28T13:22:22.753Z",
+    "icons": {
+        "can_upload": true,
+        "accepted_types": ["image/png"],
+        "max_bytes": 32768,
+        "max_side": 64,
+        "max_count": 1024,
+        "batch_max": 32
+    }
 }
 ```
 
@@ -392,7 +458,15 @@ Updates an existing database. Include only the fields you want to update.
         "83664092-DF61-45F0-AEA5-DD9E14C8C519"
     ],
     "include_server_supervisors": true,
-    "updated_at": "2025-03-10T11:00:00.000Z"
+    "updated_at": "2025-03-10T11:00:00.000Z",
+    "icons": {
+        "can_upload": true,
+        "accepted_types": ["image/png"],
+        "max_bytes": 32768,
+        "max_side": 64,
+        "max_count": 1024,
+        "batch_max": 32
+    }
 }
 ```
 
