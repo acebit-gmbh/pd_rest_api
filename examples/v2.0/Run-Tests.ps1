@@ -952,6 +952,23 @@ if (-not $testDbId) {
             }) { Pass-Test "413 as expected" }
         } catch { Fail-Test $_.Exception.Message }
     } else { Skip-Test "Document entry not created" }
+
+    # 4b.11: a body sent with Transfer-Encoding -> 411, before authentication
+    # The header stage refuses any Transfer-Encoding header while the request
+    # headers are still being read - before the body, before the token is
+    # looked at - so this goes out without one and must still answer 411.
+    # Note: -TransferEncoding is honoured differently by Windows PowerShell
+    # 5.1 and PowerShell 7. If the request does not actually go out chunked,
+    # the server answers the ordinary login refusal instead and this reports
+    # the status it did get rather than passing.
+    Start-Test "Chunked request body -> 411 (no token)"
+    try {
+        if (Assert-HttpError -ExpectedCode 411 -Action {
+            Invoke-WebRequest -Uri "$($adminSession.BaseUri)/auth/login" -Method POST `
+                -UseBasicParsing -ContentType "application/json" -TransferEncoding chunked `
+                -Body '{"user":"chunked_probe","pass":"x","scope":"client"}' | Out-Null
+        }) { Pass-Test "411 as expected" }
+    } catch { Fail-Test $_.Exception.Message }
 }
 
 $totalFailures += Write-TestSummary

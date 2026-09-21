@@ -17,6 +17,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 
 - REST API v1.0 is no longer served: `/v1.0/...` answers `410 Gone`
 - request bodies must be valid JSON; send `{}` when a request has no body fields
+- every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
 - `importance` strings map to the levels the desktop and mobile clients show
 - a password change ends the account's REST sessions
 - `open_uuid` and `approve_uuid` are optional in the secret representation
@@ -473,6 +474,28 @@ The message text can be localized; check the status and `error.code`, not the me
 !!! warning "Behavior change for clients"
     Always send a JSON object as the request body, and send `{}` when a request has no body fields -- for example a `PATCH` on an entry or folder that only sets `X-New-Second-Password`. A request that answers `400` has to be corrected before it is retried.
 
+#### Chunked Request Bodies Answer `411 Length Required` (Behavior Change)
+
+Every request body must state its size in a `Content-Length` header. A request that carries a `Transfer-Encoding` header - of any value, and whether or not it also sends a `Content-Length`; `chunked` is the one clients send - is refused with HTTP `411 Length Required` and `error.code` `411`:
+
+```json
+{
+  "error": {
+    "code": 411,
+    "message": "Send the request body with a Content-Length header. Chunked transfer encoding is not accepted."
+  }
+}
+```
+
+The refusal happens while the request headers are being read: the body is never read, the check runs before authentication, and the connection is closed afterwards. It applies to every method and every path, including a path that would otherwise answer `404` or `410`, a mirror server's `403` and an address under an IP lockout. A request that carries both a `Transfer-Encoding` and a `Content-Length` answers `411`, not `413`, even when the length alone would have been over the limit: the length is not trusted, because it does not describe what would be read. Servers before 20.0.0 read a chunked body on any route into memory with no size limit at all - the `Content-Length` caps (1 MB for JSON bodies, 64 MB for document content) never saw one.
+
+Like the header-stage `413`, this answer is produced before the headers a normal response carries are added. The payload is the JSON error object above, but it is sent with `Content-Type: text/html; charset=utf-8` and without CORS or `Cache-Control` headers. A browser reports a network error rather than a status, and a generated client that picks its deserializer from `Content-Type` will not parse it. Match the HTTP status.
+
+A request that sends *neither* header is unaffected: the server never reads a body whose size was not announced, so there is nothing to refuse. A `POST` or `PUT` that puts body bytes on the wire without announcing them still receives the HTTP layer's own bare `411`, whose body is announced in the response headers but never sent before the connection closes, so most clients report a truncated response rather than the status - unchanged from Server 19.x. A request that announces no length and sends no bytes is not refused either, but an endpoint that needs a body then fails it with `500`: always send a `Content-Length`, `0` included.
+
+!!! warning "Behavior change for clients"
+    No Password Depot client is affected: the web client, the Android client and the PowerShell example client all send bodies of known length. Third-party integrations that stream their request bodies are. **.NET `HttpClient` is the common case** - `PostAsJsonAsync`, `JsonContent` and `StreamContent` over a non-seekable stream send `Transfer-Encoding: chunked` by default, on ordinary JSON calls as well as on uploads. Buffer the body so its length is known (`StringContent`, `ByteArrayContent`, `await content.LoadIntoBufferAsync()`, or a seekable stream); setting `request.Headers.TransferEncodingChunked = false` does **not** help, as the request still goes out chunked. The same applies to `curl -T -`, an explicit `-H "Transfer-Encoding: chunked"`, `Invoke-WebRequest -TransferEncoding chunked`, Python `requests` with a generator body and Node streams without a length. A **reverse proxy in streaming mode** (nginx `proxy_request_buffering off`, some cloud load balancers) passes the client's own framing through, so an upload that arrived with a `Content-Length` still has one; a body whose length the proxy does not know - a streaming client, or an HTTP/2 front end - becomes chunked upstream and now receives `411`. Leaving request buffering on (the nginx default) makes the proxy state a length whatever the client did.
+
 ### Shared-Link Page
 
 #### Shared-Link Page: Copy Confirmation for RDP, PuTTY and TeamViewer Entries
@@ -499,7 +522,7 @@ A `document` entry without an icon of its own reports `icon` `ico133.svg`, the d
 
 These correct the documentation only; the server's behavior is described as it has been.
 
-- **`PUT /databases/{db}/entries/{id}/content` over 64 MB answers `413`, not `400`.** The server refuses a `Content-Length` above the limit before it reads the body. `400` is left for a body sent without `Content-Length` (chunked) that turns out to be too large, and for an entry that is not a `document`. The OpenAPI document and the test suite already said `413`.
+- **`PUT /databases/{db}/entries/{id}/content` over 64 MB answers `413`, not `400`.** The server refuses a `Content-Length` above the limit before it reads the body. `400` is left for an entry that is not a `document`. The OpenAPI document and the test suite already said `413`. A chunked body no longer reaches that size check at all: any `Transfer-Encoding` header is now refused with `411` while the request headers are read, see [Chunked Request Bodies Answer `411 Length Required`](#chunked-request-bodies-answer-411-length-required-behavior-change).
 - **`Content-Type` is not required on that upload, and is not stored.** The server does not read it. The type reported by `document.type`, and sent as `Content-Type` by `GET .../content`, is derived from the extension of the file name.
 - **The file name field is `document.name`.** The reference called it `content_name` in two places; v2.0 has no such field. `Content-Disposition` on the upload sets `document.name`, and the download sends it back.
 - **v2.0 responses have no `rights` string.** The overview described a permission string such as `"RMIDCFAPE-Y-HL"` on database and entry responses. That field belongs to REST API v1.0; v2.0 expresses permissions only as token arrays in the [permission rules](api-reference/permissions.md#rights-values).
@@ -700,7 +723,7 @@ The exception is `GET /admin/audit`. It streams newline-delimited JSON (`applica
 
 #### No-Cache Response Headers
 
-API responses include `Cache-Control: no-store` and `Pragma: no-cache`. This covers all `/v2.0` endpoints, `/file` and `/temp` downloads, OPTIONS preflight responses and JSON error responses. The one exception is a `413 Payload Too Large` rejection, which is sent before the request is processed. The shared-link HTML page (`GET /shared/...`) sends `Cache-Control: no-cache, no-store` instead, plus the same `Pragma: no-cache`. API responses can carry plaintext secrets (entry passwords, shared-secret values, second-password-decrypted fields), so they must never be written to a shared or browser disk cache. No status codes or body fields change.
+API responses include `Cache-Control: no-store` and `Pragma: no-cache`. This covers all `/v2.0` endpoints, `/file` and `/temp` downloads, OPTIONS preflight responses and JSON error responses. The exceptions are the rejections the server sends while it is still reading the request headers, before the request is processed: a `413 Payload Too Large`, and on Server 20.0.0 and later a `411 Length Required`. The shared-link HTML page (`GET /shared/...`) sends `Cache-Control: no-cache, no-store` instead, plus the same `Pragma: no-cache`. API responses can carry plaintext secrets (entry passwords, shared-secret values, second-password-decrypted fields), so they must never be written to a shared or browser disk cache. No status codes or body fields change.
 
 #### UTC Timestamps Corrected (Behavior Change)
 

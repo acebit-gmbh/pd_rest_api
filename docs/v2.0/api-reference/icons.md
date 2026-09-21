@@ -335,6 +335,8 @@ A plain `400`, `401`, `403`, `404` or `405` carries its own status in `error.cod
 !!! warning "A request over 1 MB is cut off before it is read"
     Like every JSON endpoint, this one refuses a request whose `Content-Length` exceeds 1 MB with a plain `413` (`error.code` `413`) before the body is read. That response is sent before the CORS headers are added, and the connection is closed, so a browser reports a network error instead of a status. Validate the size before sending, and treat a network error during an upload as "too large or connection lost".
 
+    The same header stage refuses a request that carries a `Transfer-Encoding` header, whatever its size, with `411 Length Required` (*Server 20.0.0 and later*) -- and in the same way, without CORS headers and with the connection closed. Send the JSON body with a `Content-Length`; see [Length required (`411`)](overview.md#http-status-codes).
+
 ### If the entry save fails
 
 Uploading an icon and assigning it are two requests. When the upload succeeds and the entry or folder write then fails, the icon stays stored and unassigned. That is harmless - it shows up in every client's icon list and counts toward the quota - and nothing cleans it up, because this API has no delete. Retry the entry write with the same `image_name`. Sending the same upload again is safe as well: it answers `200` with the same icon.

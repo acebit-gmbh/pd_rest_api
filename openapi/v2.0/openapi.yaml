@@ -24,7 +24,7 @@ info:
     `{ "error": { "code": N, "message": "..." } }`. See the
     `#/components/responses` section for reusable response definitions
     (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `MethodNotAllowed`,
-    `PayloadTooLarge`, `TooManyRequests`).
+    `LengthRequired`, `PayloadTooLarge`, `TooManyRequests`).
 
     The `error.code` field normally equals the HTTP status, but may carry an
     application sub-code (`>= 1000`) for a finer machine-readable reason while
@@ -86,6 +86,18 @@ info:
       supported methods (RFC 7231 §6.5.5).
     - `403 Forbidden` -- on a mirror server, every request other than `GET`
       that carries a bearer token (`POST /auth/logout` included).
+    - `411 Length Required` -- the request carries a `Transfer-Encoding`
+      header, whether or not it also sends a `Content-Length`
+      (Server 20.0.0 and later). Refused while the request headers are
+      read, before the body and before authentication, on every method
+      and every path; the connection is closed. A request that carries
+      both headers answers `411`, not `413`. The payload is an
+      `ErrorResponse` but the declared `Content-Type` is `text/html`,
+      and there are no CORS headers. .NET `HttpClient`
+      (`PostAsJsonAsync`, `JsonContent`, `StreamContent` over a
+      non-seekable stream) sends chunked by default -- buffer the body
+      (`StringContent`, `ByteArrayContent`, `LoadIntoBufferAsync`, or a
+      seekable stream). `TransferEncodingChunked = false` does not help.
     - `413 Payload Too Large` -- JSON bodies cap at 1 MB, document-content
       uploads at 64 MB. This check reads `Content-Length` before the body,
       before authentication and before the CORS headers are added, and the
@@ -226,6 +238,8 @@ paths:
                 error:
                   code: 409
                   message: "FIDO2 two-factor authentication is not supported via the REST API. Log in via the native Password Depot client, or ask an administrator to switch your second factor to TOTP or email."
+        "411":
+          $ref: "#/components/responses/LengthRequired"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "429":
@@ -2530,6 +2544,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
 
@@ -2777,6 +2793,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
         "413":
           description: |
             `error.code` 4131 (`PD_ERRCODE_ICON_TOO_LARGE`): body over 65536
@@ -3078,6 +3096,51 @@ components:
             error:
               code: 405
               message: "Supported methods: GET POST PATCH DELETE"
+
+    LengthRequired:
+      description: |
+        The request carries a `Transfer-Encoding` header, whether or not it
+        also sends a `Content-Length`. Every request body must state its
+        size; chunked transfer encoding is not accepted (Server 20.0.0 and
+        later). The refusal happens while the request headers are read --
+        before the body is read and before authentication -- on every method
+        and every path, and the connection is closed afterwards. A request
+        that carries both headers answers `411`, not `413`, even when its
+        `Content-Length` is over the limit: the length is not trusted,
+        because it does not describe what would be read.
+
+        This response is listed only on the operations that also list `413`,
+        following the same convention; the refusal itself applies to every
+        operation that can carry a request body.
+
+        The payload is the `ErrorResponse` object below with `error.code`
+        `411`, but it is emitted from that header stage, which cannot set
+        response headers: the declared `Content-Type` is
+        `text/html; charset=utf-8`, not `application/json`, and there are no
+        CORS headers. The media type below describes the bytes, not what the
+        server declares. A strict generated client must key on the numeric
+        status and must not choose its deserializer from `Content-Type`; a
+        browser surfaces this as a network error rather than a status.
+
+        .NET `HttpClient` is the common case: `PostAsJsonAsync`,
+        `JsonContent` and `StreamContent` over a non-seekable stream send
+        chunked by default, on ordinary JSON calls as well as on uploads.
+        Buffer the body (`StringContent`, `ByteArrayContent`,
+        `LoadIntoBufferAsync`, or a seekable stream). Setting
+        `request.Headers.TransferEncodingChunked = false` does not help: the
+        content still has no length for the connection to state, so the
+        request goes out chunked all the same. A reverse proxy in streaming
+        mode (nginx `proxy_request_buffering off`, some cloud load balancers)
+        passes the client's own framing through, so it converts to chunked
+        only a body whose length it does not know.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 411
+              message: "Send the request body with a Content-Length header. Chunked transfer encoding is not accepted."
 
     PayloadTooLarge:
       description: |

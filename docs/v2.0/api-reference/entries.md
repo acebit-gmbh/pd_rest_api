@@ -1405,10 +1405,13 @@ Uploads or replaces the binary content of a document entry. The entire content i
 |--------|----------|-------------|
 | `Content-Type` | No | Not read by the server. The type reported by `document.type` and by [Get Document Content](#get-document-content) comes from the extension of the file name, so send the name |
 | `Content-Disposition` | No | `attachment; filename="<filename>"` -- sets `document.name` on the entry |
+| `Content-Length` | Yes | Size of the body in bytes. A request that carries a `Transfer-Encoding` header, with or without a `Content-Length`, is refused with `411 Length Required` before the body is read (*Server 20.0.0 and later*) |
 
 #### Request Body
 
 Raw binary content of the file. Maximum size: **64 MB**.
+
+The body must state its size in a `Content-Length` header. The server refuses a request that carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`, with `411 Length Required`, while the request headers are being read - the body is never read and the connection is closed. `curl -T file`, `curl --data-binary @file` and `Invoke-WebRequest -InFile` send a length and are unaffected; `curl -T -` (stdin) and .NET `StreamContent` over a non-seekable stream do not. See the overview's [HTTP status codes](overview.md#http-status-codes) for the full rule and the client-side workarounds.
 
 #### Response
 
@@ -1440,10 +1443,11 @@ Returns the compact representation of the entry. Note that the `document` sub-ob
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Entry is not of type `document`; or a body sent without `Content-Length` (chunked) that turns out to exceed 64 MB |
+| `400 Bad Request` | Entry is not of type `document` |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions |
 | `404 Not Found` | Database or entry not found |
+| `411 Length Required` | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Refused before the body is read and before authentication; the connection is closed. A request that carries both headers answers `411`, not the `413` below (*Server 20.0.0 and later*) |
 | `413 Payload Too Large` | `Content-Length` exceeds 64 MB. The request is refused before the body is read |
 
 #### Example

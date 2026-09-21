@@ -51,6 +51,7 @@ The token expires after **10 minutes of inactivity**. Each successful request re
 ## Request Format
 
 - All request bodies must be **JSON** with `Content-Type: application/json`
+- Every request body must state its size in a `Content-Length` header. A request that carries a `Transfer-Encoding` header - whether or not it also sends a `Content-Length` - is refused with `411 Length Required` before the body is read (*Server 20.0.0 and later*); see [Length required (`411`)](#http-status-codes) below
 - Character encoding: **UTF-8**
 - Query parameters are passed in the URL
 - The one binary request body is the document upload (`PUT .../entries/{id}/content`). A [database icon](icons.md#upload-icon) is uploaded as JSON, with the image as Base64 in the `data` field - there is no multipart or binary icon upload
@@ -172,6 +173,7 @@ On error, the server returns a JSON object with a nested `error` object:
 | `404` | Not Found | The requested resource (database, entry, folder, user, etc.) does not exist |
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification) |
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
+| `411` | Length Required | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Chunked request bodies are not accepted, and `411` is answered even where `413` would otherwise apply |
 | `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document content; `4131` for an icon upload over its own, smaller limits |
 | `459` | TFA Not Activated | Two-factor authentication needs initial setup (QR code URL returned in `error.message`) |
 | `460` | TFA Code Required | A valid 6-digit 2FA code must be provided to complete login |
@@ -226,6 +228,7 @@ On error, the server returns a JSON object with a nested `error` object:
 | `405` | Method Not Allowed | HTTP method not supported for this endpoint; `Allow` header lists supported methods |
 | `409` | Conflict | Resource conflict |
 | `410` | Gone | REST API v1.0 path on Server 20.0.0 or later |
+| `411` | Length Required | Request body sent with a `Transfer-Encoding` header, with or without a `Content-Length` |
 | `413` | Payload Too Large | Request body over the size limit |
 | `429` | Too Many Requests | IP lockout / rate limit; see `Retry-After` header |
 | `459` | TFA Not Activated | 2FA initial setup required |
@@ -255,6 +258,30 @@ On error, the server returns a JSON object with a nested `error` object:
 
 !!! info "IP lockout (`429`)"
     After repeated failed `POST /auth/login` attempts from the same IP address, the server blocks that IP for a configurable period (Server Manager &rarr; *Options* &rarr; *Security* &rarr; *Login Attempts*). While the block is active **every** request from that IP is rejected with `429 Too Many Requests` and a `Retry-After` header containing the number of seconds until the block expires. Clients should honor `Retry-After` and back off; retrying immediately will not shorten the lockout. Login responses with `error.code` `4012` or `4013` do not count as failed attempts (*Server 20.0.0 and later*).
+
+!!! info "Length required (`411`)"
+    Every request body must state its size in a `Content-Length` header. A request that carries a `Transfer-Encoding` header - of any value, and whether or not it also sends a `Content-Length`; `chunked` is the one clients send - is refused with `411 Length Required` and `error.code` `411`, while the request headers are being read. The body is never read, the refusal comes before authentication, and the connection is closed afterwards. This applies to every method and every path, including a path that would otherwise answer `404` or `410`, a mirror server's `403` and an address under an IP lockout (*Server 20.0.0 and later*; earlier servers read a chunked body on any route with no size limit at all).
+
+    A request that carries **both** headers answers `411`, not `413`, even when its `Content-Length` is over the limit: the length is not trusted, because it does not describe what would be read.
+
+    ```json
+    {
+      "error": {
+        "code": 411,
+        "message": "Send the request body with a Content-Length header. Chunked transfer encoding is not accepted."
+      }
+    }
+    ```
+
+    That payload is the usual JSON error object, but like the `413` below it is emitted from the header stage, which cannot set response headers: it is sent with the HTTP layer's own `Content-Type: text/html; charset=utf-8`, not `application/json`, and without CORS or `Cache-Control` headers. A browser reports a network error instead of a status, and a generated client that picks its deserializer from `Content-Type` will not parse it. Match the numeric HTTP status.
+
+    A request that sends *neither* header is not refused here, and does not need to be: the server never reads a body whose size was not announced. A `POST` or `PUT` that puts body bytes on the wire without announcing them receives the HTTP layer's own bare `411`, whose body is announced in the response headers but never sent before the connection closes, so most clients report a truncated response rather than the status - unchanged from earlier servers. Nothing refuses a request that announces no length and sends no bytes either, but an endpoint that needs a body then fails it with `500`, because it is dispatched with no body at all: always send a `Content-Length`, `0` included.
+
+    **.NET clients are the common break.** `HttpClient.PostAsJsonAsync`, `JsonContent` and `StreamContent` over a non-seekable stream send `Transfer-Encoding: chunked` by default, so a .NET client hits this on ordinary JSON calls, not only on uploads. Buffer the body so its length is known - `new StringContent(json, Encoding.UTF8, "application/json")`, `ByteArrayContent`, `await content.LoadIntoBufferAsync()`, or a seekable stream. Setting `request.Headers.TransferEncodingChunked = false` does **not** help: the content still has no length for the connection to state, so the request goes out chunked all the same.
+
+    **Other clients that stream** are affected the same way: `curl -T -` (stdin), an explicit `-H "Transfer-Encoding: chunked"`, `Invoke-WebRequest -TransferEncoding chunked`, Python `requests` with a generator body, and Node streams without a length. `curl -T file`, `curl --data-binary @file` and `Invoke-WebRequest -InFile` send a length and keep working.
+
+    **Reverse proxies.** A proxy that forwards request bodies unbuffered - nginx with `proxy_request_buffering off`, and some cloud load balancers - passes the client's own framing through: a client that sent a `Content-Length` still reaches the server with one. What becomes chunked upstream is a body whose length the proxy does not know - a client that streamed its own body, or an HTTP/2 or HTTP/3 front end - and that now receives `411`. Leaving request buffering on (the nginx default) makes the proxy state a length whatever the client did.
 
 !!! info "Payload too large (`413`)"
     The server reads the `Content-Length` header before it reads the body and refuses a request over the limit - 1 MB for JSON bodies, 64 MB for `PUT .../entries/{id}/content` - with `413` and `error.code` `413`. This happens before authentication and before the CORS headers are added, and the connection is closed: a browser reports a network error rather than a status, so a web client must check sizes before it sends. The [icon upload](icons.md#upload-icon) has smaller limits of its own, which it reports as a regular JSON error with `413` and `error.code` `4131`.
