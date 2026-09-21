@@ -10,6 +10,16 @@
 .NOTES
     Compatible with PowerShell 5.1 and later.
 
+    Connections. Server 20.0.0 and later keeps a connection open between
+    requests and closes an idle one after 15 seconds without sending
+    anything. These functions issue their calls back to back and never sit
+    idle that long, so they are unaffected. A script of your own that SLEEPS
+    between calls can meet that close on Windows PowerShell 5.1: a POST or
+    PUT issued just as the server closes fails with "A connection that was
+    expected to be kept alive was closed by the server." Add
+    -DisableKeepAlive to those calls, or retry the request once. PowerShell 7
+    retries such a failure by itself.
+
 .EXAMPLE
     . .\PD-RestClient-v2.ps1
     $session = Connect-PDServer -Server "myserver" -Username "admin" -Password "pass" -Scope "admin"

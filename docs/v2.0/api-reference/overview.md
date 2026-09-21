@@ -226,6 +226,7 @@ On error, the server returns a JSON object with a nested `error` object:
 | `403` | Forbidden | Insufficient permissions |
 | `404` | Not Found | Resource does not exist |
 | `405` | Method Not Allowed | HTTP method not supported for this endpoint; `Allow` header lists supported methods |
+| `408` | Request Timeout | The request headers stopped arriving part-way through; the connection is closed |
 | `409` | Conflict | Resource conflict |
 | `410` | Gone | REST API v1.0 path on Server 20.0.0 or later |
 | `411` | Length Required | Request body sent with a `Transfer-Encoding` header, with or without a `Content-Length` |
@@ -273,7 +274,7 @@ On error, the server returns a JSON object with a nested `error` object:
     }
     ```
 
-    That payload is the usual JSON error object, but like the `413` below it is emitted from the header stage, which cannot set response headers: it is sent with the HTTP layer's own `Content-Type: text/html; charset=utf-8`, not `application/json`, and without CORS or `Cache-Control` headers. A browser reports a network error instead of a status, and a generated client that picks its deserializer from `Content-Type` will not parse it. Match the numeric HTTP status.
+    That payload is the usual JSON error object, but like the `400`, `408` and `413` beside it, it is emitted from the header stage, which cannot set response headers: it is labelled `Content-Type: text/html; charset=utf-8` whatever the bytes are, and carries no CORS or `Cache-Control` headers. A browser reports a network error instead of a status, and a generated client that picks its deserializer from `Content-Type` will not parse it. Match the numeric HTTP status and parse the body without relying on its type.
 
     A request that sends *neither* header is not refused here, and does not need to be: the server never reads a body whose size was not announced. A `POST` or `PUT` that puts body bytes on the wire without announcing them receives the HTTP layer's own bare `411`, whose body is announced in the response headers but never sent before the connection closes, so most clients report a truncated response rather than the status - unchanged from earlier servers. Nothing refuses a request that announces no length and sends no bytes either, but an endpoint that needs a body then fails it with `500`, because it is dispatched with no body at all: always send a `Content-Length`, `0` included.
 
@@ -286,8 +287,44 @@ On error, the server returns a JSON object with a nested `error` object:
 !!! info "Payload too large (`413`)"
     The server reads the `Content-Length` header before it reads the body and refuses a request over the limit - 1 MB for JSON bodies, 64 MB for `PUT .../entries/{id}/content` - with `413` and `error.code` `413`. This happens before authentication and before the CORS headers are added, and the connection is closed: a browser reports a network error rather than a status, so a web client must check sizes before it sends. The [icon upload](icons.md#upload-icon) has smaller limits of its own, which it reports as a regular JSON error with `413` and `error.code` `4131`.
 
+!!! info "Content-Length sent twice (`400`)"
+    A request that carries **more than one `Content-Length` header** is refused with `400 Bad Request` and `error.code` `400`, while the headers are being read and before the body is read at all, and the connection is closed afterwards ([RFC 7230 &sect;3.3.3](https://datatracker.ietf.org/doc/html/rfc7230#section-3.3.3); *Server 20.0.0 and later*). The two values may agree or disagree; neither is used. Send exactly one.
+
+    This matters because connections are now reused. The server takes the first of the two values; a front end that takes the last one forwards more body bytes than the server reads, and on a persistent connection the remainder would be read as the *next* request on that connection. Refusing the message is the only safe answer. Like the `408`, `411` and `413` beside it, the body is JSON labelled `text/html; charset=utf-8`.
+
+!!! info "Request timeout (`408`)"
+    If a request's header block stops arriving part-way through, the server answers `408 Request Timeout` with `error.code` `408` and closes the connection (*Server 20.0.0 and later*). The trigger is silence for longer than the server's idle timeout (15 seconds by default) *between* the start of a request and the blank line that ends its headers; the body is never read, and the request is not dispatched.
+
+    This is distinct from an **idle** connection being closed, which is silent and carries no `408`: see [Connections](#connections). A client that receives `408` may retry the request on a new connection.
+
+    Like the `400`, `411` and `413` beside it, the body is JSON labelled `text/html; charset=utf-8`.
+
 !!! note "Mirror servers are read-only"
     A Password Depot server that runs as a mirror of another server accepts only `GET` on authenticated routes. Every other request that carries a bearer token - `POST`, `PUT`, `PATCH`, `DELETE`, including `POST /auth/logout` - answers `403 Forbidden` with `error.code` `403` ("The mirror server does not support this operation.", localized), before the token itself is examined. `POST /auth/login` and the other routes that need no token are not affected. Send writes to the primary server. The `icons.can_upload` flag of a [database](databases.md#icons-capability) is `false` on a mirror.
+
+---
+
+## Connections
+
+*Server 20.0.0 and later.* The server keeps an HTTP/1.1 connection open between requests. Earlier servers closed the connection after every response, so every call paid a TCP handshake and a TLS handshake; a client that reuses connections now pays them once. No client change is required: browsers, OkHttp, .NET `HttpClient` and `Invoke-RestMethod` all reuse connections by default.
+
+**What the server does**
+
+- Persistent connections are on by default. `Connection: close` in a request is honoured, and an HTTP/1.0 request without `Connection: keep-alive` is answered and closed, exactly as before.
+- Every response that keeps the connection carries `Keep-Alive: timeout=13`. It is advisory; it describes the hop the client is talking to, which behind a proxy is the proxy and not this server.
+- **An idle connection is closed silently after 15 seconds.** There is no `408` and no response of any kind - the connection simply ends. A client must be prepared to open a new one, and should **retry an idempotent request once** if it fails on a connection it took from a pool. The timeout is configurable by the administrator (`RESTKeepAliveTimeout` in `pdserver.ini`).
+- A request that has started but stops arriving mid-way is answered [`408`](#http-status-codes) after 30 seconds (`RESTRequestReadTimeout`) and the connection is closed.
+- **After 1000 requests** on one connection the server asks for a new one: that response carries `Connection: close`. Continue on a fresh connection.
+- At most **1024 REST connections** are served at a time (`RESTMaxConnections`). Above 75 % of that number the server stops granting keep-alive - responses carry `Connection: close` - so that idle connections drain. Above the cap itself a new connection is refused at TCP level, **before** the TLS handshake and with no HTTP answer, which a client cannot distinguish from the server being down. Earlier servers had no cap.
+- **Which answers close the connection:** a `408`, a `400` for a duplicate `Content-Length`, a header-stage `411` or `413`, any request refused before its body was read, the 1000-request limit, the soft connection limit, and a client's own `Connection: close`. A `404` does **not** close the connection any more; on Server 19.x it did.
+- **Send no bytes between requests.** A stray blank line before a request line - which [RFC 7230 &sect;3.5](https://datatracker.ietf.org/doc/html/rfc7230#section-3.5) says a server *should* tolerate - makes this server drop the connection without an answer.
+- The administrator can restore the previous behaviour with `RESTKeepAlive=0` in `pdserver.ini`. The file is read when the service starts, so that means: stop the service, change the setting, start the service again.
+
+**Windows PowerShell 5.1.** `Invoke-WebRequest` and `Invoke-RestMethod` reuse connections and their idle timeout is well above the server's, so the server is always the side that closes. A `POST` or `PUT` issued just as a 15-second-idle connection is being closed can fail with *"The underlying connection was closed: A connection that was expected to be kept alive was closed by the server."* Scripts that sleep between calls are the ones at risk; add `-DisableKeepAlive` to those calls, or retry once. PowerShell 7 retries such a failure itself.
+
+**Reverse proxies.** A proxy that forwards with HTTP/1.0 and `Connection: close` upstream (the nginx default) is unaffected. If upstream keep-alive is enabled (`proxy_http_version 1.1` plus `keepalive`, IIS ARR, HAProxy), set the proxy's upstream idle timeout **below** `RESTKeepAliveTimeout`, or raise `RESTKeepAliveTimeout` above the proxy's (nginx defaults to 60 seconds), so that the proxy rather than the server is the closing side; otherwise a non-idempotent request that races the server's close surfaces as a `502`, which nginx does not retry. Such a proxy also multiplexes different users over one upstream connection; every request is authenticated and audited on its own, but **Windows integrated sign-in (Negotiate/NTLM) through a connection-sharing proxy is not supported** - multi-leg SPNEGO needs the legs of one handshake to stay on one connection.
+
+**Protocol notes for strict intermediaries.** A `204 No Content` is sent with `Content-Length: 0`, which [RFC 7230 &sect;3.3.2](https://datatracker.ietf.org/doc/html/rfc7230#section-3.3.2) says a server should omit; the value is unambiguous and no client can mis-frame on it. The `Keep-Alive` header is not named in the `Connection` header, as it is with Apache. A compound `Connection: close, TE` is not recognised as a close request - the server keeps the connection, the client closes it, and nothing is mis-framed. Every response is framed by `Content-Length`; the server never sends a chunked response, a `Transfer-Encoding`, a `304` or a byte range.
 
 ---
 

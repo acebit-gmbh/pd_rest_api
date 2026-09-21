@@ -31,6 +31,8 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - database icons: new `/databases/{db}/icons` endpoints, an `icons` object on every database, a `database_icon` field on every entry and folder; new sub-codes `4007` and `4008` (`400`), `4034` (`403`), `4042` (`404`) and `4131` (`413`, the first of that family)
 - `icon` follows `image_index` and is never `<name>.ico`; `image_custom`, `image_index` and `image_name` are validated when written (`400` / `4007`); documents show `ico133.svg`
 - `/file/` serves the 135 standard icons only
+- connections are reused between requests; an idle one is closed silently after 15 seconds, a `404` no longer closes the connection, and above 1024 connections a new one is refused at TCP level
+- a request that sends `Content-Length` twice answers `400`, and a request whose headers stop arriving answers the new `408`
 
 ### Breaking Changes
 
@@ -500,12 +502,38 @@ Every request body must state its size in a `Content-Length` header. A request t
 
 The refusal happens while the request headers are being read: the body is never read, the check runs before authentication, and the connection is closed afterwards. It applies to every method and every path, including a path that would otherwise answer `404` or `410`, a mirror server's `403` and an address under an IP lockout. A request that carries both a `Transfer-Encoding` and a `Content-Length` answers `411`, not `413`, even when the length alone would have been over the limit: the length is not trusted, because it does not describe what would be read. Servers before 20.0.0 read a chunked body on any route into memory with no size limit at all - the `Content-Length` caps (1 MB for JSON bodies, 64 MB for document content) never saw one.
 
-Like the header-stage `413`, this answer is produced before the headers a normal response carries are added. The payload is the JSON error object above, but it is sent with `Content-Type: text/html; charset=utf-8` and without CORS or `Cache-Control` headers. A browser reports a network error rather than a status, and a generated client that picks its deserializer from `Content-Type` will not parse it. Match the HTTP status.
+Like the header-stage `400`, `408` and `413`, this answer is produced before the headers a normal response carries are added. The payload is the JSON error object above, but it is sent with `Content-Type: text/html; charset=utf-8` and without CORS or `Cache-Control` headers. A browser reports a network error rather than a status, and a generated client that picks its deserializer from `Content-Type` will not parse it. Match the HTTP status and parse the body without relying on its type.
 
 A request that sends *neither* header is unaffected: the server never reads a body whose size was not announced, so there is nothing to refuse. A `POST` or `PUT` that puts body bytes on the wire without announcing them still receives the HTTP layer's own bare `411`, whose body is announced in the response headers but never sent before the connection closes, so most clients report a truncated response rather than the status - unchanged from Server 19.x. A request that announces no length and sends no bytes is not refused either, but an endpoint that needs a body then fails it with `500`: always send a `Content-Length`, `0` included.
 
 !!! warning "Behavior change for clients"
     No Password Depot client is affected: the web client, the Android client and the PowerShell example client all send bodies of known length. Third-party integrations that stream their request bodies are. **.NET `HttpClient` is the common case** - `PostAsJsonAsync`, `JsonContent` and `StreamContent` over a non-seekable stream send `Transfer-Encoding: chunked` by default, on ordinary JSON calls as well as on uploads. Buffer the body so its length is known (`StringContent`, `ByteArrayContent`, `await content.LoadIntoBufferAsync()`, or a seekable stream); setting `request.Headers.TransferEncodingChunked = false` does **not** help, as the request still goes out chunked. The same applies to `curl -T -`, an explicit `-H "Transfer-Encoding: chunked"`, `Invoke-WebRequest -TransferEncoding chunked`, Python `requests` with a generator body and Node streams without a length. A **reverse proxy in streaming mode** (nginx `proxy_request_buffering off`, some cloud load balancers) passes the client's own framing through, so an upload that arrived with a `Content-Length` still has one; a body whose length the proxy does not know - a streaming client, or an HTTP/2 front end - becomes chunked upstream and now receives `411`. Leaving request buffering on (the nginx default) makes the proxy state a length whatever the client did.
+
+#### Connections Are Reused Between Requests (Behavior Change)
+
+The server now keeps an HTTP/1.1 connection open between requests. Servers before 20.0.0 closed it after every response, so every call paid a TCP handshake and a TLS handshake. No client change is required - browsers, OkHttp, .NET `HttpClient` and `Invoke-RestMethod` all reuse connections by default - but several answers are different on the wire. The full description is in [Connections](api-reference/overview.md#connections).
+
+- `Connection: close` in a request is still honoured, and an HTTP/1.0 request without `Connection: keep-alive` is still answered and closed.
+- Every response that keeps the connection carries `Keep-Alive: timeout=13` (advisory).
+- **An idle connection is closed silently after 15 seconds** - no `408`, no response of any kind. A client must be prepared to open a new connection, and **should retry an idempotent request once** when it fails on a connection taken from a pool.
+- **A `404` no longer closes the connection.** On Server 19.x every `404` did. This matters most for the answers that are now routine: `4041` (entry has no one-time code) and `4042` (icon not in this database).
+- After **1000 requests** on one connection the server answers with `Connection: close` and expects a new one.
+- At most **1024 connections** are served at a time. Above 75 % of that the server stops granting keep-alive, and above the cap a new connection is refused at TCP level, before the TLS handshake and with no HTTP answer - indistinguishable from the server being down. Servers before 20.0.0 had no cap.
+- **No bytes may be sent between requests.** A stray blank line before a request line makes the server drop the connection without an answer.
+- An administrator can restore the previous behaviour with `RESTKeepAlive=0` in `pdserver.ini`. The file is read at service start, so that means stopping the service, changing the setting and starting it again.
+
+!!! warning "Behavior change for clients"
+    Windows PowerShell 5.1 scripts that **sleep between calls** can now meet the server's idle close: a `POST` that races it fails with *"A connection that was expected to be kept alive was closed by the server."* Add `-DisableKeepAlive` to those calls or retry once; PowerShell 7 retries by itself. Behind a **reverse proxy with upstream keep-alive**, set the proxy's upstream idle timeout below `RESTKeepAliveTimeout` (or raise the server's above the proxy's) so that the proxy is the closing side; otherwise a non-idempotent request racing the close surfaces as a `502`. Windows integrated sign-in through a connection-sharing proxy is not supported.
+
+#### `400` When `Content-Length` Is Sent Twice
+
+A request that carries more than one `Content-Length` header is refused with `400 Bad Request` and `error.code` `400`, while the headers are being read, before the body is read, and the connection is closed ([RFC 7230 &sect;3.3.3](https://datatracker.ietf.org/doc/html/rfc7230#section-3.3.3)). Neither value is used. The server reads the first of the two; a front end that reads the last forwards more bytes than the server reads, and on a reused connection the remainder would be read as the next request. Send exactly one `Content-Length`. Like the other header-stage refusals, the body is the JSON error object labelled `text/html; charset=utf-8`.
+
+#### `408` When the Request Headers Stop Arriving
+
+If a request's header block stops arriving part-way through - silence for longer than the idle timeout between the request line and the blank line that ends the headers - the server answers `408 Request Timeout` with `error.code` `408` and closes the connection. The body is never read and the request is not dispatched. This is **not** what an idle connection being closed looks like: that is silent and carries no response. A client that receives `408` may retry on a new connection. Like the other header-stage refusals, the body is the JSON error object labelled `text/html; charset=utf-8`.
+
+Servers before 20.0.0 had no read timeout on a REST connection at all: a peer that connected and then said nothing held a server thread indefinitely.
 
 ### Shared-Link Page
 

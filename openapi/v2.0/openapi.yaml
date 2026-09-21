@@ -106,6 +106,38 @@ info:
       error with `error.code` `4131`.
     - `429 Too Many Requests` -- IP-lockout triggered by repeated failed
       logins. Includes a `Retry-After` header (seconds).
+
+    ## Connections
+
+    Server 20.0.0 and later keeps an HTTP/1.1 connection open between
+    requests; earlier servers closed it after every response. No client
+    change is needed, but several things are different on the wire:
+
+    - `Connection: close` is honoured, and every response that keeps the
+      connection carries an advisory `Keep-Alive: timeout=13`.
+    - An idle connection is closed SILENTLY after 15 seconds -- no `408`
+      and no response of any kind. A client must be prepared to open a new
+      connection and should retry an idempotent request once when it fails
+      on a connection taken from a pool.
+    - `408 Request Timeout` (`error.code` `408`) is answered when a
+      request's header block stops arriving part-way through; the body is
+      never read and the connection is closed.
+    - `400 Bad Request` (`error.code` `400`) is answered when a request
+      carries more than one `Content-Length` header (RFC 7230 3.3.3),
+      before the body is read; the connection is closed.
+    - A `404` no longer closes the connection; on Server 19.x it did.
+    - After 1000 requests on one connection the server answers
+      `Connection: close`.
+    - At most 1024 connections are served at a time; above 75 % of that the
+      server stops granting keep-alive, and above the cap a new connection
+      is refused at TCP level with no HTTP answer.
+    - No bytes may be sent between requests: a stray blank line before a
+      request line drops the connection.
+    - The header-stage refusals (`400`, `408`, `411`, `413`) carry the
+      `ErrorResponse` body, declared `text/html; charset=utf-8` whatever
+      the bytes are, and no CORS headers.
+    - An administrator restores the previous behaviour with
+      `RESTKeepAlive=0` in `pdserver.ini`, which takes a service restart.
   version: "2.0"
   contact:
     name: AceBIT GmbH
