@@ -421,7 +421,7 @@ Updates an existing folder. Include only the fields you want to update.
 | Header | Required | Description |
 |--------|----------|-------------|
 | `X-Second-Password` | Conditional | Base64-encoded. Required **and verified** if the folder has a second password (`has_second_pass: true`); a wrong or missing value is rejected with `403` and `error.code` `4031` |
-| `X-New-Second-Password` | No | Base64-encoded. Set or change the second password (when set, the correct current `X-Second-Password` must also be sent) |
+| `X-New-Second-Password` | No | Base64-encoded. Set or change the second password (when set, the correct current `X-Second-Password` must also be sent). Applied only if the request succeeds |
 
 ### Request Body
 
@@ -444,7 +444,11 @@ Updates an existing folder. Include only the fields you want to update.
 | The standard folder icon | `{"image_custom": false, "image_index": -1}` |
 | Leave the icon alone | none of the three keys |
 
-A body that does not name a usable icon answers `400` with `error.code` `4007` and writes nothing: the folder keeps its name, its other fields, its second password and its previous icon. A body that repeats the stored values is never refused. The check runs after `X-Second-Password` has been verified and before `X-New-Second-Password` is applied, and it never answers `409`.
+A body that does not name a usable icon answers `400` with `error.code` `4007` and writes nothing: the folder keeps its name, its other fields, its second password and its previous icon. A body that repeats the stored values is never refused. The check runs after `X-Second-Password` has been verified and ahead of the rest, and it never answers `409`.
+
+#### Nothing is written on a refusal
+
+*Server 20.0.0 and later.* Every refusal of a folder `PATCH` leaves the folder exactly as the request found it - its name, importance, category, tags, comments, icon and second password. The whole body is applied to a copy of the folder first, so a `400` for a value of the wrong JSON type is answered before any key has reached the folder, and a second-password change sent with `X-New-Second-Password` in the same call is applied only when the request succeeds. Earlier servers applied the body key by key and kept whatever had already been written, the second-password change included.
 
 ### Response
 

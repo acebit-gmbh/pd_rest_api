@@ -298,9 +298,20 @@ The unauthenticated `/file/<name>` path serves the 135 standard icons `ico0.svg`
 !!! warning "Behavior change for clients"
     Request only the names that `icon` delivers. A `404` from `/file/` for any other name is final.
 
-#### A Rejected Entry Write Leaves the Entry Unchanged
+#### A Refused Write Leaves the Entry or Folder Unchanged (Behavior Change)
 
-A `PATCH /databases/{db}/entries/{id}` can be refused while its body is being applied -- for example with `400` when a field has the wrong JSON type (such as a string for `image_index`) or a `custom_fields` element is not an object, or with `409` when `custom_fields` or a type-specific sub-object is sent for an entry that is, or in the same body becomes, a link. Every value the body had already written is then restored before the error is returned, so a client can correct the body and retry against the entry's previous values. A second-password change requested in the same call with `X-New-Second-Password` is applied before the body and stays in effect when the body is rejected. The icon check described above (`400` / `4007`) is the exception: it runs before the second-password change, so after that refusal nothing at all has been written.
+A `PATCH /databases/{db}/entries/{id}` or `PATCH /databases/{db}/folders/{id}` can be refused after the server has read the body -- with `400` when a field has the wrong JSON type (such as a string for `image_index`) or a `custom_fields` element is not an object, with `409` when `custom_fields` or a type-specific sub-object is sent for an entry that is, or in the same body becomes, a link, with `400` and a sub-code for a bad icon (`4007`) or a bad `totp` key (`4001` to `4006`), or with `403` when the body makes the entry a link to an entry you may not read or use.
+
+Whatever the refusal, the item is exactly as the request found it: every field, its icon, its one-time-code settings, its author, its history -- no new history item, and none evicted to make room for one -- and its second password. A client can correct the body and retry against the item's previous values. The same now holds for a folder, whose body used to be applied key by key with nothing restored at all, so that a bad value in one key left the keys before it written.
+
+Three refusals are new with this release, on `POST` and on `PATCH` alike: an entry may not be a link to itself, it may not be a link to another link, and it may not become a link while another link already points at it. All three answer `400`. They are judged on the entry the body would produce, not on what the body asks for, so a `PATCH` that says nothing about the link is judged on the link the entry already has; send `is_link: false`, or a `linked_item` that points at an entry which is not itself a link, to mend one.
+
+A second-password change requested in the same call with `X-New-Second-Password` follows the same rule: it is applied only when the whole request succeeds. On an entry that is a link, setting one no longer re-encrypts the stored field values of the entry the link points at.
+
+Two smaller corrections travel with this. `type` in a `PATCH` or `POST` body is now matched the way every other key is matched -- without regard to letter case, and on the last pair when a name is sent twice; earlier servers matched it exactly and took the first. And a write that the server applies but then cannot report -- it could not serialise the response, or the audit or alert call failed -- answers `200` or `201` with an empty body instead of `5xx`; the change has been made, and a reload shows it.
+
+!!! warning "Behavior change for clients"
+    Servers before 20.0.0 applied `X-New-Second-Password` before the body and kept it in effect when the body was rejected. From 20.0.0 a refused request leaves the item under its **previous** second password. An integration that reacted to a `4xx` by re-sending the corrected body with the new password in `X-Second-Password` now gets `403` / `4031` and must send the old one. A client that already read `4xx` as "nothing happened" needs no change; that reading is now correct. A body that sends `type` in a different letter case, or twice, may now reach a different entry type than it did before; send it once, and in lower case.
 
 #### Importance Levels Corrected (Behavior Change)
 

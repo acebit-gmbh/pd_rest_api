@@ -490,9 +490,17 @@ paths:
         (`PD_ERRCODE_ICON_ASSIGNMENT`), and nothing is written:
         the folder keeps its name, its other fields, its second password and
         its previous icon. The check runs after `X-Second-Password` is verified
-        and before `X-New-Second-Password` is applied. Never `409`.
+        and ahead of the rest. Never `409`.
         Servers older than 20.0.0 store any value; detect support by the
         `icons` object on the database.
+
+        From Server 20.0.0 EVERY refusal of this call leaves the folder as it
+        was: the body is applied to a copy of the folder first, so a `400` for
+        a value of the wrong JSON type is answered before any key has reached
+        the folder, and a second-password change sent with
+        `X-New-Second-Password` is applied only when the request succeeds.
+        Earlier servers applied the body key by key and kept whatever had
+        already been written, the second-password change included.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/FolderId"
@@ -510,7 +518,9 @@ paths:
           required: false
           description: |
             New second password to set. Must be accompanied by the correct
-            current `X-Second-Password`.
+            current `X-Second-Password`. From Server 20.0.0 it is applied only
+            if the request succeeds; after any refusal the item is still under
+            its previous second password.
           schema:
             type: string
       requestBody:
@@ -650,6 +660,12 @@ paths:
         `totp`. Never `409`.
         Servers older than 20.0.0 store any value; detect support by the
         `icons` object on the database.
+
+        From Server 20.0.0 `is_link` and `linked_item` are weighed exactly as
+        on `updateEntry`: `403` for a target you may not read or use, that is
+        sealed for you, that is a folder or that was deleted, then `400` for a
+        link to itself or to another link. Earlier servers accepted a link to
+        a link here, and the entry could then never be updated again.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
       requestBody:
@@ -784,6 +800,25 @@ paths:
         `totp` are looked at. Never `409`.
         Servers older than 20.0.0 store any value; detect support by the
         `icons` object on the database.
+
+        From Server 20.0.0 EVERY refusal of this call leaves the entry as it
+        was - its fields, its icon, its one-time-code settings, its author,
+        its history (no new item, none evicted) and its second password. The
+        body is weighed against a copy of the entry, so a `400` for a value of
+        the wrong JSON type, a `409` for fields on a link, and the `403` for a
+        link to an entry you may not read or use are all answered before
+        anything is written, and a second-password change sent with
+        `X-New-Second-Password` is applied only when the request succeeds.
+        An entry may not be a link to itself, a link to another link, or a
+        link while another link already points at it (`400` each). Like the
+        `403` above, these are judged on the entry the body would produce, so
+        a `PATCH` that says nothing about the link is judged on the link the
+        entry already has; send `is_link: false`, or a `linked_item` that
+        points at an entry which is not itself a link, to mend one. On an
+        entry that is a link, a second-password change no longer re-encrypts
+        the stored field values of the entry the link points at.
+        Earlier servers kept a second-password change in effect after a
+        rejected body.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
@@ -801,7 +836,9 @@ paths:
           required: false
           description: |
             New second password to set. Must be accompanied by the correct
-            current `X-Second-Password`.
+            current `X-Second-Password`. From Server 20.0.0 it is applied only
+            if the request succeeds; after any refusal the item is still under
+            its previous second password.
           schema:
             type: string
       requestBody:

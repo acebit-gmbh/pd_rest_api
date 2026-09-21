@@ -407,14 +407,14 @@ The sub-object is present only in the **full representation**. Clients can gener
 
     Reading an entry's [one-time code](#get-one-time-code) requires `X-Second-Password` in the same way - for a link, also the second password of the entry it points to. `has_second_pass` on a link describes the link itself, so handle `4031` on `/otp` whatever it says.
 
-    Updating (`PATCH`) a protected entry **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`. Writing the entry's [one-time-code settings](#one-time-code-settings) follows the same rule - the second password is checked before anything about `totp` is - but the seed itself is not encrypted with the second password.
+    Updating (`PATCH`) a protected entry **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`, and the change is applied only if the request succeeds - after any refusal the entry is still under its previous second password. Writing the entry's [one-time-code settings](#one-time-code-settings) follows the same rule - the second password is checked before anything about `totp` is - but the seed itself is not encrypted with the second password.
 
     Both headers must be **Base64-encoded** (UTF-8 bytes → Base64). This ensures reliable transport of passwords containing non-ASCII characters (e.g., umlauts, accented letters).
 
     | Header | Description |
     |--------|-------------|
     | `X-Second-Password` | Base64-encoded current second password (required to read/modify protected fields; verified on update) |
-    | `X-New-Second-Password` | Base64-encoded new second password (to set, change, or remove protection; when changing, the correct current `X-Second-Password` must also be sent) |
+    | `X-New-Second-Password` | Base64-encoded new second password (to set, change, or remove protection; when changing, the correct current `X-Second-Password` must also be sent). Applied only if the request succeeds |
 
     To **remove** second password protection, send `X-Second-Password` with the current password and `X-New-Second-Password` with an empty string (both Base64-encoded).
 
@@ -722,7 +722,7 @@ Updates an existing entry. Include only the fields you want to update.
 | Header | Required | Description |
 |--------|----------|-------------|
 | `X-Second-Password` | Conditional | Base64-encoded. Required and verified if the entry has a second password (`has_second_pass: true`); a missing/incorrect value returns `403` with `error.code` = `4031` |
-| `X-New-Second-Password` | No | Base64-encoded. Set, change, or remove the second password. When changing, the correct current `X-Second-Password` must also be sent |
+| `X-New-Second-Password` | No | Base64-encoded. Set, change, or remove the second password. When changing, the correct current `X-Second-Password` must also be sent. Applied only if the request succeeds |
 
 ### Request Body
 
@@ -1158,9 +1158,15 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 11. `400` / `4006` or `501` for the entry's type (after a `type` change in the same body)
 12. `400` / `4005` for an object without `secret` on an entry that has no seed
 13. `400` / `4001` to `4004` from the admission rules and the code computation
-14. Only now is the entry written, as one: the previous version goes to the history where the database keeps one, the body is applied, `updated_at` is bumped, and the write is audited
+14. `400` for a value of the wrong JSON type and `409` for `custom_fields` or a type sub-object on a link. The body is applied to a copy of the entry to decide this, so the entry itself is untouched when it answers
+15. `403` when the entry is, or by this body becomes, a link to an entry you may not read or use, that is sealed for you, that is a folder or that was deleted; `400` when the entry is, or by this body becomes, a link to itself, a link to another link, or a link although another link already points at it
+16. Only now is anything written, as one: `X-New-Second-Password` is applied, the previous version goes to the history where the database keeps one, the body is applied, `updated_at` is bumped, and the write is audited
 
-`POST /v2.0/databases/{db}/entries` with a `totp` key: the parent folder and create permission (`404`, `403`), then the body (`400`), then the `image_*` keys (`400` / `4007`), then `X-New-Second-Password`, then `totp` in the same order - `4005` for the shape, `4006` / `501` for the type, `4005` for an object without `secret` (required here), `4001` to `4004`. There is no read or seal check on `POST`, because there is nothing to hide yet.
+Up to and including step 15 nothing has been written. After any of those refusals the entry has all the fields it had before, its previous icon, its previous one-time-code settings, its previous author, no new history item and none evicted, and its previous second password.
+
+The three `400`s of step 15 are judged on the entry the body would produce, not on what the body asks for, so a `PATCH` that says nothing about the link is judged on the link the entry already has - a request that only renames an existing link can answer `400` because of the link's shape. To mend such an entry, send `is_link: false`, or a `linked_item` that points at an entry which is not itself a link, in the same `PATCH`.
+
+`POST /v2.0/databases/{db}/entries` with a `totp` key: the parent folder and create permission (`404`, `403`), then the body (`400`), then the `image_*` keys (`400` / `4007`), then `X-New-Second-Password`, then `totp` in the same order - `4005` for the shape, `4006` / `501` for the type, `4005` for an object without `secret` (required here), `4001` to `4004`. There is no read or seal check on `POST`, because there is nothing to hide yet. `is_link` and `linked_item` in the body are weighed exactly as on `PATCH`: `403` for a target you may not read or use, then `400` for a link to itself or to another link. The new entry is built apart from the database and is added to it only after every check has passed, so a refused `POST` creates nothing.
 
 ### Sub-codes
 
@@ -1245,7 +1251,7 @@ A value of the wrong JSON type - a string for `image_index`, for example - is a 
 
 **Echo rule.** A body that repeats what is stored - the same `image_custom`, the same `image_name` in any letter case and, for a standard icon, the same `image_index` - is never refused, even when the stored name points to an icon that no longer exists. A client that sends the three values back exactly as it read them is always safe.
 
-**Nothing is written on a refusal.** After `400` / `4007` the entry has all the fields it had before, no new history item, its previous icon, and its previous second password - also when the same request carried `X-New-Second-Password` or a `totp` key, because the icon is checked before either of them. The check never answers `409`. Reload [List Icons](icons.md#list-icons) and let the user pick again.
+**Nothing is written on a refusal.** After `400` / `4007` the entry has all the fields it had before, no new history item, its previous icon, and its previous second password - also when the same request carried `X-New-Second-Password` or a `totp` key. That holds for every refusal of a `PATCH`, not only this one; see [Order of checks](#order-of-checks). The check never answers `409`. Reload [List Icons](icons.md#list-icons) and let the user pick again.
 
 **Reading it back.** After a database icon was assigned, the full representation reports `image_custom` `true` and `image_name` in the icon's spelling; every representation reports `database_icon` with the icon's `id`, `name` and `version`, and `icon` with the standard icon of the entry's type as the fallback. When that icon is later removed in the Windows client, `database_icon` becomes `null` and `icon` keeps naming the fallback; the three stored values stay as they are until somebody assigns another icon. An item last saved by a client older than version 17 can report `image_custom` `true` with an empty `image_name`; the server then finds the icon by the stored position. In every case `database_icon` is the answer - do not resolve `image_name` or `image_index` yourself.
 
