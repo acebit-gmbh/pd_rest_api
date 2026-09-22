@@ -23,6 +23,8 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `open_uuid` and `approve_uuid` are optional in the secret representation
 - `include_totp: false` on a shared secret is applied: the recipient no longer gets the entry's one-time code
 - deleted entries and folders answer `404`
+- `DELETE` on an entry or folder moves the item to the database's recycle bin by default; ask for `?mode=permanent` to destroy it, and expect the new `403` / `4035` for an item another client is editing
+- new recycle-bin routes under `/databases/{db}/recyclebin` and a `recycle_bin` object on every database
 - writing a link's fields answers `409`
 - `super_admin` in `roles` is not applied
 - stricter passkey verification
@@ -77,6 +79,20 @@ An entry without a one-time code answers `404` with `error.code` = `4041` (`PD_E
 A refused `totp` write answers `400` with `error.code` `4001` (`PD_ERRCODE_TOTP_SECRET`), `4002` (`PD_ERRCODE_TOTP_ALGORITHM`), `4003` (`PD_ERRCODE_TOTP_DIGITS`), `4004` (`PD_ERRCODE_TOTP_PERIOD`), `4005` (`PD_ERRCODE_TOTP_SHAPE`: `{}`, an unknown member, a wrong JSON type, or no `secret` where one is required) or `4006` (`PD_ERRCODE_TOTP_ENTRY_TYPE`); the first failing member in the order `secret`, `algorithm`, `digits`, `period` names the code. These are the first sub-codes of the `400` family. `403` / `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED`) is new as well. See [One-Time Code Settings](api-reference/entries.md#one-time-code-settings).
 
 **Client guidance:** detect the code read by the presence of `has_otp`, and the settings write by the presence of the `totp` key on any entry - the server ignores unknown request keys, so a write cannot be probed. Servers before 20.0.0 omit both and have no `/otp` route. Match `error.code`, never the message: prompt for the second password only on `4031`, never on a plain `403`. A client that recognised a bad request by `error.code == 400` must test the HTTP status instead. To leave a one-time code alone, omit the key; to remove it, send `null`, never `""`. Treat a `totp.state` you do not recognise as `hidden`.
+
+#### Recycle Bin
+
+- **`mode` on `DELETE /databases/{db}/entries/{id}` and `DELETE /databases/{db}/folders/{id}`** chooses what a deletion does: `recycle` (the default) moves the item to the database's recycle bin, `permanent` destroys it. The value is read from the URL query string only and compared without regard to letter case and surrounding spaces; any other non-empty value answers `400` and deletes nothing, and `mode=` with no value is read as the default. A folder travels as one item in both modes, with its sub-folders and entries. Success is `204` with an empty body, as before.
+- **`GET /databases/{db}/recyclebin`** lists the items in the bin, in the standard paginated envelope and in the same row shape [List Children](api-reference/folders.md#list-children-navigation) returns -- compact entry and folder representations, `type` telling the two apart -- without the `path` array. It supports `offset` and `limit`. A deleted folder is one row; the items below it are not listed separately.
+- **`POST /databases/{db}/recyclebin/{id}/restore`** puts one item back into the folder it was deleted from, or into the database root when that folder is gone, and answers `204`. It needs the right to change the folder the item returns to; without it the request answers `403` and the item stays in the bin.
+- **`DELETE /databases/{db}/recyclebin/{id}`** destroys one item, **`DELETE /databases/{db}/recyclebin`** everything the caller can see in the bin and may delete. Both answer `204`, and neither can be undone.
+- **Who sees what.** Everyone sees the items they deleted themselves, and every row names its deleter in `deleted_by`. Putting an item back needs the right to change the folder it returns to, and destroying one needs the right to delete it. Items **other** people deleted need the database's `recycle_bin.can_manage`; without it they are not listed and their ids answer `404` here, the same answer as an id that is not in the bin.
+- **`recycle_bin`** (object, read-only) is part of every database representation, client and admin scope, list and detail: `enabled` (the server keeps a bin), `keep` (how many items it holds, `0` when it is off; beyond that number the oldest are dropped) and `can_manage`. Its presence is the capability marker for everything in this section. With `enabled: false` a `recycle` delete removes the item permanently, which is what the Windows client does under the same setting.
+- **Ids are unchanged.** An item in the bin keeps its id, and is addressable again under that id once it is restored. While it is in the bin the entries and folders routes still answer `404` for it, as described under **Deleted Entries and Folders Answer `404`** below.
+
+A `DELETE` of an entry or folder that another client has open for editing answers `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`, message "The item is being edited by another user.") in either mode, and deletes nothing; for a folder this covers anything inside it. The recycle-bin routes answer `404` for an id that is not in the bin or that the caller may not see, and `403` when the right for that route is missing. See [Recycle Bin](api-reference/recyclebin.md).
+
+**Client guidance:** detect support by the `recycle_bin` object on the database, never by calling `/recyclebin`. Read `enabled` before you promise a user that a deletion can be undone, and `can_manage` before you call a listing "the recycle bin" rather than "what you deleted". Send `mode=permanent` where an item must really go -- a script that cleans up after itself, a tutorial, a test run -- and leave `mode` off where a user would want the item back. Tell the two `403`s on a delete apart by the numeric `error.code`, never by the message, which follows the server's language.
 
 #### Database Icons
 
@@ -238,17 +254,35 @@ When the server's licensed number of users is reached (the same limit the Server
 
 ### Entries and Folders
 
+#### `DELETE` Moves an Entry or Folder to the Recycle Bin (Behavior Change)
+
+`DELETE /databases/{db}/entries/{id}` and `DELETE /databases/{db}/folders/{id}` take an optional `mode` parameter, and its default changes what a plain `DELETE` does:
+
+| `mode` | What the request does |
+|--------|-----------------------|
+| omitted, or `recycle` | The item is moved to the database's recycle bin, where it can be restored -- from the Windows client, and through the [recycle-bin routes](api-reference/recyclebin.md). A folder moves with everything under it, as one item. |
+| `permanent` | The item, and everything under a folder, is destroyed and cannot be restored. |
+
+The value is read from the URL query string only and compared without regard to letter case and surrounding spaces. Any other non-empty value answers `400` with the usual error object and deletes nothing; `mode=` with no value is read as the default. Success is `204` with an empty body in both modes, as before. When the database's `recycle_bin.enabled` is `false` the server keeps no recycle bin, and a `recycle` delete removes the item permanently -- the same thing the Windows client does under that setting.
+
+Both modes are refused for an item another client has open for editing: `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`, default message "The item is being edited by another user."), and nothing is deleted. For a folder this covers anything inside it, so a single checked-out entry keeps the whole folder. A plain `403` still means the caller may not delete the item at all.
+
+!!! warning "Behavior change for clients"
+    An integration that deletes through this API and expects the item to be gone must now send `?mode=permanent`; without it the item is recoverable and still counts against the bin's `keep`. An integration that wants the user to be able to undo a deletion needs no change. Detect the parameter by the `recycle_bin` object on the database, never by sending `mode` and reading the answer. Handle the new `403` / `4035` by the numeric `error.code`, never by the message, which is localizable, and offer a retry rather than reporting a permission problem.
+
 #### Deleted Entries and Folders Answer `404` (Behavior Change)
 
-An item in a database's recycle bin, or any item below a folder in the recycle bin, is not addressable through the REST API. Items reach the recycle bin when they are deleted in the Windows client. A `DELETE` made through this API removes the item permanently.
+An item in a database's recycle bin, or any item below a folder in the recycle bin, is not addressable through the entries and folders routes. Items reach the recycle bin when they are deleted in the Windows client, and when a `DELETE` is made through this API without `mode` or with `mode=recycle`.
 
 - When `{id}` names such an item, every `/databases/{db}/entries/{id}` route (`GET`, `PATCH`, `DELETE`, `/move`, `/content`, `/otp`) and every `/databases/{db}/folders/{id}` route (`GET`, `PATCH`, `DELETE`, `/children`, `/move`) answers `404`.
 - `POST /secrets` and `POST /admin/secrets` answer `404` when `entry_id` names such an item.
 
-The REST API has no recycle-bin view. Reading a link whose target is in the recycle bin (including `GET .../otp`), and creating or updating a link to such a target, answers `403` (see **Link Targets Weighed Like Direct Requests**).
+Reading a link whose target is in the recycle bin (including `GET .../otp`), and creating or updating a link to such a target, answers `403` (see **Link Targets Weighed Like Direct Requests**).
+
+The item keeps its id while it is in the bin, and answers on its own routes again once it is restored. The [recycle-bin routes](api-reference/recyclebin.md) are where it is seen, restored and destroyed in the meantime -- see **Recycle Bin** under New Features.
 
 !!! warning "Behavior change for clients"
-    Handle the id of an item deleted in another client exactly like an unknown id: requests for it answer `404`, even though the item still exists in that database's recycle bin.
+    Handle the id of an item deleted in another client exactly like an unknown id: requests for it answer `404`, even though the item still exists in that database's recycle bin. Look for it in `GET /databases/{db}/recyclebin` rather than treating the `404` as proof that it is gone.
 
 #### Setting a Second Password Requires the `second_pass` Permission (Behavior Change)
 

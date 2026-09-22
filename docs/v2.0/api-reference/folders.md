@@ -500,9 +500,10 @@ Returns the compact representation of the updated folder.
 
 ```
 DELETE /v2.0/databases/{db}/folders/{id}
+DELETE /v2.0/databases/{db}/folders/{id}?mode=permanent
 ```
 
-Deletes a folder and all its contents (sub-folders and entries).
+Deletes a folder and all its contents (sub-folders and entries). By default the folder is moved to the database's [recycle bin](recyclebin.md), from where it can be restored; `mode=permanent` destroys it instead. In either mode the folder travels with everything under it, as **one** item.
 
 ### Path Parameters
 
@@ -511,26 +512,54 @@ Deletes a folder and all its contents (sub-folders and entries).
 | `db` | string (UUID) | Yes | Database ID |
 | `id` | string (UUID) | Yes | Folder unique identifier |
 
+### Query Parameters
+
+*Server 20.0.0 and later.*
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mode` | string | No | `recycle` (default) or `permanent`. Read from the URL query string only, and compared without regard to letter case and surrounding spaces |
+
+| Value | What it does |
+|-------|--------------|
+| `recycle` | The folder, with its sub-folders and entries, is moved to the database's [recycle bin](recyclebin.md) as one item. It can be put back with [Restore Item](recyclebin.md#restore-item) and from the Windows client. This is what a `DELETE` without `mode` does. |
+| `permanent` | The folder and everything under it is destroyed and cannot be restored. |
+
+Any other non-empty value answers `400` and deletes nothing; `mode=` with no value is read as the default.
+
+The presence of the [`recycle_bin`](databases.md#recycle-bin-capability) object on the database object is how a client detects that the server reads `mode` and serves the recycle-bin routes. When that object's `enabled` is `false`, the server keeps no recycle bin and a `recycle` delete removes the folder permanently -- the same thing the Windows client does under that setting. Read the capability before you tell a user that a deletion can be undone.
+
 ### Response
 
 `204 No Content`
 
-No response body.
+No response body. Both modes answer alike.
 
 ### Error Responses
 
 | Status | Description |
 |--------|-------------|
+| `400 Bad Request` | `mode` is neither `recycle` nor `permanent`; nothing is deleted. Default message: `The "mode" parameter accepts only "recycle" or "permanent".` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another client (`error.code` `4035`) |
 | `404 Not Found` | Database or folder not found |
 
-### Example
+!!! note "A folder holding an item someone is editing is not deleted"
+    *Server 20.0.0 and later.* When the folder itself, or any sub-folder or entry below it, is checked out by another client, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the whole folder stays exactly as the request found it, down to the last entry. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other client is done, on a plain `403` they cannot.
 
-=== "curl"
+### Examples
+
+=== "curl (to the recycle bin)"
 
     ```bash
     curl -X DELETE "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/folders/f1a2b3c4-d5e6-7890-abcd-ef1234567890" \
+        -H "Authorization: Bearer <token>"
+    ```
+
+=== "curl (permanent)"
+
+    ```bash
+    curl -X DELETE "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/folders/f1a2b3c4-d5e6-7890-abcd-ef1234567890?mode=permanent" \
         -H "Authorization: Bearer <token>"
     ```
 

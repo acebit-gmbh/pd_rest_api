@@ -13,7 +13,7 @@ Reference for database endpoints. Databases are accessible in both **client** an
 
 The database object uses different representations depending on scope and context:
 
-- **Client scope** and **admin list** responses return a **compact representation**: `id`, `name`, `description`, `updated_at`, `icons`.
+- **Client scope** and **admin list** responses return a **compact representation**: `id`, `name`, `description`, `updated_at`, `icons`, `recycle_bin`.
 - **Admin detail** responses (`GET /v2.0/admin/databases/{id}`) return the **full representation** with all fields.
 
 | Field | Type | Writable | Description |
@@ -30,6 +30,7 @@ The database object uses different representations depending on scope and contex
 | `include_server_supervisors` | boolean | Restricted | Whether server-level supervisors have access to this database (admin detail only). Requires database management permission. |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp |
 | `icons` | object | No | [Database icon](icons.md) capability of this database for the current caller, in every representation and both scopes - see [Icons Capability](#icons-capability). Absent on servers older than 20.0.0 |
+| `recycle_bin` | object | No | [Recycle bin](recyclebin.md) capability of this database for the current caller, in every representation and both scopes - see [Recycle Bin Capability](#recycle-bin-capability). Absent on servers older than 20.0.0 |
 
 !!! warning "Field-Level Authorization"
     The `disabled`, `db_admins`, `db_supervisors`, and `include_server_supervisors` fields can only be modified by users with database management permission (Server Administrators or Database Administrators for this database). If an unauthorized user attempts to change these fields, the server returns `403 Forbidden`.
@@ -50,6 +51,20 @@ Every database object - client and admin scope, list and detail, compact and ful
 | `batch_max` | integer | Largest number of ids in one [List Icons](icons.md#list-icons) call with `ids`: `32` |
 
 Read the limits from this object rather than hard-coding them.
+
+### Recycle Bin Capability
+
+*Server 20.0.0 and later.*
+
+Every database object - client and admin scope, list and detail, compact and full - carries a read-only `recycle_bin` object. Its presence is how a client detects that the server implements the [Recycle Bin](recyclebin.md) as a whole: the `/recyclebin` endpoints, and the `mode` parameter on [Delete Entry](entries.md#delete-entry) and [Delete Folder](folders.md#delete-folder). When it is absent, the server is older than 20.0.0: never call `/recyclebin`, and do not send `mode`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | boolean | Whether the server keeps a recycle bin. When `false`, a delete with `mode=recycle` - or without `mode` - removes the item permanently, which is what the Windows client does under the same setting |
+| `keep` | integer | How many items the bin holds: `1000` unless an administrator has changed it, and `0` when the bin is off. Beyond that number the oldest items are dropped |
+| `can_manage` | boolean | Whether the current caller may see and act on the items **other** people deleted in this database. Everyone always sees what they deleted themselves, whatever this field says; restoring and destroying still need the rights described under [Recycle Bin](recyclebin.md) |
+
+Like `icons`, this object is on every database object, but only `can_manage` describes the **current caller** on **this one** database, so it can differ from one database to the next within the same session. `enabled` and `keep` are a server-wide setting and read the same on every database of a server. Read `can_manage` from here rather than deriving it from a role, and read `enabled` before you tell a user that a deletion can be undone. See [Recycle Bin](recyclebin.md) for the endpoints and for what a caller finds in the bin.
 
 ---
 
@@ -94,6 +109,11 @@ Returns a paginated list of databases accessible by the authenticated user. Only
                 "max_side": 64,
                 "max_count": 1024,
                 "batch_max": 32
+            },
+            "recycle_bin": {
+                "enabled": true,
+                "keep": 1000,
+                "can_manage": false
             }
         }
     ],
@@ -151,6 +171,11 @@ Returns details of a specific database that the user has access to. Returns the 
         "max_side": 64,
         "max_count": 1024,
         "batch_max": 32
+    },
+    "recycle_bin": {
+        "enabled": true,
+        "keep": 1000,
+        "can_manage": false
     }
 }
 ```
@@ -215,6 +240,11 @@ Returns a paginated list of databases on the server. Returns the compact represe
                 "max_side": 64,
                 "max_count": 1024,
                 "batch_max": 32
+            },
+            "recycle_bin": {
+                "enabled": true,
+                "keep": 1000,
+                "can_manage": false
             }
         },
         {
@@ -229,6 +259,11 @@ Returns a paginated list of databases on the server. Returns the compact represe
                 "max_side": 64,
                 "max_count": 1024,
                 "batch_max": 32
+            },
+            "recycle_bin": {
+                "enabled": true,
+                "keep": 1000,
+                "can_manage": false
             }
         }
     ],
@@ -317,6 +352,11 @@ The same rules are enforced when renaming a database via `PATCH /v2.0/admin/data
         "max_side": 64,
         "max_count": 1024,
         "batch_max": 32
+    },
+    "recycle_bin": {
+        "enabled": true,
+        "keep": 1000,
+        "can_manage": false
     }
 }
 ```
@@ -388,6 +428,11 @@ Returns the **full representation** of a specific database, including size, entr
         "max_side": 64,
         "max_count": 1024,
         "batch_max": 32
+    },
+    "recycle_bin": {
+        "enabled": true,
+        "keep": 1000,
+        "can_manage": false
     }
 }
 ```
@@ -466,6 +511,11 @@ Updates an existing database. Include only the fields you want to update.
         "max_side": 64,
         "max_count": 1024,
         "batch_max": 32
+    },
+    "recycle_bin": {
+        "enabled": true,
+        "keep": 1000,
+        "can_manage": false
     }
 }
 ```

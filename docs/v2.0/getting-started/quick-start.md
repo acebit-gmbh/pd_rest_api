@@ -65,6 +65,11 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases" \
         "max_side": 64,
         "max_count": 1024,
         "batch_max": 32
+      },
+      "recycle_bin": {
+        "enabled": true,
+        "keep": 1000,
+        "can_manage": false
       }
     },
     {
@@ -79,6 +84,11 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases" \
         "max_side": 64,
         "max_count": 1024,
         "batch_max": 32
+      },
+      "recycle_bin": {
+        "enabled": true,
+        "keep": 1000,
+        "can_manage": false
       }
     }
   ],
@@ -88,7 +98,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases" \
 }
 ```
 
-The `icons` object is sent by Server 20.0.0 and later; it tells a client whether the server supports [database icons](../api-reference/icons.md) and what an upload may contain.
+The `icons` and `recycle_bin` objects are sent by Server 20.0.0 and later. `icons` tells a client whether the server supports [database icons](../api-reference/icons.md) and what an upload may contain; `recycle_bin` tells it whether a deletion in this database can be undone, and who may see the [recycle bin](../api-reference/recyclebin.md).
 
 Note the `id` of the database you want to work with. We will use `550e8400-e29b-41d4-a716-446655440000` in the following steps.
 
@@ -333,12 +343,14 @@ Returns the compact representation of the updated entry.
 
 ## Step 7: Delete an Entry
 
-Remove an entry from the database.
+Remove the entry from the database again.
+
+A `DELETE` without `mode` moves the entry to the database's [recycle bin](../api-reference/recyclebin.md), where the user can restore it. This walkthrough asks for `mode=permanent` instead, so that the entry it created in Step 5 does not stay behind.
 
 **Request:**
 
 ```bash
-curl -k -X DELETE "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries/$ENTRY_UPDATE" \
+curl -k -X DELETE "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries/$ENTRY_UPDATE?mode=permanent" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -346,7 +358,10 @@ curl -k -X DELETE "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries/$ENTRY_UP
 
 **Status:** `204 No Content`
 
-No response body is returned on successful deletion.
+No response body is returned on successful deletion, in either mode.
+
+!!! tip "Which mode to send"
+    `mode` is read by Server 20.0.0 and later, and the `recycle_bin` object on the database objects from Step 2 is how a client detects that. Leave `mode` off where a user would want the item back; send `mode=permanent` where it must really go, as a script that cleans up after itself does. When the database's `recycle_bin.enabled` is `false`, the server keeps no bin and both modes remove the entry for good. See [Delete Entry](../api-reference/entries.md#delete-entry).
 
 ## Step 8: Logout
 
@@ -447,8 +462,9 @@ Here is the entire workflow as a single copy-paste script:
       }' | jq .
     echo "Updated entry: $NEW_ID"
 
-    # Step 7: Delete the entry
-    curl -k -s -X DELETE "${BASE}/databases/${DB}/entries/${NEW_ID}" -H "$AUTH"
+    # Step 7: Delete the entry. mode=permanent, so this script leaves nothing
+    # behind; without it the entry would go to the database's recycle bin.
+    curl -k -s -X DELETE "${BASE}/databases/${DB}/entries/${NEW_ID}?mode=permanent" -H "$AUTH"
     echo "Deleted entry: $NEW_ID"
 
     # Step 8: Logout
@@ -509,8 +525,9 @@ Here is the entire workflow as a single copy-paste script:
       -Method PATCH -Headers $headers -Body $updateBody -ContentType "application/json"
     Write-Host "Updated entry: $($new.id)"
 
-    # Step 7: Delete the entry
-    Invoke-RestMethod -Uri "$Base/databases/$dbId/entries/$($new.id)" `
+    # Step 7: Delete the entry. mode=permanent, so this script leaves nothing
+    # behind; without it the entry would go to the database's recycle bin.
+    Invoke-RestMethod -Uri "$Base/databases/$dbId/entries/$($new.id)?mode=permanent" `
       -Method DELETE -Headers $headers
     Write-Host "Deleted entry: $($new.id)"
 
@@ -587,10 +604,12 @@ Here is the entire workflow as a single copy-paste script:
     )
     print(f"Updated entry: {new['id']}")
 
-    # Step 7: Delete the entry
+    # Step 7: Delete the entry. mode=permanent, so this script leaves nothing
+    # behind; without it the entry would go to the database's recycle bin.
     requests.delete(
         f"{BASE}/databases/{db_id}/entries/{new['id']}",
         headers=headers,
+        params={"mode": "permanent"},
         verify=False,
     )
     print(f"Deleted entry: {new['id']}")

@@ -50,7 +50,7 @@ New to the REST API? Start here:
 | Resource | Description |
 |----------|-------------|
 | [Getting Started](getting-started/setup.md) | Server setup, authentication, and first API call |
-| [API Reference](api-reference/overview.md) | Complete endpoint documentation for all 69 endpoints |
+| [API Reference](api-reference/overview.md) | Complete endpoint documentation for all 75 endpoints |
 | [OpenAPI Specification](openapi.yaml) | Machine-readable API spec for code generation and tooling |
 | [Changelog](changelog.md) | Version history and breaking changes |
 | [v1.0 Documentation](../v1.0/) | Legacy API, served by Server 19.x and earlier only |
@@ -68,7 +68,7 @@ https://<YOUR_SERVER>:8714/v2.0/
 
 ## API at a Glance
 
-v2.0 provides **69 endpoints** across **12 resource types**, separated into client and admin scopes:
+v2.0 provides **75 endpoints** across **13 resource types**, separated into client and admin scopes:
 
 **Client Endpoints** (accessible with any session):
 
@@ -79,6 +79,7 @@ v2.0 provides **69 endpoints** across **12 resource types**, separated into clie
 | [Databases](api-reference/databases.md#client-endpoints) | 2 | List and read accessible databases |
 | [Folders](api-reference/overview.md#folders) | 5 | Folder management within databases |
 | [Entries](api-reference/overview.md#entries) | 8 | Password entry CRUD, move, and document content |
+| [Recycle Bin](api-reference/recyclebin.md) | 4 | List, restore and destroy deleted entries and folders (Server 20.0.0 and later) |
 | [Database Icons](api-reference/icons.md) | 3 | List, fetch and upload the icons stored in a database (Server 20.0.0 and later) |
 | [Search](api-reference/overview.md#search) | 1 | Search within a database |
 | [Secrets](api-reference/secrets.md) | 7 | Create, list, get, delete own secrets; approve, reject, revoke |

@@ -242,12 +242,26 @@ function Set-PDFolder {
 }
 
 function Remove-PDFolder {
+    <#
+    .SYNOPSIS
+        Deletes a folder and everything under it.
+
+        -Mode permanent destroys it; -Mode recycle asks for the database's
+        recycle bin, from where it can be restored. Without -Mode nothing is
+        sent and the server's default applies, which on Server 20.0.0 and
+        later is the recycle bin. The parameter is read by Server 20.0.0 and
+        later; the 'recycle_bin' object on the database object (Get-PDDatabase)
+        is how a client detects that.
+    #>
     param(
         [Parameter(Mandatory)] [PSCustomObject] $Session,
         [Parameter(Mandatory)] [string] $DatabaseId,
-        [Parameter(Mandatory)] [string] $FolderId
+        [Parameter(Mandatory)] [string] $FolderId,
+        [ValidateSet("recycle", "permanent")] [string] $Mode
     )
-    Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/folders/$FolderId" -Method DELETE
+    $qp = @{}
+    if ($Mode) { $qp.mode = $Mode }
+    Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/folders/$FolderId" -Method DELETE -QueryParams $qp
 }
 
 function Move-PDFolder {
@@ -325,12 +339,26 @@ function Set-PDEntry {
 }
 
 function Remove-PDEntry {
+    <#
+    .SYNOPSIS
+        Deletes an entry.
+
+        -Mode permanent destroys it; -Mode recycle asks for the database's
+        recycle bin, from where it can be restored. Without -Mode nothing is
+        sent and the server's default applies, which on Server 20.0.0 and
+        later is the recycle bin. The parameter is read by Server 20.0.0 and
+        later; the 'recycle_bin' object on the database object (Get-PDDatabase)
+        is how a client detects that.
+    #>
     param(
         [Parameter(Mandatory)] [PSCustomObject] $Session,
         [Parameter(Mandatory)] [string] $DatabaseId,
-        [Parameter(Mandatory)] [string] $EntryId
+        [Parameter(Mandatory)] [string] $EntryId,
+        [ValidateSet("recycle", "permanent")] [string] $Mode
     )
-    Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries/$EntryId" -Method DELETE
+    $qp = @{}
+    if ($Mode) { $qp.mode = $Mode }
+    Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries/$EntryId" -Method DELETE -QueryParams $qp
 }
 
 function Move-PDEntry {
@@ -346,6 +374,73 @@ function Move-PDEntry {
         $json = '{"target":null}'
     }
     return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/entries/$EntryId/move" -Method POST -Body $json
+}
+
+# --- Recycle Bin ---
+# Server 20.0.0 and later. Detect support with the 'recycle_bin' object on the
+# database object (Get-PDDatabase); an older server answers 404 on these paths.
+
+function Get-PDRecycleBin {
+    <#
+    .SYNOPSIS
+        Lists the items in a database's recycle bin that the caller may see -
+        its own deletions always, other people's only when the database's
+        recycle_bin.can_manage is true. Returns the paginated envelope
+        (.data, .total, .offset, .limit); each row is the compact entry or
+        folder representation, with 'type' telling the two apart.
+    #>
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [int] $Offset = 0,
+        [int] $Limit = 100
+    )
+    return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/recyclebin" `
+        -QueryParams @{ offset = $Offset; limit = $Limit }
+}
+
+function Restore-PDRecycleBinItem {
+    <#
+    .SYNOPSIS
+        Puts one item back into the folder it was deleted from, or into the
+        database root when that folder is gone. Needs the right to change the
+        folder the item returns to. The 204 does not say where the item landed -
+        reload the folder, or read the item, to find out.
+    #>
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [Parameter(Mandatory)] [string] $ItemId
+    )
+    Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/recyclebin/$ItemId/restore" -Method POST -Body "{}"
+}
+
+function Remove-PDRecycleBinItem {
+    <#
+    .SYNOPSIS
+        Destroys one item in the recycle bin - a folder with everything that
+        went into the bin with it. This cannot be undone.
+    #>
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId,
+        [Parameter(Mandatory)] [string] $ItemId
+    )
+    Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/recyclebin/$ItemId" -Method DELETE
+}
+
+function Clear-PDRecycleBin {
+    <#
+    .SYNOPSIS
+        Destroys every item in the database's recycle bin that the caller can
+        see and may delete. An item it may not see, or may not delete, is left
+        in the bin. This cannot be undone.
+    #>
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId
+    )
+    Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/recyclebin" -Method DELETE
 }
 
 # --- One-Time Code ---

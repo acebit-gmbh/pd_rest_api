@@ -157,11 +157,12 @@ On error, the server returns a JSON object with a nested `error` object:
     | `4032` | `403` | `PD_ERRCODE_LICENSE_LIMIT` | `POST /admin/users`: the server's licensed number of users is reached |
     | `4033` | `403` | `PD_ERRCODE_TOTP_READ_REQUIRED` | Entry `totp` write on `PATCH`: read permission on the entry is required as well |
     | `4034` | `403` | `PD_ERRCODE_ICON_QUOTA` | `POST /databases/{db}/icons`: the database cannot hold another icon |
+    | `4035` | `403` | `PD_ERRCODE_ITEM_LOCKED` | `DELETE` of an entry or folder: the item, or something inside the folder, is being edited by another client; nothing was deleted |
     | `4041` | `404` | `PD_ERRCODE_NO_ONE_TIME_CODE` | The entry has no one-time code; a `404` for an entry that does not exist keeps `error.code = 404` |
     | `4042` | `404` | `PD_ERRCODE_ICON_NOT_FOUND` | `GET /databases/{db}/icons/{icon_id}`: no usable icon with that id in this database; a `404` for a database that does not exist keeps `error.code = 404` |
     | `4131` | `413` | `PD_ERRCODE_ICON_TOO_LARGE` | `POST /databases/{db}/icons`: too many bytes, too many pixels, or too large a stored record |
 
-    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4032`, `4033`, `4034`, `4041`, `4042` and `4131` are new. `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
+    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4032` to `4035`, `4041`, `4042` and `4131` are new. `4035` belongs to [Delete Entry](entries.md#delete-entry) and [Delete Folder](folders.md#delete-folder). `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
 
 ## Error Codes
 
@@ -384,7 +385,7 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `POST` | [`/databases/{db}/folders`](folders.md#create-folder) | Create a new folder | Any |
 | `GET` | [`/databases/{db}/folders/{id}`](folders.md#get-folder) | Get folder details | Any |
 | `PATCH` | [`/databases/{db}/folders/{id}`](folders.md#update-folder) | Update a folder | Any |
-| `DELETE` | [`/databases/{db}/folders/{id}`](folders.md#delete-folder) | Delete a folder | Any |
+| `DELETE` | [`/databases/{db}/folders/{id}`](folders.md#delete-folder) | Delete a folder: to the recycle bin, or `?mode=permanent` | Any |
 | `POST` | [`/databases/{db}/folders/{id}/move`](folders.md#move-folder) | Move a folder to a different parent | Any |
 
 ### Entries
@@ -394,11 +395,20 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `POST` | [`/databases/{db}/entries`](entries.md#create-entry) | Create a new entry | Any |
 | `GET` | [`/databases/{db}/entries/{id}`](entries.md#get-entry) | Get full entry details (including password) | Any |
 | `PATCH` | [`/databases/{db}/entries/{id}`](entries.md#update-entry) | Update an entry | Any |
-| `DELETE` | [`/databases/{db}/entries/{id}`](entries.md#delete-entry) | Delete an entry | Any |
+| `DELETE` | [`/databases/{db}/entries/{id}`](entries.md#delete-entry) | Delete an entry: to the recycle bin, or `?mode=permanent` | Any |
 | `POST` | [`/databases/{db}/entries/{id}/move`](entries.md#move-entry) | Move an entry to a different folder | Any |
 | `GET` | [`/databases/{db}/entries/{id}/otp`](entries.md#get-one-time-code) | Get the entry's current one-time code (TOTP) | Any |
 | `GET` | [`/databases/{db}/entries/{id}/content`](entries.md#get-document-content) | Download document content (BLOB) | Any |
 | `PUT` | [`/databases/{db}/entries/{id}/content`](entries.md#upload-document-content) | Upload/replace document content (BLOB) | Any |
+
+### Recycle Bin
+
+| Method | Path | Description | Scope |
+|--------|------|-------------|:-----:|
+| `GET` | [`/databases/{db}/recyclebin`](recyclebin.md#list-recycle-bin) | List the deleted items you may see | Any |
+| `POST` | [`/databases/{db}/recyclebin/{id}/restore`](recyclebin.md#restore-item) | Put one item back where it was deleted from | Any |
+| `DELETE` | [`/databases/{db}/recyclebin/{id}`](recyclebin.md#delete-item) | Destroy one item permanently | Any |
+| `DELETE` | [`/databases/{db}/recyclebin`](recyclebin.md#empty-recycle-bin) | Destroy what you can see in the bin and may delete | Any |
 
 ### Database Icons
 

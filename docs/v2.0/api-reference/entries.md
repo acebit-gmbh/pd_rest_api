@@ -516,13 +516,18 @@ Returns the **full representation** of a specific entry, including the password,
 | `404 Not Found` | Database or entry not found, **or** the entry is in the recycle bin |
 
 !!! note "Deleted entries are not addressable"
-    This API has no recycle bin: nothing lists it, no field names it, and a
-    deleted entry is not part of the model. Addressing one by its fingerprint
-    therefore returns `404 Not Found` - on this endpoint and on every other
-    `/entries/{id}` and `/folders/{id}` route - and a deleted entry cannot be
-    used as the target of a shared secret. Treat such an id like one that
-    does not exist. A link whose target has been deleted is the exception:
-    creating, reading or updating that link returns `403 Forbidden`.
+    An entry in the database's [recycle bin](recyclebin.md) keeps its id, but
+    that id is not addressable here. Asking for it returns `404 Not Found` -
+    on this endpoint and on every other `/entries/{id}` and `/folders/{id}`
+    route - and such an entry cannot be used as the target of a shared
+    secret. Treat the id like one that does not exist. A link whose target
+    has been deleted is the exception: creating, reading or updating that
+    link returns `403 Forbidden`.
+
+    The [recycle-bin routes](recyclebin.md) are where a deleted item is seen
+    again: they list what the caller may see of the bin, restore an item to
+    the folder it was deleted from, and destroy it. An item restored from the
+    bin is addressable here again, under the same id.
 
     *Server 20.0.0 and later.*
 
@@ -861,9 +866,10 @@ Returns the compact representation of the updated entry.
 
 ```
 DELETE /v2.0/databases/{db}/entries/{id}
+DELETE /v2.0/databases/{db}/entries/{id}?mode=permanent
 ```
 
-Deletes an entry.
+Deletes an entry. By default the entry is moved to the database's [recycle bin](recyclebin.md), from where it can be restored; `mode=permanent` destroys it instead.
 
 ### Path Parameters
 
@@ -872,26 +878,54 @@ Deletes an entry.
 | `db` | string (UUID) | Yes | Database ID |
 | `id` | string (UUID) | Yes | Entry unique identifier |
 
+### Query Parameters
+
+*Server 20.0.0 and later.*
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mode` | string | No | `recycle` (default) or `permanent`. Read from the URL query string only, and compared without regard to letter case and surrounding spaces |
+
+| Value | What it does |
+|-------|--------------|
+| `recycle` | The entry is moved to the database's [recycle bin](recyclebin.md). It can be put back with [Restore Item](recyclebin.md#restore-item) and from the Windows client. This is what a `DELETE` without `mode` does. |
+| `permanent` | The entry is destroyed and cannot be restored. |
+
+Any other non-empty value answers `400` and deletes nothing; `mode=` with no value is read as the default.
+
+The presence of the [`recycle_bin`](databases.md#recycle-bin-capability) object on the database object is how a client detects that the server reads `mode` and serves the recycle-bin routes. When that object's `enabled` is `false`, the server keeps no recycle bin and a `recycle` delete removes the entry permanently -- the same thing the Windows client does under that setting. Read the capability before you tell a user that a deletion can be undone.
+
 ### Response
 
 `204 No Content`
 
-No response body.
+No response body. Both modes answer alike.
 
 ### Error Responses
 
 | Status | Description |
 |--------|-------------|
+| `400 Bad Request` | `mode` is neither `recycle` nor `permanent`; nothing is deleted. Default message: `The "mode" parameter accepts only "recycle" or "permanent".` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the entry is being edited by another client (`error.code` `4035`) |
 | `404 Not Found` | Database or entry not found |
 
-### Example
+!!! note "An entry someone is editing is not deleted"
+    *Server 20.0.0 and later.* When the entry is checked out by another client, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the entry stays exactly as the request found it. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other client is done, on a plain `403` they cannot.
 
-=== "curl"
+### Examples
+
+=== "curl (to the recycle bin)"
 
     ```bash
     curl -X DELETE "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012" \
+        -H "Authorization: Bearer <token>"
+    ```
+
+=== "curl (permanent)"
+
+    ```bash
+    curl -X DELETE "https://<server>:8714/v2.0/databases/a1b2c3d4-e5f6-7890-abcd-ef1234567890/entries/c3d4e5f6-a7b8-9012-cdef-123456789012?mode=permanent" \
         -H "Authorization: Bearer <token>"
     ```
 

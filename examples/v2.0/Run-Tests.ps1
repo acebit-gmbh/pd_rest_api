@@ -4,11 +4,17 @@
 
 .DESCRIPTION
     Tests the full API lifecycle: authentication, databases, folders, entries,
-    database icons, search, users, groups, alerts, permissions, and /me endpoint.
+    database icons, the recycle bin, search, users, groups, alerts, permissions,
+    and /me endpoint.
 
     The database-icon suite (4c, Server 20.0.0 or later) stores two small test
     icons in the test database on its first run. REST cannot delete icons, so
     they stay; later runs reuse them. Use a dedicated test database.
+
+    Entries and folders the suite creates are deleted with mode=permanent
+    wherever the server reads it, so a run leaves nothing in the test
+    database's recycle bin. The 'recycle_bin' object on the database object is
+    the capability marker; a server without it is sent no 'mode' at all.
 
     Requires an admin account on a running PD Enterprise Server with at least
     one database accessible by the test user.
@@ -376,6 +382,23 @@ if ($testDbId) {
     } catch { Fail-Test $_.Exception.Message }
 } else { Skip-Test "No database available" }
 
+# Recycle-bin capability. Every Remove-PDEntry / Remove-PDFolder call below
+# splats @purge, so the items this suite creates are destroyed rather than
+# binned. An older server has no 'recycle_bin' object and is sent no 'mode'.
+# $recycleCap keeps the object itself: suite 4d reads it rather than asking
+# the server for the same database a second time.
+$purge = @{}
+$recycleCap = $null
+if ($testDbId) {
+    try {
+        $capProbe = Get-PDDatabase -Session $adminSession -DatabaseId $testDbId
+        if ($null -ne $capProbe.PSObject.Properties['recycle_bin']) {
+            $recycleCap = $capProbe.recycle_bin
+            $purge = @{ Mode = "permanent" }
+        }
+    } catch {}
+}
+
 # 2.3 Get non-existent database -> 404
 Start-Test "Get non-existent database -> 404"
 if (Assert-HttpError -ExpectedCode 404 -Action {
@@ -608,7 +631,7 @@ if (-not $testDbId) {
         }
         if (Assert-Equal "credit_card" $cc.type "type") { Pass-Test "id=$($cc.id)" }
         # Clean up
-        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $cc.id
+        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $cc.id @purge
     } catch { Fail-Test $_.Exception.Message }
 
     # 4.5 Create information entry
@@ -620,7 +643,7 @@ if (-not $testDbId) {
             information = @{ text = "Some secret notes" }
         }
         if (Assert-Equal "information" $info.type "type") { Pass-Test "id=$($info.id)" }
-        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $info.id
+        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $info.id @purge
     } catch { Fail-Test $_.Exception.Message }
 
     # 4.6 Move entry to root
@@ -758,7 +781,7 @@ if (-not $testDbId) {
             Get-PDEntryOneTimeCode -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId
         }) { Pass-Test "404 as expected" }
         # Clean up
-        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId } catch {}
+        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId @purge } catch {}
     } else { Skip-Test "TOTP entry not created" }
 }
 
@@ -921,7 +944,7 @@ if (-not $testDbId) {
             Get-PDDocumentContent -Session $adminSession -DatabaseId $testDbId -EntryId $emptyDoc.id
         }) { Pass-Test "404 as expected" }
         # Clean up
-        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $emptyDoc.id
+        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $emptyDoc.id @purge
     } catch { Fail-Test $_.Exception.Message }
 
     # 4b.9 C6: oversized JSON body (>1MB) to a JSON endpoint -> 413
@@ -1361,7 +1384,147 @@ elseif ($iconsCap) {
 
     # Clean up the entry. The icons stay: REST has no icon delete.
     if ($iconEntryId) {
-        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId } catch {}
+        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $iconEntryId @purge } catch {}
+    }
+}
+
+$totalFailures += Write-TestSummary
+
+# ============================================================
+#  4d. RECYCLE BIN (Server 20.0.0+)
+# ============================================================
+#
+# Behind the same capability probe as the @purge splat in suite 2: the
+# 'recycle_bin' object read from the database there is the marker, and
+# $recycleCap is that object. A server without it has no /recyclebin route
+# and must never be probed by a call.
+#
+# The suite makes its own entry, sends it to the bin, finds it there, puts it
+# back and then destroys it with mode=permanent, so a run leaves the test
+# database - and its bin - as it found them.
+
+Start-TestSuite "Recycle Bin"
+
+$binEntryId = $null
+$binEntryName = $null
+
+if (-not $testDbId) {
+    Start-Test "All recycle-bin tests"
+    Skip-Test "No database available"
+}
+elseif (-not $recycleCap) {
+    Start-Test "All recycle-bin tests"
+    Skip-Test "Server has no 'recycle_bin' object (older than 20.0.0)"
+}
+elseif (-not $recycleCap.enabled) {
+    Start-Test "All recycle-bin tests"
+    Skip-Test "recycle_bin.enabled is false - the server keeps no recycle bin"
+}
+else {
+    # 4d.1 The capability object has the documented shape.
+    # Only can_manage is asserted here: this branch is entered because
+    # enabled is true and keep follows from it, so testing either would be
+    # testing the condition that got us here.
+    Start-Test "Recycle bin: capability shape"
+    $ok = Assert-True ($recycleCap.can_manage -is [bool]) "recycle_bin.can_manage is a boolean"
+    if ($ok) { Pass-Test "enabled=$($recycleCap.enabled), keep=$($recycleCap.keep), can_manage=$($recycleCap.can_manage)" }
+
+    # 4d.2 An entry of this suite's own, to delete and put back
+    Start-Test "Recycle bin: create the entry to delete"
+    try {
+        $binTs = Get-Date -Format "yyyyMMdd_HHmmss"
+        $binEntryName = "RecycleBinTest_$binTs"
+        $binEntry = New-PDEntry -Session $adminSession -DatabaseId $testDbId -ParentId $testFolderId -Fields @{
+            type  = "password"
+            name  = $binEntryName
+            login = "testuser"
+            pass  = "S3cureP@ss!"
+        }
+        if (Assert-NotNull $binEntry.id "id") {
+            $binEntryId = $binEntry.id
+            Pass-Test "id=$binEntryId"
+        }
+    } catch { Fail-Test $_.Exception.Message }
+
+    # 4d.3 A non-empty unknown mode is refused, and nothing is deleted
+    Start-Test "Recycle bin: mode=bogus -> 400, entry untouched"
+    if ($binEntryId) {
+        if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+            Invoke-PDRequest -Session $adminSession -Path "/databases/$testDbId/entries/$binEntryId" -Method DELETE -QueryParams @{ mode = "bogus" }
+        }) {
+            try {
+                $still = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $binEntryId
+                if (Assert-Equal $binEntryId $still.id "the entry is still there") { Pass-Test "400 as expected, nothing deleted" }
+            } catch { Fail-Test "400 was returned but the entry is gone: $($_.Exception.Message)" }
+        }
+    } else { Skip-Test "Entry not created" }
+
+    # 4d.4 A DELETE without 'mode' sends the entry to the bin
+    Start-Test "Recycle bin: delete without 'mode' -> 204"
+    if ($binEntryId) {
+        try {
+            Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $binEntryId
+            Pass-Test
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Entry not created" }
+
+    # 4d.5 While it is in the bin its own route answers 404
+    Start-Test "Recycle bin: the binned entry answers 404 on /entries"
+    if ($binEntryId) {
+        if (Assert-HttpError -ExpectedCode 404 -Action {
+            Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $binEntryId
+        }) { Pass-Test "404 as expected" }
+    } else { Skip-Test "Entry not created" }
+
+    # 4d.6 ... and the listing has it, under the id it kept
+    Start-Test "Recycle bin: GET /recyclebin lists the entry"
+    if ($binEntryId) {
+        try {
+            $bin = Get-PDRecycleBin -Session $adminSession -DatabaseId $testDbId -Limit 1000
+            $row = $bin.data | Where-Object { $_.id -eq $binEntryId }
+            $ok = (Assert-NotNull $row "row for the deleted entry") -and
+                  (Assert-Equal "password" $row.type "type") -and
+                  (Assert-Equal $binEntryName $row.name "name")
+            if ($ok) { Pass-Test "total=$($bin.total)" }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Entry not created" }
+
+    # 4d.7 Restore puts it back, addressable under the same id
+    Start-Test "Recycle bin: restore the entry"
+    if ($binEntryId) {
+        try {
+            Restore-PDRecycleBinItem -Session $adminSession -DatabaseId $testDbId -ItemId $binEntryId
+            $back = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $binEntryId
+            if (Assert-Equal $binEntryName $back.name "name after the restore") { Pass-Test "back under the same id" }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Entry not created" }
+
+    # 4d.8 ... and it is out of the bin
+    Start-Test "Recycle bin: the restored entry is out of the bin"
+    if ($binEntryId) {
+        try {
+            $bin = Get-PDRecycleBin -Session $adminSession -DatabaseId $testDbId -Limit 1000
+            $row = $bin.data | Where-Object { $_.id -eq $binEntryId }
+            if (Assert-True ($null -eq $row) "no row for the restored entry") { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Entry not created" }
+
+    # 4d.9 mode=permanent destroys it outright - it never reaches the bin
+    Start-Test "Recycle bin: mode=permanent does not fill the bin"
+    if ($binEntryId) {
+        try {
+            Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $binEntryId -Mode permanent
+            $bin = Get-PDRecycleBin -Session $adminSession -DatabaseId $testDbId -Limit 1000
+            $row = $bin.data | Where-Object { $_.id -eq $binEntryId }
+            if (Assert-True ($null -eq $row) "no row for the destroyed entry") { Pass-Test "destroyed, not binned" }
+            $binEntryId = $null
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Entry not created" }
+
+    # Whatever failed above, the suite's entry must not be left behind
+    if ($binEntryId) {
+        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $binEntryId @purge } catch {}
+        try { Remove-PDRecycleBinItem -Session $adminSession -DatabaseId $testDbId -ItemId $binEntryId } catch {}
     }
 }
 
@@ -2025,7 +2188,7 @@ if (-not $testDbId) {
         try { Remove-PDSecret -Session $adminSession -SecretId $testSecretApprovalId } catch {}
     }
     if ($secretEntryId) {
-        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $secretEntryId } catch {}
+        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $secretEntryId @purge } catch {}
     }
 }
 
@@ -2198,7 +2361,7 @@ Start-TestSuite "Cleanup"
 if ($testEntryId -and $testDbId) {
     Start-Test "Delete test entry"
     try {
-        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $testEntryId
+        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $testEntryId @purge
         Pass-Test
     } catch { Fail-Test $_.Exception.Message }
 }
@@ -2207,7 +2370,7 @@ if ($testEntryId -and $testDbId) {
 if ($testDocEntryId -and $testDbId) {
     Start-Test "Delete document entry"
     try {
-        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $testDocEntryId
+        Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $testDocEntryId @purge
         Pass-Test
     } catch { Fail-Test $_.Exception.Message }
 }
@@ -2216,7 +2379,7 @@ if ($testDocEntryId -and $testDbId) {
 if ($testSubFolderId -and $testDbId) {
     Start-Test "Delete sub-folder"
     try {
-        Remove-PDFolder -Session $adminSession -DatabaseId $testDbId -FolderId $testSubFolderId
+        Remove-PDFolder -Session $adminSession -DatabaseId $testDbId -FolderId $testSubFolderId @purge
         Pass-Test
     } catch { Fail-Test $_.Exception.Message }
 }
@@ -2225,7 +2388,7 @@ if ($testSubFolderId -and $testDbId) {
 if ($testFolderId -and $testDbId) {
     Start-Test "Delete test folder"
     try {
-        Remove-PDFolder -Session $adminSession -DatabaseId $testDbId -FolderId $testFolderId
+        Remove-PDFolder -Session $adminSession -DatabaseId $testDbId -FolderId $testFolderId @purge
         Pass-Test
     } catch { Fail-Test $_.Exception.Message }
 }

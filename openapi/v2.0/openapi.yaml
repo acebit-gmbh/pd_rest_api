@@ -48,9 +48,12 @@ info:
     missing second password), `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
     licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
     later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
-    `updateEntry` needs read permission on the entry, Server 20.0.0 and later)
-    and `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
-    cannot hold another icon, Server 20.0.0 and later)
+    `updateEntry` needs read permission on the entry, Server 20.0.0 and later),
+    `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
+    cannot hold another icon, Server 20.0.0 and later) and `4035`
+    (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry` / `deleteFolder`: the item, or
+    something inside the folder, is being edited by another user; nothing was
+    deleted, Server 20.0.0 and later)
     with HTTP `403`;
     `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
     `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
@@ -170,6 +173,8 @@ tags:
     description: Entry (credential) management within a database
   - name: Icons
     description: Icons stored in a database ("custom icons"); list, fetch and upload (Server 20.0.0 and later)
+  - name: Recycle Bin
+    description: Items deleted from a database; list them, restore them, remove them for good (Server 20.0.0 and later)
   - name: Search
     description: Full-text search across database entries
   - name: Users (directory)
@@ -601,16 +606,48 @@ paths:
       tags:
         - Folders
       summary: Delete a folder
+      description: |
+        Deletes the folder with everything inside it. `mode` chooses where it
+        goes (Server 20.0.0 and later); without `mode` the folder is moved to
+        the recycle bin. A folder travels as ONE item: the bin lists it as a
+        single row, and restoring it brings back everything that went down
+        with it.
+
+        The folder, and everything inside it, must be free: when another
+        client is editing any of them the folder stays where it is and the
+        answer is `403` with `error.code` `4035`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/FolderId"
+        - $ref: "#/components/parameters/DeleteMode"
       responses:
         "204":
           description: Folder deleted
+        "400":
+          description: |
+            `mode` is neither `recycle` nor `permanent`; nothing was deleted
+            (`error.code` 400, Server 20.0.0 and later).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: 400
+                  message: 'The "mode" parameter accepts only "recycle" or "permanent".'
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            `error.code` 4035 (`PD_ERRCODE_ITEM_LOCKED`): the folder, or an
+            item inside it, is being edited by another user; nothing was
+            deleted, in either `mode` (Server 20.0.0 and later). Offer to try
+            again later.
+            `error.code` 403: no permission to delete the folder.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -940,16 +977,44 @@ paths:
       tags:
         - Entries
       summary: Delete an entry
+      description: |
+        Deletes the entry. `mode` chooses where it goes (Server 20.0.0 and
+        later); without `mode` the entry is moved to the recycle bin, where
+        it keeps its id and can be restored.
+
+        The entry must be free: when another client is editing it, it stays
+        where it is and the answer is `403` with `error.code` `4035`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
+        - $ref: "#/components/parameters/DeleteMode"
       responses:
         "204":
           description: Entry deleted
+        "400":
+          description: |
+            `mode` is neither `recycle` nor `permanent`; nothing was deleted
+            (`error.code` 400, Server 20.0.0 and later).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: 400
+                  message: 'The "mode" parameter accepts only "recycle" or "permanent".'
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            `error.code` 4035 (`PD_ERRCODE_ITEM_LOCKED`): the entry is being
+            edited by another user; nothing was deleted, in either `mode`
+            (Server 20.0.0 and later). Offer to try again later.
+            `error.code` 403: no permission to delete the entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2926,6 +2991,143 @@ paths:
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
 
+  # ---------------------------------------------------------------------------
+  # Recycle bin (Server 20.0.0 and later)
+  # ---------------------------------------------------------------------------
+  /databases/{db}/recyclebin:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    get:
+      operationId: listRecycleBin
+      tags:
+        - Recycle Bin
+      summary: List the items in a database's recycle bin
+      description: |
+        Server 20.0.0 and later; detect support by the `recycle_bin` object on
+        the database (`DatabaseRecycleBinCapability`), never by calling this
+        route -- an older server answers a plain `404`.
+
+        Returns the deleted folders and entries of this database, merged in a
+        single paginated list, in the same basic representation and told apart
+        by the same `type` field as `listFolderChildren`. A deleted folder is
+        ONE row; what went down with it is not listed separately.
+
+        The list holds what the caller may see: everything the caller deleted,
+        plus, when the database's `recycle_bin.can_manage` is `true`, what
+        everybody else deleted. The items keep the ids they had, but they are
+        not addressable through the entries and folders routes -- those answer
+        `404` for them.
+      parameters:
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Paginated list of the recycle bin's items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecycleBinList"
+        "400":
+          description: |
+            Bad `offset` or `limit` (`error.code` 400).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            Database not found or not accessible to the caller; also the
+            answer of a server older than 20.0.0 (`error.code` 404).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+    delete:
+      operationId: emptyRecycleBin
+      tags:
+        - Recycle Bin
+      summary: Empty the recycle bin
+      description: |
+        Server 20.0.0 and later. Destroys what the caller can see in the bin
+        and may delete -- of the items `listRecycleBin` returns, the ones the
+        caller has the right to delete. None of them can be restored
+        afterwards; ask the user first. An item the caller may not see, or
+        may not delete, stays in the bin, and the call answers `204` all the
+        same.
+      responses:
+        "204":
+          description: The items the caller can see and may delete were destroyed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            Database not found or not accessible to the caller; also the
+            answer of a server older than 20.0.0 (`error.code` 404).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+  /databases/{db}/recyclebin/{id}:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/RecycleBinItemId"
+    delete:
+      operationId: purgeRecycleBinItem
+      tags:
+        - Recycle Bin
+      summary: Destroy one item in the recycle bin
+      description: |
+        Server 20.0.0 and later. Destroys that one item -- and, for a folder,
+        everything that went down with it. It cannot be restored afterwards;
+        ask the user first.
+      responses:
+        "204":
+          description: Item destroyed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/RecycleBinItemNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+  /databases/{db}/recyclebin/{id}/restore:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/RecycleBinItemId"
+    post:
+      operationId: restoreRecycleBinItem
+      tags:
+        - Recycle Bin
+      summary: Restore an item from the recycle bin
+      description: |
+        Server 20.0.0 and later. Puts the item back where it was deleted from;
+        when that folder is itself gone, the item is put into the database
+        root. A folder comes back with everything that went down with it.
+
+        The caller needs the right to change the folder the item returns to,
+        and gets `403` without it. The item keeps the id it had and is
+        addressable through the entries and folders routes again.
+      responses:
+        "204":
+          description: Item restored
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/RecycleBinItemNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
 # =============================================================================
 # Components
 # =============================================================================
@@ -3096,6 +3298,43 @@ components:
         maximum: 1000
         default: 100
 
+    RecycleBinItemId:
+      name: id
+      in: path
+      required: true
+      description: ID of an item in the recycle bin -- an entry or a folder
+      schema:
+        type: string
+        format: uuid
+
+    DeleteMode:
+      name: mode
+      in: query
+      required: false
+      description: |
+        Where a deleted entry or folder goes (Server 20.0.0 and later; the
+        database's `recycle_bin` object says the server honours it). Read from
+        the query string only, and compared without regard to letter case or
+        surrounding spaces.
+
+        - `recycle` (the default) -- the item is moved to the database's
+          recycle bin. It keeps its id and can be restored, from the Windows
+          client or with `restoreRecycleBinItem`. A folder moves with
+          everything inside it, as one item. When the database's
+          `recycle_bin.enabled` is `false` the item is destroyed instead,
+          which is what the Windows client does under that setting.
+        - `permanent` -- the item, and everything inside a folder, is
+          destroyed and cannot be restored.
+
+        Any other non-empty value answers `400` and deletes nothing; `mode=`
+        with no value is read as the default.
+      schema:
+        type: string
+        enum:
+          - recycle
+          - permanent
+        default: recycle
+
   # ---------------------------------------------------------------------------
   # Reusable Responses
   # ---------------------------------------------------------------------------
@@ -3146,6 +3385,22 @@ components:
             error:
               code: 404
               message: "Resource not found"
+
+    RecycleBinItemNotFound:
+      description: |
+        No item with that id in this database's recycle bin, or the caller may
+        not see it: everyone sees what they deleted themselves, and the
+        database's `recycle_bin.can_manage` says whether the caller also sees
+        what other people deleted. A database that does not exist or is not
+        accessible, and a server older than 20.0.0, answer the same way.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 404
+              message: "The recycle bin of this database holds no item with the id specified."
 
     MethodNotAllowed:
       description: |
@@ -3380,6 +3635,8 @@ components:
           readOnly: true
         icons:
           $ref: "#/components/schemas/DatabaseIconsCapability"
+        recycle_bin:
+          $ref: "#/components/schemas/DatabaseRecycleBinCapability"
 
     Database:
       description: |
@@ -3423,6 +3680,45 @@ components:
             include_server_supervisors:
               type: boolean
               description: Whether server-level supervisors can also act on this database
+
+    # --- Recycle bin ---
+    DatabaseRecycleBinCapability:
+      type: object
+      readOnly: true
+      description: |
+        Recycle-bin capability of a database (Server 20.0.0 and later);
+        `enabled` and `keep` are a server-wide setting, only `can_manage`
+        describes the current caller. Present on EVERY database object --
+        client and admin scope, list and detail. Its presence means the
+        server implements the recycle bin as a whole: the `mode` parameter
+        of `deleteEntry` and `deleteFolder`, and the routes `listRecycleBin`,
+        `restoreRecycleBinItem`, `purgeRecycleBinItem` and `emptyRecycleBin`.
+        Absent on older servers: do not send `mode`, and never call the
+        recycle-bin routes to find out.
+      required:
+        - enabled
+        - keep
+        - can_manage
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            Whether the server keeps a recycle bin. When `false`, a `recycle`
+            delete destroys the item instead of moving it, so say "delete"
+            rather than "move to the recycle bin" in the user's prompt.
+        keep:
+          type: integer
+          description: |
+            How many items the bin keeps; `0` when it is off. Beyond that
+            number the oldest items are dropped.
+          example: 1000
+        can_manage:
+          type: boolean
+          description: |
+            Whether the caller may see and act on the items OTHER people
+            deleted. Everyone may always see what they deleted themselves,
+            whatever this says; restoring and destroying still need the rights
+            the recyclebin routes describe.
 
     # --- Database icons ---
     DatabaseIconsCapability:
@@ -4906,9 +5202,12 @@ components:
                 missing second password), `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
                 licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
                 later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
-                `updateEntry` needs read permission on the entry, Server 20.0.0 and later)
-                and `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
-                cannot hold another icon, Server 20.0.0 and later)
+                `updateEntry` needs read permission on the entry, Server 20.0.0 and later),
+                `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
+                cannot hold another icon, Server 20.0.0 and later) and `4035`
+                (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry` / `deleteFolder`: the item, or
+                something inside the folder, is being edited by another user; nothing was
+                deleted, Server 20.0.0 and later)
                 with HTTP `403`;
                 `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
                 `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
@@ -5227,6 +5526,48 @@ components:
               - $ref: "#/components/schemas/Entry"
             discriminator:
               propertyName: type
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    # -------------------------------------------------------------------------
+    # Recycle-bin list
+    # -------------------------------------------------------------------------
+    RecycleBinList:
+      type: object
+      description: |
+        Paginated list of the items in a database's recycle bin (Server 20.0.0
+        and later). `data` contains a heterogeneous mix of folders and entries
+        in their basic (list) representation, distinguished by the `type`
+        field as in `ChildrenList`, and each carrying `deleted_by` besides.
+        There is no `path`: an item in the bin is no longer part of the tree,
+        and a deleted folder is one row whose contents are not listed
+        separately. The envelope contains only `data`, `total`, `offset` and
+        `limit`.
+      properties:
+        data:
+          type: array
+          items:
+            allOf:
+              - oneOf:
+                  - $ref: "#/components/schemas/FolderBasic"
+                  - $ref: "#/components/schemas/Entry"
+                discriminator:
+                  propertyName: type
+              - type: object
+                properties:
+                  deleted_by:
+                    type: string
+                    description: |
+                      Id of the user who deleted the item - the same kind of
+                      value as an entry's `author`. There is no companion
+                      timestamp: the server does not record when an item was
+                      deleted. Rows deleted by somebody else are listed only
+                      for a caller with `recycle_bin.can_manage`.
+                    example: "8c1d0f41-5b2a-4a6e-9f3d-2b7c8e5a1d04"
         total:
           type: integer
         offset:
