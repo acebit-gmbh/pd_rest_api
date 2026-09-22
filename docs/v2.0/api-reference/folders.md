@@ -25,7 +25,7 @@ Returned by list/children endpoints and create/update responses.
 | `icon` | string | No | File name of a standard icon, always `ico0.svg` to `ico134.svg`, served at [`/file/{icon}`](overview.md#entry-icons): the standard icon selected by `image_index`, otherwise the standard folder icon `ico3.svg`. When `database_icon` is set, this is `ico3.svg` and serves as the fallback. *Changed in Server 20.0.0:* earlier servers returned `ico3.svg` whatever `image_index` said, or `<image_name>.ico` for some custom icons. |
 | `database_icon` | object or null | No | The [database icon](icons.md) the folder uses: `{"id", "name", "version"}` of an icon in the folder's own database, or `null` when the folder uses a standard icon or its custom icon no longer exists. It carries no image data - fetch the image with [List Icons](icons.md#list-icons) or [Get Icon](icons.md#get-icon) and cache it by `version`. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
 | `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show (default: `"normal"`) |
-| `category` | string | Yes | Category label |
+| `category` | string | Yes | Category label. *Server 20.0.0 and later:* saving a folder with a category the database's [category list](databases.md#list-categories) does not hold adds it there -- see [How a Category Is Created](databases.md#how-a-category-is-created) |
 | `tags` | string | Yes | Tags (comma-separated) |
 | `has_second_pass` | boolean | No | Whether the folder is protected by a second password |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp (UTC, RFC 3339, trailing `Z`) |
@@ -336,7 +336,7 @@ Creates a new folder within a database. Use the `parent` query parameter to plac
 |-------|------|:--------:|-------------|
 | `name` | string | Yes | Folder name |
 | `importance` | string | No | `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show. Any other string is stored as `"normal"` (default: `"normal"`) |
-| `category` | string | No | Category label |
+| `category` | string | No | Category label. *Server 20.0.0 and later:* a value the database's [category list](databases.md#list-categories) does not already hold is added to that list -- see [How a Category Is Created](databases.md#how-a-category-is-created) |
 | `tags` | string | No | Tags (comma-separated) |
 | `comments` | string | No | Folder comments/notes |
 | `image_custom`, `image_index`, `image_name` | boolean, integer, string | No | The folder's icon: a [database icon](icons.md) or one of the 135 standard icons. Omit all three for the standard folder icon. Refused with `400` / `4007` when they do not name a usable icon; servers older than 20.0.0 store any value. See [Assigning an icon](#assigning-an-icon). |
@@ -432,6 +432,10 @@ Updates an existing folder. Include only the fields you want to update.
     "comments": "Updated server credentials folder"
 }
 ```
+
+#### Category (`category`)
+
+*Server 20.0.0 and later.* A `category` the database's [category list](databases.md#list-categories) does not already hold is added to that list, so that every editor offers it from then on -- the same thing a save in the Windows client does. The match ignores letter case, the name is trimmed before it is added, a blank value adds nothing, and no route in this API removes a name from the list - a Password Depot client can remove one. A `PATCH` adds the category the item carries after the write, whether or not the body sent one, so saving an older item puts its category in the list. Entries do it too, through [Create Entry](entries.md#create-entry) and [Update Entry](entries.md#update-entry). The write itself is unaffected: the `category` is stored exactly as it was sent, the response is the same, and nothing is refused for it. See [How a Category Is Created](databases.md#how-a-category-is-created).
 
 #### Assigning an icon
 

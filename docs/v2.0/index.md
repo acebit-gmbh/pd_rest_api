@@ -76,7 +76,7 @@ v2.0 groups its endpoints by resource, separated into client and admin scopes:
 |----------|-------------|
 | [Auth](api-reference/authentication.md) | Login, logout, OIDC discovery, WebAuthn begin/complete |
 | [Profile (`/me`)](api-reference/users.md#user-profile) | Get profile; change own password; manage own passkeys (list/register/rename/delete) |
-| [Databases](api-reference/databases.md#client-endpoints) | List and read accessible databases |
+| [Databases](api-reference/databases.md#client-endpoints) | List and read accessible databases; read the category list a database carries (Server 20.0.0 and later) |
 | [Folders](api-reference/overview.md#folders) | Folder management within databases |
 | [Entries](api-reference/overview.md#entries) | Password entry CRUD, move, and document content |
 | [Recycle Bin](api-reference/recyclebin.md) | List, restore and destroy deleted entries and folders (Server 20.0.0 and later) |

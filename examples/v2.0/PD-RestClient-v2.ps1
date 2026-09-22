@@ -177,6 +177,30 @@ function Get-PDDatabase {
     }
 }
 
+function Get-PDDatabaseCategories {
+    <#
+    .SYNOPSIS
+        Lists the category names a database carries - the picker its entry and
+        folder editors offer. Returns the envelope (.data, .total); .data is a
+        sorted array of strings and always the whole list, so there is no
+        offset and no limit on this route.
+
+        Read-only: a category is created by saving an entry or a folder with
+        it (New-PDEntry / Set-PDEntry / New-PDFolder / Set-PDFolder). The match
+        ignores letter case, and nothing removes a name from the list.
+
+        Server 20.0.0 and later. The route itself is the feature test - there
+        is no capability object for it, and a server without the route answers
+        404, as does a database you cannot reach.
+    #>
+    param(
+        [Parameter(Mandatory)] [PSCustomObject] $Session,
+        [Parameter(Mandatory)] [string] $DatabaseId
+    )
+    # Always the client path: categories live under /databases, in both scopes.
+    return Invoke-PDRequest -Session $Session -Path "/databases/$DatabaseId/categories"
+}
+
 # --- Folders ---
 
 function Get-PDChildren {

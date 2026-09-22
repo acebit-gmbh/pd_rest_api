@@ -30,7 +30,7 @@ Returned by list/children and search endpoints.
 | `icon` | string | No | File name of a standard icon, always `ico0.svg` to `ico134.svg`, served at [`/file/{icon}`](overview.md#entry-icons): the standard icon selected by `image_index`, otherwise the standard icon of the entry's type (see [Assigning an Icon](#assigning-an-icon)). When `database_icon` is set, this is the icon of the entry's type and serves as the fallback. *Changed in Server 20.0.0:* earlier servers returned the icon of the entry's type whatever `image_index` said, or `<image_name>.ico` for some custom icons. |
 | `database_icon` | object or null | No | The [database icon](icons.md) the entry uses: `{"id", "name", "version"}` of an icon in the entry's own database, or `null` when the entry uses a standard icon or its custom icon no longer exists. It carries no image data - fetch the image with [List Icons](icons.md#list-icons) or [Get Icon](icons.md#get-icon) and cache it by `version`. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
 | `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show (default: `"normal"`) |
-| `category` | string | Yes | Category label |
+| `category` | string | Yes | Category label. *Server 20.0.0 and later:* saving an entry with a category the database's [category list](databases.md#list-categories) does not hold adds it there -- see [How a Category Is Created](databases.md#how-a-category-is-created) |
 | `tags` | string | Yes | Tags (comma-separated) |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp |
 | `expires_at` | string (ISO 8601) or null | No | Expiration date, or `null` if not set |
@@ -590,7 +590,7 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 | `pass` | string | No | Password |
 | `url` | string | No | Primary URL |
 | `importance` | string | No | `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show. Any other string is stored as `"normal"` (default: `"normal"`) |
-| `category` | string | No | Category label |
+| `category` | string | No | Category label. *Server 20.0.0 and later:* a value the database's [category list](databases.md#list-categories) does not already hold is added to that list -- see [How a Category Is Created](databases.md#how-a-category-is-created) |
 | `tags` | string | No | Tags (comma-separated) |
 | `comments` | string | No | Comments/notes |
 | `custom_fields` | array of objects | No | Custom fields, for `password` and `custom` types (see [Custom Field Object](#custom-field-object)) |
@@ -773,6 +773,10 @@ The `totp` key writes the entry's one-time-code (TOTP) settings. It has four for
 
 !!! note "A refused one-time-code write is never `409`"
     A refused `totp` answers `400` (`error.code` `4001` to `4006`), `403` (`403`, `4031` or `4033`) or `501` - never `409`. `409` on this route keeps its one meaning: the body tried to write a link's `custom_fields` or type sub-object through the link. A `totp` write on a link is allowed and changes the link's own settings.
+
+#### Category (`category`)
+
+*Server 20.0.0 and later.* A `category` the database's [category list](databases.md#list-categories) does not already hold is added to that list, so that every editor offers it from then on -- the same thing a save in the Windows client does. The match ignores letter case, the name is trimmed before it is added, a blank value adds nothing, and no route in this API removes a name from the list - a Password Depot client can remove one. A `PATCH` adds the category the item carries after the write, whether or not the body sent one, so saving an older item puts its category in the list. Folders do it too. The write itself is unaffected: the `category` is stored exactly as it was sent, the response is the same, and nothing is refused for it. See [How a Category Is Created](databases.md#how-a-category-is-created).
 
 #### Icon (`image_custom`, `image_index`, `image_name`)
 

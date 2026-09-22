@@ -166,7 +166,7 @@ tags:
   - name: Self-Service
     description: Endpoints the current user can call on their own account (profile, password, passkeys)
   - name: Databases
-    description: Client database access
+    description: Client database access, including the database's own category list
   - name: Folders
     description: Folder management within a database
   - name: Entries
@@ -3128,6 +3128,72 @@ paths:
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
 
+  # ---------------------------------------------------------------------------
+  # Categories (Server 20.0.0 and later)
+  #
+  # One read-only route, kept under the Databases tag rather than given a tag of
+  # its own: it returns metadata of the database itself and belongs beside
+  # getDatabase. Icons and Recycle Bin earned tags because each is a resource
+  # with several routes, writes and a capability object; this is neither.
+  # ---------------------------------------------------------------------------
+  /databases/{db}/categories:
+    parameters:
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    get:
+      operationId: listDatabaseCategories
+      tags:
+        - Databases
+      summary: List the category names of a database
+      description: |
+        Server 20.0.0 and later. Returns the database's own category list -- the
+        names the Windows client offers in the picker of its entry and folder
+        editors, kept in the database file -- as plain strings, sorted and
+        without duplicates. A database that has none answers
+        `{"data": [], "total": 0}`.
+
+        NOT paginated, deliberately: `offset` and `limit` are not read here and
+        the envelope carries `data` and `total` only. An editor needs the whole
+        list, and it is a handful of short strings.
+
+        Detect support by calling this route, not by a capability object: unlike
+        `listDatabaseIcons` (`icons`) and `listRecycleBin` (`recycle_bin`), this
+        one has no marker on the database object. A server older than 20.0.0
+        answers a plain `404`, which is also the answer for a database that is
+        not there or not accessible, so make the call on a database you have
+        already read and keep the answer for the session.
+
+        Read-only. A name reaches the list by being saved on an item: see
+        `createEntry`, `updateEntry`, `createFolder` and `updateFolder`, whose
+        `category` adds itself to this list when the list does not already hold
+        it. No route edits the list, and no route here removes a name - a
+        Password Depot client can remove one, so a name can disappear between
+        two reads.
+
+        Rights: whoever may open the database. This is metadata about the
+        database, like the icon list -- it names no entry and says nothing about
+        who may read one. Works in `client` and `admin` sessions alike, and on a
+        mirror server.
+      responses:
+        "200":
+          description: The category names of the database
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseCategoryList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            Database not found or not accessible to the caller, or a further
+            path segment after `/categories`; also the answer of a server older
+            than 20.0.0 (`error.code` 404).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
 # =============================================================================
 # Components
 # =============================================================================
@@ -3967,6 +4033,14 @@ components:
           description: Importance level ("low", "normal" or "high"), the same level the Windows, macOS, iOS and Android clients show; any other string is stored as "normal"
         category:
           type: string
+          description: |
+            Category label. From Server 20.0.0 on, saving a folder with a
+            category the database's category list does not already hold adds it
+            to that list (see `listDatabaseCategories`): the value is trimmed
+            for the list, a blank one adds nothing, the match ignores letter
+            case so another spelling of a name already in the list changes
+            nothing, and no route here removes a name from the list. The folder keeps
+            the value exactly as it was sent.
         tags:
           type: string
           description: Comma-separated tag list
@@ -4101,6 +4175,14 @@ components:
           description: Importance level ("low", "normal" or "high"), the same level the Windows, macOS, iOS and Android clients show; any other string is stored as "normal"
         category:
           type: string
+          description: |
+            Category label. From Server 20.0.0 on, saving an entry with a
+            category the database's category list does not already hold adds it
+            to that list (see `listDatabaseCategories`): the value is trimmed
+            for the list, a blank one adds nothing, the match ignores letter
+            case so another spelling of a name already in the list changes
+            nothing, and no route here removes a name from the list. The entry keeps
+            the value exactly as it was sent.
         tags:
           type: string
           description: Comma-separated tag list
@@ -5574,3 +5656,33 @@ components:
           type: integer
         limit:
           type: integer
+
+    # -------------------------------------------------------------------------
+    # Category list
+    # -------------------------------------------------------------------------
+    DatabaseCategoryList:
+      type: object
+      description: |
+        The category names a database carries (Server 20.0.0 and later).
+        Deliberately not the standard paginated envelope: it holds `data` and
+        `total` only, there is no `offset` and no `limit`, and `data` is always
+        the whole list.
+      required:
+        - data
+        - total
+      properties:
+        data:
+          type: array
+          description: |
+            The category names as plain strings, sorted and without duplicates;
+            empty for a database that has no category.
+          items:
+            type: string
+          example:
+            - Banking
+            - Internet
+            - Social
+        total:
+          type: integer
+          description: Number of names in `data`
+          example: 3

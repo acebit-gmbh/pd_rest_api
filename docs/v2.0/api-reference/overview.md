@@ -370,6 +370,7 @@ All paths below are relative to the base URL (`/v2.0/`).
 |--------|------|-------------|:-----:|
 | `GET` | [`/databases`](databases.md#list-databases) | List accessible databases | Any |
 | `GET` | [`/databases/{id}`](databases.md#get-database) | Get database details | Any |
+| `GET` | [`/databases/{db}/categories`](databases.md#list-categories) | List the category names the database carries | Any |
 
 ### Navigation (Children)
 

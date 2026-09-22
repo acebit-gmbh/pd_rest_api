@@ -4,7 +4,7 @@ Reference for database endpoints. Databases are accessible in both **client** an
 
 | Scope | Endpoints | Description |
 |-------|-----------|-------------|
-| Client | `GET /v2.0/databases`, `GET /v2.0/databases/{id}` | Read-only access to databases the user has permissions on |
+| Client | `GET /v2.0/databases`, `GET /v2.0/databases/{id}`, `GET /v2.0/databases/{db}/categories` | Read-only access to databases the user has permissions on, and to the category list a database carries |
 | Admin | `GET/POST /v2.0/admin/databases`, `GET/PATCH/DELETE /v2.0/admin/databases/{id}` | Full CRUD on all server databases |
 
 ---
@@ -196,6 +196,107 @@ Returns details of a specific database that the user has access to. Returns the 
     curl -X GET "https://<server>:8714/v2.0/databases/E79BDEB2-1A58-4715-B74C-28A87A2AFD37" \
         -H "Authorization: Bearer <token>"
     ```
+
+---
+
+## Categories
+
+*Server 20.0.0 and later.*
+
+A database carries its own list of **category names** -- the picker the Windows client offers in its entry and folder editors, kept in the database file. [List Categories](#list-categories) reads it; there is no route that writes it, because a name reaches the list by being saved on an item (see [How a Category Is Created](#how-a-category-is-created)).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | [`/v2.0/databases/{db}/categories`](#list-categories) | The category names the database carries |
+
+!!! note "Detecting support"
+    Categories have **no capability object** on the database object, the way [`icons`](#icons-capability) and [`recycle_bin`](#recycle-bin-capability) do: the route itself is the test. A server older than 20.0.0 answers a plain `404` -- and so does a database that does not exist or that you may not reach, so make the call on a database you have already read, and re-read it when an editor opens rather than keeping it for the session: a name can be removed in a Password Depot client, and another client can add one
+
+### List Categories
+
+```
+GET /v2.0/databases/{db}/categories
+```
+
+Returns the category names of the database, as plain strings, sorted and without duplicates. This is metadata about the database, like the [icon list](icons.md): it names no entry, and it says nothing about who may read one. Whoever may open the database may read it: in a `client` session everyone with the database-level `use` right, in an `admin` session everyone who manages the database. A database the caller cannot reach answers `404`, exactly as elsewhere in this scope.
+
+The list is **not paginated**. There is no `offset` and no `limit` on this route, and `data` is always the whole list -- an entry editor needs all of it, and it is a handful of short strings even in a large database.
+
+#### Path Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `db` | string (UUID) | Yes | Database ID |
+
+#### Response
+
+`200 OK`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data` | array of strings | The category names, sorted and without duplicates |
+| `total` | integer | Number of names in `data` |
+
+```json
+{
+    "data": ["Banking", "Internet", "Social"],
+    "total": 3
+}
+```
+
+A database with no category answers the same envelope, empty:
+
+```json
+{
+    "data": [],
+    "total": 0
+}
+```
+
+#### Error Responses
+
+| Status | `error.code` | Meaning |
+|:------:|:------------:|---------|
+| `401` | `401` | Missing or invalid authentication token |
+| `404` | `404` | Database not found or not accessible to you, or a path segment after `/categories`. Also the answer of a server older than 20.0.0 |
+| `405` | `405` | Method other than `GET` (`Allow: GET`) |
+
+#### Examples
+
+=== "curl"
+
+    ```bash
+    curl -X GET "https://<server>:8714/v2.0/databases/E79BDEB2-1A58-4715-B74C-28A87A2AFD37/categories" \
+        -H "Authorization: Bearer <token>"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . .\PD-RestClient-v2.ps1
+    $session = Connect-PDServer -Server "<server>" -Username "<user>" -Password "<password>"
+    $db = "E79BDEB2-1A58-4715-B74C-28A87A2AFD37"
+
+    (Get-PDDatabaseCategories -Session $session -DatabaseId $db).data
+    ```
+
+---
+
+### How a Category Is Created
+
+*Server 20.0.0 and later.*
+
+A category is created by **saving an item with it**. Create or update an [entry](entries.md#create-entry) or a [folder](folders.md#create-folder) with a `category` this list does not already hold, and the name is added to the list. The write itself is unaffected: nothing is refused for it, no response field changes, and no permission beyond the one the write already needs is involved.
+
+| Rule | What it means |
+|------|---------------|
+| **Entries and folders both** | [Create Entry](entries.md#create-entry), [Update Entry](entries.md#update-entry), [Create Folder](folders.md#create-folder) and [Update Folder](folders.md#update-folder) all add the name |
+| **The match ignores letter case** | Sending `"banking"` where the list holds `"Banking"` adds nothing and changes nothing: the list keeps its own spelling. The item keeps the spelling you sent, so the two can differ -- compare them without regard to case |
+| **An update adds it even when the body is silent** | A `PATCH` adds the item's category as it stands after the write, so an item whose category predates this and is missing from the list puts it there the next time the item is saved |
+| **Trimmed; blanks add nothing** | Surrounding spaces are removed before the name is added. An empty `category`, or one of spaces only, adds nothing |
+| **No route here removes a name** | Deleting the last entry or folder of a category leaves the category in the list, and no route in this API removes a name. A Password Depot client can remove one, so a name can disappear between two reads |
+
+A client that shows a category picker should re-read [List Categories](#list-categories) after it has saved an item with a category the list did not hold, or add the name to its own copy of the list in the spelling this route returns.
 
 ---
 

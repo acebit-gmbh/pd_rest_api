@@ -4,12 +4,15 @@
 
 .DESCRIPTION
     Tests the full API lifecycle: authentication, databases, folders, entries,
-    database icons, the recycle bin, search, users, groups, alerts, permissions,
-    and /me endpoint.
+    database icons, the category list, the recycle bin, search, users, groups,
+    alerts, permissions, and /me endpoint.
 
     The database-icon suite (4c, Server 20.0.0 or later) stores two small test
     icons in the test database on its first run. REST cannot delete icons, so
-    they stay; later runs reuse them. Use a dedicated test database.
+    they stay; later runs reuse them. The category suite (4e) is the same kind
+    of suite: nothing removes a name from a database's category list, so it
+    adds two fixed names on its first run and finds them again afterwards.
+    Use a dedicated test database.
 
     Entries and folders the suite creates are deleted with mode=permanent
     wherever the server reads it, so a run leaves nothing in the test
@@ -1525,6 +1528,177 @@ else {
     if ($binEntryId) {
         try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $binEntryId @purge } catch {}
         try { Remove-PDRecycleBinItem -Session $adminSession -DatabaseId $testDbId -ItemId $binEntryId } catch {}
+    }
+}
+
+$totalFailures += Write-TestSummary
+
+# ============================================================
+#  4e. DATABASE CATEGORIES (Server 20.0.0+)
+# ============================================================
+#
+# The category list has no capability object on the database - the route
+# itself is the marker. The probe below is the one place in this file where a
+# 404 is read as "the server does not have the route" rather than as "no such
+# database": it runs on $testDbId, which suite 2 has already read.
+#
+# Nothing removes a name from a category list, so this suite works like the
+# icon suite: FIXED names, added on the first run against a database and found
+# again on every later one. Use a dedicated test database.
+
+Start-TestSuite "Database Categories"
+
+$catList = $null
+$catSupported = $false
+$catEntryCategory = "PD-Rest-Api-Test"          # mixed case on purpose: 4e.6 re-sends it in lower case
+$catFolderCategory = "PD-Rest-Api-Test-Folder"
+$catStoredSpelling = $null
+$catEntryId = $null
+$catFolderId = $null
+
+if (-not $testDbId) {
+    Start-Test "All category tests"
+    Skip-Test "No database available"
+} else {
+    # 4e.1 The route is the feature test
+    Start-Test "Categories: GET /categories (the route is the feature test)"
+    try {
+        $catList = Get-PDDatabaseCategories -Session $adminSession -DatabaseId $testDbId
+        $catSupported = $true
+        if (Assert-True ($null -ne $catList.PSObject.Properties['data']) "data") {
+            Pass-Test "total=$($catList.total)"
+        }
+    } catch {
+        $info = Get-HttpErrorInfo $_
+        if ($info.Status -eq 404) {
+            Skip-Test "No /categories route (server older than 20.0.0)"
+        } else {
+            Fail-Test $_.Exception.Message
+        }
+    }
+}
+
+if ($catSupported) {
+    # 4e.2 The envelope: 'data' and 'total' only, and they agree. The list is
+    # deliberately not paginated, so 'offset' and 'limit' must not be there.
+    Start-Test "Categories: envelope is data + total, not a page"
+    $names = @($catList.data)
+    $ok = (Assert-Equal $names.Count $catList.total "total matches the number of names") -and
+          (Assert-True ($null -eq $catList.PSObject.Properties['offset']) "no 'offset' in the envelope") -and
+          (Assert-True ($null -eq $catList.PSObject.Properties['limit']) "no 'limit' in the envelope") -and
+          (Assert-True (@($names | Where-Object { $_ -isnot [string] }).Count -eq 0) "every name is a plain string")
+    if ($ok) { Pass-Test "$($names.Count) name(s)" }
+
+    # 4e.3 Sorted, and no name twice (the match ignores case, so neither does this)
+    Start-Test "Categories: sorted and without duplicates"
+    $names = @($catList.data)
+    $sorted = @($names | Sort-Object)
+    $unique = @($names | Sort-Object -Unique)
+    $ok = (Assert-Equal ($sorted -join "|") ($names -join "|") "the list comes back sorted") -and
+          (Assert-Equal $names.Count $unique.Count "no name appears twice")
+    if ($ok) { Pass-Test }
+
+    # 4e.4 Saving an entry with a category the list does not hold adds it there
+    Start-Test "Categories: an entry's category reaches the list"
+    try {
+        $catEntry = New-PDEntry -Session $adminSession -DatabaseId $testDbId -ParentId $testFolderId -Fields @{
+            type     = "password"
+            name     = "CategoryTest_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+            login    = "testuser"
+            pass     = "S3cureP@ss!"
+            category = $catEntryCategory
+        }
+        if (Assert-NotNull $catEntry.id "id") {
+            $catEntryId = $catEntry.id
+            $after = Get-PDDatabaseCategories -Session $adminSession -DatabaseId $testDbId
+            $catStoredSpelling = @($after.data) | Where-Object { $_ -eq $catEntryCategory } | Select-Object -First 1
+            if (Assert-NotNull $catStoredSpelling "the category is in the list") {
+                Pass-Test "stored as '$catStoredSpelling', total=$($after.total)"
+            }
+        }
+    } catch { Fail-Test $_.Exception.Message }
+
+    # 4e.5 A folder does it too
+    Start-Test "Categories: a folder's category reaches the list"
+    try {
+        $catFolder = New-PDFolder -Session $adminSession -DatabaseId $testDbId -ParentId $testFolderId `
+            -Name "CategoryTest_$(Get-Date -Format 'yyyyMMdd_HHmmss')" -Category $catFolderCategory
+        if (Assert-NotNull $catFolder.id "id") {
+            $catFolderId = $catFolder.id
+            $after = Get-PDDatabaseCategories -Session $adminSession -DatabaseId $testDbId
+            $hit = @($after.data) | Where-Object { $_ -eq $catFolderCategory } | Select-Object -First 1
+            if (Assert-NotNull $hit "the folder's category is in the list") { Pass-Test "stored as '$hit'" }
+        }
+    } catch { Fail-Test $_.Exception.Message }
+
+    # 4e.6 Another letter case adds nothing, and the list keeps its own spelling
+    Start-Test "Categories: a different letter case adds nothing"
+    if ($catEntryId -and $catStoredSpelling) {
+        try {
+            $before = Get-PDDatabaseCategories -Session $adminSession -DatabaseId $testDbId
+            $lower = $catEntryCategory.ToLowerInvariant()
+            Set-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $catEntryId -Fields @{ category = $lower } | Out-Null
+            $after = Get-PDDatabaseCategories -Session $adminSession -DatabaseId $testDbId
+            $still = @($after.data) | Where-Object { $_ -eq $catEntryCategory } | Select-Object -First 1
+            # -ceq: the list must still carry the spelling it stored, not the one just sent
+            $ok = (Assert-Equal $before.total $after.total "the list did not grow") -and
+                  (Assert-True ($still -ceq $catStoredSpelling) "the list kept its own spelling '$catStoredSpelling'")
+            if ($ok) {
+                # ... while the entry carries the spelling it was sent
+                $saved = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $catEntryId
+                if (Assert-True ($saved.category -ceq $lower) "the entry kept the spelling it was sent") {
+                    Pass-Test "list '$still', entry '$($saved.category)'"
+                }
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Entry not created" }
+
+    # 4e.7 Nothing removes a name: the items go, the categories stay
+    Start-Test "Categories: deleting the items leaves the names"
+    $hadCatEntry = [bool] $catEntryId
+    $hadCatFolder = [bool] $catFolderId
+    if ($hadCatEntry -or $hadCatFolder) {
+        try {
+            if ($catEntryId) {
+                Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $catEntryId @purge
+                $catEntryId = $null
+            }
+            if ($catFolderId) {
+                Remove-PDFolder -Session $adminSession -DatabaseId $testDbId -FolderId $catFolderId @purge
+                $catFolderId = $null
+            }
+            $after = Get-PDDatabaseCategories -Session $adminSession -DatabaseId $testDbId
+            $expectName = if ($catStoredSpelling) { $catStoredSpelling } else { $catEntryCategory }
+            $ok = $true
+            if ($hadCatEntry) {
+                $ok = (Assert-Contains @($after.data) $expectName "the entry's category is still listed") -and $ok
+            }
+            if ($hadCatFolder) {
+                $ok = (Assert-Contains @($after.data) $catFolderCategory "the folder's category is still listed") -and $ok
+            }
+            if ($ok) { Pass-Test "total=$($after.total)" }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Nothing was created" }
+
+    # 4e.8 A leaf endpoint: /categories/anything is not a route
+    Start-Test "Categories: /categories/anything -> 404"
+    if (Assert-HttpError -ExpectedCode 404 -Action {
+        Invoke-PDRequest -Session $adminSession -Path "/databases/$testDbId/categories/anything"
+    }) { Pass-Test "404 as expected" }
+
+    # 4e.9 GET only. (A mirror server answers 403 to any non-GET before the
+    # method is looked at; these tests run against a primary.)
+    Start-Test "Categories: POST /categories -> 405"
+    if (Assert-HttpError -ExpectedCode 405 -Action {
+        Invoke-PDRequest -Session $adminSession -Path "/databases/$testDbId/categories" -Method POST -Body "{}"
+    }) { Pass-Test "405 as expected" }
+
+    # Whatever failed above, this suite's items must not be left behind
+    if ($catEntryId) {
+        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $catEntryId @purge } catch {}
+    }
+    if ($catFolderId) {
+        try { Remove-PDFolder -Session $adminSession -DatabaseId $testDbId -FolderId $catFolderId @purge } catch {}
     }
 }
 
