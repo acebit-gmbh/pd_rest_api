@@ -39,6 +39,10 @@ mkdocs serve -f mkdocs.v2.yml
   or response, update both the Markdown reference under `docs/<version>/` and the
   matching `openapi/<version>/openapi.yaml`. The OpenAPI spec is consumed by
   tooling (including the Server Manager), so drift between them is a bug.
+- **Do not count things in prose or tables.** No "75 endpoints", no "13 resource
+  types", no per-resource totals, no number of tests. Every such figure goes
+  stale the next time an endpoint is added and has to be found and corrected by
+  hand, which is how they end up wrong. Name what is there instead of how many.
 - **Use neutral placeholders — never real data.** Hosts must be `your-server` or a
   `*.example.com` name; emails and domains use `example.com`; sample IP addresses
   use the RFC 5737 ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`).

@@ -50,7 +50,7 @@ New to the REST API? Start here:
 | Resource | Description |
 |----------|-------------|
 | [Getting Started](getting-started/setup.md) | Server setup, authentication, and first API call |
-| [API Reference](api-reference/overview.md) | Complete endpoint documentation for all 75 endpoints |
+| [API Reference](api-reference/overview.md) | Complete documentation of every endpoint |
 | [OpenAPI Specification](openapi.yaml) | Machine-readable API spec for code generation and tooling |
 | [Changelog](changelog.md) | Version history and breaking changes |
 | [v1.0 Documentation](../v1.0/) | Legacy API, served by Server 19.x and earlier only |
@@ -68,29 +68,29 @@ https://<YOUR_SERVER>:8714/v2.0/
 
 ## API at a Glance
 
-v2.0 provides **75 endpoints** across **13 resource types**, separated into client and admin scopes:
+v2.0 groups its endpoints by resource, separated into client and admin scopes:
 
 **Client Endpoints** (accessible with any session):
 
-| Resource | Endpoints | Description |
-|----------|:---------:|-------------|
-| [Auth](api-reference/authentication.md) | 5 | Login, logout, OIDC discovery, WebAuthn begin/complete |
-| [Profile (`/me`)](api-reference/users.md#user-profile) | 7 | Get profile; change own password; manage own passkeys (list/register/rename/delete) |
-| [Databases](api-reference/databases.md#client-endpoints) | 2 | List and read accessible databases |
-| [Folders](api-reference/overview.md#folders) | 5 | Folder management within databases |
-| [Entries](api-reference/overview.md#entries) | 8 | Password entry CRUD, move, and document content |
-| [Recycle Bin](api-reference/recyclebin.md) | 4 | List, restore and destroy deleted entries and folders (Server 20.0.0 and later) |
-| [Database Icons](api-reference/icons.md) | 3 | List, fetch and upload the icons stored in a database (Server 20.0.0 and later) |
-| [Search](api-reference/overview.md#search) | 1 | Search within a database |
-| [Secrets](api-reference/secrets.md) | 7 | Create, list, get, delete own secrets; approve, reject, revoke |
+| Resource | Description |
+|----------|-------------|
+| [Auth](api-reference/authentication.md) | Login, logout, OIDC discovery, WebAuthn begin/complete |
+| [Profile (`/me`)](api-reference/users.md#user-profile) | Get profile; change own password; manage own passkeys (list/register/rename/delete) |
+| [Databases](api-reference/databases.md#client-endpoints) | List and read accessible databases |
+| [Folders](api-reference/overview.md#folders) | Folder management within databases |
+| [Entries](api-reference/overview.md#entries) | Password entry CRUD, move, and document content |
+| [Recycle Bin](api-reference/recyclebin.md) | List, restore and destroy deleted entries and folders (Server 20.0.0 and later) |
+| [Database Icons](api-reference/icons.md) | List, fetch and upload the icons stored in a database (Server 20.0.0 and later) |
+| [Search](api-reference/overview.md#search) | Search within a database |
+| [Secrets](api-reference/secrets.md) | Create, list, get, delete own secrets; approve, reject, revoke |
 
 **Admin Endpoints** (require `"scope": "admin"` at login):
 
-| Resource | Endpoints | Description |
-|----------|:---------:|-------------|
-| [Databases](api-reference/databases.md#admin-endpoints) | 5 | Full database CRUD (all server databases) |
-| [Permissions](api-reference/permissions.md) | 5 | Access control management |
-| [Users](api-reference/users.md) | 8 | User administration, password management, and passkey revocation |
-| [Groups](api-reference/groups.md) | 5 | Group administration |
-| [Alerts](api-reference/alerts.md) | 5 | Alert management |
-| [Secrets](api-reference/secrets.md) | 5 | Full CRUD + workflow on all secrets |
+| Resource | Description |
+|----------|-------------|
+| [Databases](api-reference/databases.md#admin-endpoints) | Full database CRUD (all server databases) |
+| [Permissions](api-reference/permissions.md) | Access control management |
+| [Users](api-reference/users.md) | User administration, password management, and passkey revocation |
+| [Groups](api-reference/groups.md) | Group administration |
+| [Alerts](api-reference/alerts.md) | Alert management |
+| [Secrets](api-reference/secrets.md) | Full CRUD + workflow on all secrets |
