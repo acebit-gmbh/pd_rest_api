@@ -3160,7 +3160,9 @@ paths:
         one has no marker on the database object. A server older than 20.0.0
         answers a plain `404`, which is also the answer for a database that is
         not there or not accessible, so make the call on a database you have
-        already read and keep the answer for the session.
+        already read. Re-read the list when an editor opens rather than keeping
+        it for the whole session: a name can be removed in a Password Depot
+        client, and another client can add one.
 
         Read-only. A name reaches the list by being saved on an item: see
         `createEntry`, `updateEntry`, `createFolder` and `updateFolder`, whose
