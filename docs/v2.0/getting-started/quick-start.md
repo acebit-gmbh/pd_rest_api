@@ -146,6 +146,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/children?offset=0&li
       "totp": {
         "state": "none"
       },
+      "warning": null,
       "login": "devteam",
       "url": "https://github.com",
       "icon": "ico12.svg",
@@ -165,6 +166,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/children?offset=0&li
       "totp": {
         "state": "none"
       },
+      "warning": null,
       "login": "admin@company.com",
       "url": "https://console.aws.amazon.com",
       "icon": "ico5.svg",
@@ -208,6 +210,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries/$ENTRY" \
     "state": "none",
     "writable": true
   },
+  "warning": null,
   "login": "devteam",
   "url": "https://github.com",
   "login_id": "",
@@ -279,6 +282,7 @@ curl -k -X POST "https://YOUR_SERVER:8714/v2.0/databases/$DB/entries" \
   "totp": {
     "state": "none"
   },
+  "warning": null,
   "login": "admin@company.com",
   "url": "https://company.slack.com",
   "icon": "ico0.svg",
@@ -329,6 +333,7 @@ Returns the compact representation of the updated entry.
   "totp": {
     "state": "none"
   },
+  "warning": null,
   "login": "admin@company.com",
   "url": "https://company.slack.com",
   "icon": "ico0.svg",

@@ -6,7 +6,7 @@ Official documentation and examples for the **Password Depot Enterprise Server**
 
 | Version | Status | Server support | Documentation | OpenAPI Spec |
 |---------|--------|----------------|---------------|--------------|
-| **v2.0** | **Recommended** | Server **19.1.0 and later** (documented as served by 19.2.0 and later), including **20.0.0 and later** | [docs/v2.0/](docs/v2.0/) | [openapi/v2.0/openapi.yaml](openapi/v2.0/openapi.yaml) |
+| **v2.0** | **Recommended** | Server **19.1.0 and later** (documented as served by 19.2.0 and later), including **20.0.0 and later** -- see [Version History](#version-history) | [docs/v2.0/](docs/v2.0/) | [openapi/v2.0/openapi.yaml](openapi/v2.0/openapi.yaml) |
 | **v1.0** | Legacy | Server **19.x and earlier** -- **not available in 20.0.0 or later** | [docs/v1.0/](docs/v1.0/) | [openapi/v1.0/openapi.yaml](openapi/v1.0/openapi.yaml) |
 
 v1.0 is closed to new development and is documented here for the servers that
@@ -45,6 +45,15 @@ changes between the two.
 
 See the [v2.0 changelog](docs/v2.0/changelog.md) for the full list of changes vs v1.0.
 
+## Version History
+
+The Password Depot Enterprise Server versions from 19.0.0 on that change the REST API, newest first. The [v2.0 changelog](docs/v2.0/changelog.md) has the details; on servers before 19.0.0 the REST API is v1.0 only (see the [v1.0 changelog](docs/v1.0/changelog.md)).
+
+- **20.0.0** -- Serves REST API v2.0 only: v1.0 is removed, and `/v1.0/...` answers `410 Gone`. v2.0 adds one-time codes (`GET .../entries/{id}/otp`, and TOTP settings read and written through `totp`), a recycle bin, database icons, database categories, and a read-only conditional-access `warning` on every entry; changes to existing behavior are marked **(Behavior Change)** in the changelog
+- **19.2.0** -- Audit export over v2.0 (`GET /admin/audit`, NDJSON); timestamps are true UTC instants; search leaves out the desktop-only entry types `encrypted_file` and `certificate`; a `403` for a wrong second password carries `error.code` `4031`
+- **19.1.0** -- REST API v2.0 introduced beside v1.0, with long-lived API tokens for automation
+- **19.0.0 to 19.0.4** -- REST API v1.0 only
+
 ## Overview
 
 Password Depot Enterprise Server provides a RESTful HTTPS interface for lightweight client access. This repository holds the **public documentation, examples, and OpenAPI specifications** for that API -- it does not contain the server's source code, which ships as part of Password Depot Enterprise Server. Specifically, it contains:
@@ -82,7 +91,7 @@ The [Password Depot Web Client](https://github.com/acebit-gmbh/web_client_2) is 
 
 ## Prerequisites
 
-- Password Depot Enterprise Server **v19.1.0 or later** for the v2.0 API. This documentation describes 19.2.0 and later; some endpoints, such as `GET /admin/audit`, need 19.2.0. The v1.0 API is present in **19.x and earlier** only -- it was removed in **20.0.0**
+- Password Depot Enterprise Server **v19.1.0 or later** for the v2.0 API. This documentation describes 19.2.0 and later; some features need a later version -- `GET /admin/audit`, for example, needs 19.2.0, and the [Version History](#version-history) names the main additions of each version. The v1.0 API is present in **19.x and earlier** only -- it was removed in **20.0.0**
 - REST Web Service enabled in Server Manager
 - Valid SSL certificate configured
 - Default port: **8714** (configurable via `pdserver.ini`)

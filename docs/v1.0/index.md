@@ -4,7 +4,7 @@ Welcome to the official documentation for the **Password Depot Enterprise Server
 
 
 !!! tip "API v2.0 Available"
-    A new version of the REST API is in development with RESTful resource-based URLs, standard Bearer token authentication, native JSON types, pagination, and full server administration capabilities. See the [v2.0 documentation](../v2.0/) for details.
+    REST API v2.0 is available from Password Depot Enterprise Server 19.1.0, with RESTful resource-based URLs, standard Bearer token authentication, native JSON types, pagination, and full server administration capabilities. Server 20.0.0 serves v2.0 only. See the [v2.0 documentation](../v2.0/) for details.
 
 Password Depot Enterprise Server, in addition to its internal custom TCP-based communication protocol, implements a RESTful HTTPS interface for lightweight client access. This API enables the creation of custom web services, automation scripts, and integrations with Password Depot Server as the backend.
 

@@ -54,6 +54,7 @@ Returns a paginated list of matching items. Each item is a **compact representat
             "totp": {
               "state": "none"
             },
+            "warning": null,
             "login": "admin",
             "url": "https://db.example.com",
             "icon": "ico0.svg",

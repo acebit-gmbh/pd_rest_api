@@ -180,6 +180,7 @@ The `path` array contains the ancestor chain from the database root down to the 
             "totp": {
               "state": "none"
             },
+            "warning": null,
             "login": "devteam",
             "url": "https://github.com",
             "icon": "ico12.svg",

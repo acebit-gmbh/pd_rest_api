@@ -4156,6 +4156,8 @@ components:
           oneOf:
             - $ref: "#/components/schemas/EntryTotp"
             - $ref: "#/components/schemas/EntryTotpWrite"
+        warning:
+          $ref: "#/components/schemas/EntryWarning"
         icon:
           type: string
           description: |
@@ -4680,6 +4682,60 @@ components:
             Seconds each code is valid. Default in `createEntry`: 30.
             Otherwise `400` / `4004`.
           example: 30
+
+    EntryWarning:
+      type: object
+      nullable: true
+      readOnly: true
+      description: |
+        The entry's conditional-access warning, as set in the Windows client
+        (entry dialog, tab "Conditional access"), or `null` when the entry
+        has none (Server 20.0.0 and later). Present on every entry
+        representation, compact and full, directly after `totp`; never on a
+        folder. Never withheld: every caller who receives the entry receives
+        it - also for an entry the caller may only use, for a protected entry
+        without `X-Second-Password`, and for an entry sealed for the caller.
+        For a link, the link's own warning, not that of the entry it points
+        to. Read-only: the server ignores `warning` in `createEntry` and
+        `updateEntry` bodies, `updateEntry` never changes it, and an entry
+        created over REST has `null`. The server does not enforce it: it
+        answers `getEntry`, `getEntryOneTimeCode` and
+        `downloadDocumentContent` whether or not the warning was shown.
+        Clients show it before `getEntry` (opening the entry),
+        `getEntryOneTimeCode`, `downloadDocumentContent`, opening the URL,
+        and any fill or sign-in - not before listing, search, move, delete
+        or restore. Once per opening of the entry is sufficient. Absent on
+        servers older than 20.0.0: treat a missing key like `null` and show
+        nothing; no capability marker is needed.
+      required:
+        - message
+        - level
+        - verify_text
+      properties:
+        message:
+          type: string
+          description: |
+            The warning text. Plain text that may contain line breaks (CR LF)
+            between its lines; render it as text, never as HTML or Markdown.
+          example: "This account belongs to the payroll system.\r\nEvery sign-in is logged and reviewed."
+        level:
+          type: string
+          enum: [info, confirm, verify]
+          description: |
+            `info`: show the message without blocking (the Windows client
+            shows a notification). `confirm`: ask OK / Cancel and continue
+            only on OK. `verify`: OK is enabled only while a checkbox
+            labelled `verify_text` - or the client's own "I agree" when
+            `verify_text` is empty - is ticked; continue only on OK. Treat a
+            value you do not recognise conservatively, as `verify`.
+          example: verify
+        verify_text:
+          type: string
+          description: |
+            Label of the checkbox for `level` `verify`; `""` means the
+            client's own label. Always a string, and `""` unless `level` is
+            `verify`.
+          example: I am authorised to use this account
 
     # --- Search ---
     # Search reuses the Entry schema in paginated responses.

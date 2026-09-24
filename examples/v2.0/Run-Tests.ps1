@@ -19,6 +19,11 @@
     database's recycle bin. The 'recycle_bin' object on the database object is
     the capability marker; a server without it is sent no 'mode' at all.
 
+    The conditional-access warning checks in the entries suite (4.11, Server
+    20.0.0 or later) can only see 'warning' as null: the warning is set in the
+    Windows client, and REST cannot write it. They check that the key is
+    there and that a 'warning' sent in a POST or PATCH body changes nothing.
+
     Requires an admin account on a running PD Enterprise Server with at least
     one database accessible by the test user.
 
@@ -786,6 +791,98 @@ if (-not $testDbId) {
         # Clean up
         try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $totpEntryId @purge } catch {}
     } else { Skip-Test "TOTP entry not created" }
+
+    # 4.11 Conditional access warning (Server 20.0.0+). 'warning' is set in
+    # the Windows client and read-only over REST: an entry created here
+    # reports null, and 'warning' in a POST or PATCH body is ignored. A server
+    # without the key is older than 20.0.0, so the whole block is skipped.
+    $warnSupported = $false
+    Start-Test "Conditional access warning: server support ('warning' key present)"
+    if ($testEntryId) {
+        try {
+            $probe = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $testEntryId
+            if ($null -ne $probe.PSObject.Properties['warning']) {
+                $warnSupported = $true
+                Pass-Test
+            } else {
+                Skip-Test "Server has no 'warning' key (older than 20.0.0)"
+            }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Entry not created" }
+
+    $warnEntryId = $null
+    $warnBody = @{ message = "Set over REST"; level = "verify"; verify_text = "I agree" }
+
+    Start-Test "Conditional access warning: 'warning' in POST body ignored -> null in create response"
+    if ($warnSupported) {
+        try {
+            $warnEntry = New-PDEntry -Session $adminSession -DatabaseId $testDbId -ParentId $testFolderId -Fields @{
+                type = "password"
+                name = "TestWarn_$ts"
+                login = "warnuser"
+                pass = "S3cureP@ss!"
+                warning = $warnBody
+            }
+            if ($warnEntry.id) { $warnEntryId = $warnEntry.id }
+            $ok = (Assert-NotNull $warnEntry.id "id") -and
+                  (Assert-True ($null -ne $warnEntry.PSObject.Properties['warning']) "'warning' key present") -and
+                  (Assert-True ($null -eq $warnEntry.warning) "warning is null")
+            if ($ok) { Pass-Test "id=$warnEntryId" }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "No 'warning' support" }
+
+    Start-Test "Conditional access warning: full representation -> key present, null"
+    if ($warnEntryId) {
+        try {
+            $full = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $warnEntryId
+            $ok = (Assert-True ($null -ne $full.PSObject.Properties['warning']) "'warning' key present") -and
+                  (Assert-True ($null -eq $full.warning) "warning is null")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Warning test entry not created" }
+
+    Start-Test "Conditional access warning: children row -> key present, null"
+    if ($warnEntryId) {
+        try {
+            $ch = Get-PDChildren -Session $adminSession -DatabaseId $testDbId -FolderId $testFolderId -Limit 1000
+            $row = @($ch.data | Where-Object { $_.id -eq $warnEntryId })
+            $ok = (Assert-Equal 1 $row.Count "rows with the entry's id") -and
+                  (Assert-True ($null -ne $row[0].PSObject.Properties['warning']) "'warning' key present") -and
+                  (Assert-True ($null -eq $row[0].warning) "warning is null")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Warning test entry not created" }
+
+    Start-Test "Conditional access warning: search row -> key present, null"
+    if ($warnEntryId) {
+        try {
+            $found = Search-PDEntries -Session $adminSession -DatabaseId $testDbId -Query "TestWarn_$ts"
+            $row = @($found.data | Where-Object { $_.id -eq $warnEntryId })
+            $ok = (Assert-Equal 1 $row.Count "rows with the entry's id") -and
+                  (Assert-True ($null -ne $row[0].PSObject.Properties['warning']) "'warning' key present") -and
+                  (Assert-True ($null -eq $row[0].warning) "warning is null")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+    } else { Skip-Test "Warning test entry not created" }
+
+    Start-Test "Conditional access warning: 'warning' in PATCH body ignored -> still null"
+    if ($warnEntryId) {
+        try {
+            $upd = Set-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $warnEntryId -Fields @{
+                name = "TestWarn2_$ts"
+                warning = $warnBody
+            }
+            $full = Get-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $warnEntryId
+            $ok = (Assert-Equal "TestWarn2_$ts" $upd.name "name (rest of the body applied)") -and
+                  (Assert-True ($null -ne $upd.PSObject.Properties['warning']) "'warning' key present in PATCH response") -and
+                  (Assert-True ($null -eq $upd.warning) "warning is null in PATCH response") -and
+                  (Assert-True ($null -ne $full.PSObject.Properties['warning']) "'warning' key present after PATCH") -and
+                  (Assert-True ($null -eq $full.warning) "warning is null after PATCH")
+            if ($ok) { Pass-Test }
+        } catch { Fail-Test $_.Exception.Message }
+        # Clean up
+        try { Remove-PDEntry -Session $adminSession -DatabaseId $testDbId -EntryId $warnEntryId @purge } catch {}
+    } else { Skip-Test "Warning test entry not created" }
 }
 
 $totalFailures += Write-TestSummary

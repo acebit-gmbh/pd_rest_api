@@ -25,6 +25,7 @@ Returned by list/children and search endpoints.
 | `has_second_pass` | boolean | No | Whether the entry is protected by a second password |
 | `has_otp` | boolean | No | Whether a one-time code (TOTP) can be generated for this entry - see [Get One-Time Code](#get-one-time-code). For a link, whether the link's own TOTP settings produce one, as the Windows client shows. `false` when you may not read the entry. The seed is never returned. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
 | `totp` | object | No | State of the entry's one-time code: always an object, never `null`, never withheld. The compact form carries `state` only: `none` (no seed), `set` (a code can be computed; the same as `has_otp`), `invalid` (a seed is stored but produces no code), `unsupported` (type `encrypted_file` or `certificate`) or `hidden` (you may not read the entry). This read form is not writable; the write form, which shares the key, is described under [One-Time Code Settings](#one-time-code-settings). The presence of `totp` is how a client detects that the server accepts that write form. Absent on servers older than 20.0.0. |
+| `warning` | object or null | No | The entry's [conditional-access warning](#conditional-access-warning), set in the Windows client: `{"message", "level", "verify_text"}`, or `null` when the entry has none. Never withheld: every caller who receives the entry receives it. For a link, the link's own warning. Show it before the entry is opened or used - see the section for when. Absent on servers older than 20.0.0: treat a missing field like `null`. |
 | `login` | string | Yes | Login/username (only for `password` and `custom` types). |
 | `url` | string | Yes | Primary URL (only for `password` and `custom` types). |
 | `icon` | string | No | File name of a standard icon, always `ico0.svg` to `ico134.svg`, served at [`/file/{icon}`](overview.md#entry-icons): the standard icon selected by `image_index`, otherwise the standard icon of the entry's type (see [Assigning an Icon](#assigning-an-icon)). When `database_icon` is set, this is the icon of the entry's type and serves as the fallback. *Changed in Server 20.0.0:* earlier servers returned the icon of the entry's type whatever `image_index` said, or `<image_name>.ico` for some custom icons. |
@@ -403,7 +404,7 @@ The sub-object is present only in the **full representation**. Clients can gener
 | `input_id` | string | Input identifier |
 
 !!! info "Second Password Protection"
-    Entries can be protected with an optional second password. When `has_second_pass` is `true`, retrieving the full representation (including `pass`, `comments`, and `custom_fields`) requires the `X-Second-Password` request header with the correct password. `login` and `url` are part of every representation and are not withheld for a protected entry.
+    Entries can be protected with an optional second password. When `has_second_pass` is `true`, retrieving the full representation (including `pass`, `comments`, and `custom_fields`) requires the `X-Second-Password` request header with the correct password. `login` and `url` are part of every representation and are not withheld for a protected entry. Nor is [`warning`](#conditional-access-warning): list and search rows carry it without `X-Second-Password`, so a client can show the warning before it asks for the second password.
 
     Reading an entry's [one-time code](#get-one-time-code) requires `X-Second-Password` in the same way - for a link, also the second password of the entry it points to. `has_second_pass` on a link describes the link itself, so handle `4031` on `/otp` whatever it says.
 
@@ -469,6 +470,7 @@ Returns the **full representation** of a specific entry, including the password,
         "state": "none",
         "writable": true
     },
+    "warning": null,
     "login": "devteam",
     "url": "https://github.com",
     "login_id": "",
@@ -645,6 +647,7 @@ Returns the compact representation of the created entry (without `pass`). When t
     "totp": {
         "state": "none"
     },
+    "warning": null,
     "login": "admin@company.com",
     "url": "https://company.slack.com",
     "icon": "ico0.svg",
@@ -798,6 +801,7 @@ Returns the compact representation of the updated entry.
     "totp": {
         "state": "none"
     },
+    "warning": null,
     "login": "admin@company.com",
     "url": "https://company.slack.com",
     "icon": "ico0.svg",
@@ -978,6 +982,7 @@ Returns the compact representation of the moved entry.
     "totp": {
         "state": "none"
     },
+    "warning": null,
     "login": "devteam",
     "url": "https://github.com",
     "icon": "ico12.svg",
@@ -1303,6 +1308,7 @@ A value of the wrong JSON type - a string for `image_index`, for example - is a 
     "totp": {
         "state": "none"
     },
+    "warning": null,
     "login": "admin@example.com",
     "url": "https://example.com",
     "icon": "ico0.svg",
@@ -1370,6 +1376,64 @@ A value of the wrong JSON type - a string for `image_index`, for example - is a 
     Set-PDEntryIcon -Session $session -DatabaseId $db -EntryId $entryId -StandardIndex 12
     Set-PDEntryIcon -Session $session -DatabaseId $db -EntryId $entryId -Reset
     ```
+
+---
+
+## Conditional Access Warning
+
+*Server 20.0.0 and later.*
+
+An entry can carry a warning that its users are to see before they use it - what the Windows client calls conditional access (entry dialog, tab **Conditional access**, **Show the warning message on access**). Depending on its level, the Windows client shows the warning as a notification or lets the user continue only after confirming it. Every entry representation reports it in the read-only `warning` key, so that a REST client can show the same warning at the same points. It is set in the Windows client only; there is no route that writes it, and the server does not enforce it.
+
+### The `warning` object
+
+`warning` is part of every entry representation, compact and full, directly after `totp`, and is not on folders. It is `null` when the entry has no warning, and otherwise an object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | The warning text, as entered in the Windows client. Plain text: it can contain line breaks (CR LF) between its lines. Render it as text, with its line breaks - never as HTML or Markdown |
+| `level` | string | `info`, `confirm` or `verify` - how the warning is shown, see the table below |
+| `verify_text` | string | The label of the checkbox the user must tick for `verify`; `""` means the client's own label, such as "I agree". Always a string, and `""` unless `level` is `verify` |
+
+| `level` | What the client shows |
+|---------|-----------------------|
+| `info` | The message, without blocking: the user continues without answering it. The Windows client shows it as a notification |
+| `confirm` | The message with **OK** and **Cancel**. Continue only on **OK** |
+| `verify` | The message with **OK**, **Cancel** and a checkbox labelled `verify_text` - or the client's own "I agree" when `verify_text` is `""`. **OK** is enabled only while the box is ticked. Continue only on **OK** |
+
+Treat a `level` you do not recognise as `verify`.
+
+```json
+{
+    "message": "This account belongs to the payroll system.\r\nEvery sign-in is logged and reviewed.",
+    "level": "verify",
+    "verify_text": "I am authorised to use this account"
+}
+```
+
+**Who receives it.** Every caller who receives the entry receives its warning. Unlike the contents of `totp`, it is never withheld from a row that a listing returns: an entry the caller may only use and a second-password-protected entry both carry it, and no `X-Second-Password` is needed for that. [Get Entry](#get-entry) keeps its own rules, so for such an entry the listing row - [List Children](folders.md#list-children-navigation), for example - is where a client finds the warning.
+
+**Links.** For a link, `warning` is the link's **own** warning - the one the Windows client shows for that link - not the warning of the entry it points to.
+
+**Folders** do not carry the key.
+
+**Read-only.** The server ignores `warning` in [Create Entry](#create-entry) and [Update Entry](#update-entry) bodies, as it ignores every request key it does not know. A `PATCH` never changes the warning, and an entry created over REST has `null`.
+
+**Not enforced by the server.** The server returns the entry, its [one-time code](#get-one-time-code) and its [document content](#get-document-content) whether or not the warning was shown. Showing the warning, and stopping when the user cancels, is up to the client - as it is in the Windows client.
+
+### When to show it
+
+Show the warning before each of these actions, and do not perform the action when the user cancels:
+
+- opening the entry, which is the full [Get Entry](#get-entry) request
+- reading its [one-time code](#get-one-time-code) (`/otp`)
+- downloading its [document content](#get-document-content) (`/content`)
+- opening its URL
+- filling a form or signing in with it
+
+Take the warning from the entry's row: the compact representation carries it before the entry is fetched. Do not show it before listing, searching, moving, deleting or restoring an entry. Showing it once each time the user opens the entry is sufficient, so the actions taken from an opened entry need not ask again; the Windows client asks at each access.
+
+**Older servers.** A server older than 20.0.0 omits the key: show nothing. `null` and a missing key mean the same to a client - there is no warning to show - so there is no capability marker, and none is needed.
 
 ---
 
@@ -1473,6 +1537,7 @@ Returns the compact representation of the entry. Note that the `document` sub-ob
     "totp": {
         "state": "none"
     },
+    "warning": null,
     "icon": "ico133.svg",
     "database_icon": null,
     "importance": "normal",

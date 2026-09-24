@@ -34,6 +34,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `icon` follows `image_index` and is never `<name>.ico`; `image_custom`, `image_index` and `image_name` are validated when written (`400` / `4007`); documents show `ico133.svg`
 - `/file/` serves the 135 standard icons only
 - a database's category list is readable at `GET /databases/{db}/categories`, and saving an entry or a folder with a `category` the list does not hold adds it there
+- a read-only `warning` on every entry: the conditional-access warning set in the Windows client, `null` when there is none, for clients to show before the entry is opened or used
 - connections are reused between requests; an idle one is closed silently after 15 seconds, a `404` no longer closes the connection, and above 1024 connections a new one is refused at TCP level
 - a request that sends `Content-Length` twice answers `400`, and a request whose headers stop arriving answers the new `408`
 
@@ -118,6 +119,20 @@ A refused upload answers `400` / `4008` (`PD_ERRCODE_ICON_IMAGE`: `data` is not 
 - **No capability object.** Unlike the recycle bin and database icons, this has no marker on the database object: the route itself is the test. A server that does not have it answers a plain `404` -- which is also the answer for a database that does not exist or is not accessible, so call it on a database that has already answered.
 
 **Client guidance:** read the list once per database when an editor opens, and offer it as a picker that also accepts a name the user types. After a save with a category the list did not hold, re-read the list -- or add the name to your own copy, in the spelling this route returns -- and compare category names without regard to letter case. Do not build a "remove category" action: nothing in this API removes a name. See [Categories](api-reference/databases.md#categories).
+
+#### Conditional Access Warnings
+
+- **`warning`** (object or `null`, read-only) follows `totp` in every entry representation, compact and full: the rows of `children`, search and the recycle bin, `GET /databases/{db}/entries/{id}`, and the entry that `POST`, `PATCH`, move and the document-content upload return. It is the warning set in the Windows client (entry dialog, tab **Conditional access**, **Show the warning message on access**), or `null` when the entry has none. Folders do not carry it.
+- **`message`** is the warning text: plain text that can contain line breaks (CR LF) between its lines. Render it as text, never as HTML or Markdown.
+- **`level`** is `info` (show the message without blocking; the Windows client shows a notification), `confirm` (ask OK / Cancel and continue only on OK) or `verify` (OK is enabled only while the user has ticked a checkbox labelled `verify_text`, or the client's own "I agree" when `verify_text` is `""`).
+- **`verify_text`** is always a string, and `""` unless `level` is `verify`.
+- **Never withheld.** Every caller who receives the entry receives its warning, also for an entry the caller may only use, for a protected entry without `X-Second-Password`, and for an entry sealed for the caller, in every listing that includes such an entry. For a link, it is the link's own warning, the one the Windows client shows, not that of the entry it points to.
+- **Read-only.** The server ignores `warning` in `POST` and `PATCH` bodies, as it ignores every request key it does not know. A `PATCH` does not change the warning, and an entry created over REST has `null`.
+- **Not enforced by the server.** The entry, its one-time code (`/otp`) and its document content (`/content`) are returned whether or not the warning was shown. Showing it is the client's job, as it is in the Windows client.
+
+`warning` replaces REST API v1.0's `warnmsg`, `warnlvl` and `warnverify`, as a value that is read-only now. v1.0's `serverrqrd` has no counterpart: a REST caller is always connected to the server. See [Conditional Access Warning](api-reference/entries.md#conditional-access-warning).
+
+**Client guidance:** take the warning from the entry's row, which carries it before the entry is fetched, and show it before opening the entry (the full `GET /databases/{db}/entries/{id}`), before `/otp`, before the `/content` download, before opening the entry's URL, and before any fill or sign-in - not before listing, search, move, delete or restore. Once per opening of the entry is sufficient; the Windows client asks at each access. Treat a `level` you do not recognise as `verify`. A missing key means a server older than 20.0.0: show nothing. `null` and a missing key mean the same, so no capability marker exists or is needed.
 
 ### Authentication and Sessions
 

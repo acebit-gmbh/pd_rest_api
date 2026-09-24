@@ -126,6 +126,7 @@ Beside the fields of a compact entry or folder, every row in `data` carries one 
             "totp": {
                 "state": "none"
             },
+            "warning": null,
             "login": "admin@example.com",
             "url": "https://example.slack.com",
             "icon": "ico0.svg",

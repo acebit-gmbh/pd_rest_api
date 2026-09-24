@@ -37,6 +37,8 @@ All v1.0 routes are gone, together with the `access_token` / `client_id` header 
 | `DELETE /delete` | `DELETE /v2.0/databases/{db}/entries/{id}` or `DELETE /v2.0/databases/{db}/folders/{id}` (one item per request) |
 | `POST /move` | `POST /v2.0/databases/{db}/entries/{id}/move` or `POST /v2.0/databases/{db}/folders/{id}/move` |
 
+An entry's conditional-access warning, which v1.0 carries in `warnmsg`, `warnlvl` and `warnverify`, is the read-only `warning` object of every v2.0 entry on Server 20.0.0: `message`, `level` (`warnlvl` `"0"` is `info`, `"1"` and `"2"` are `confirm`, `"3"` and above are `verify`) and `verify_text`, or `null` when the entry has no warning. v2.0 cannot write it, and `serverrqrd` has no counterpart.
+
 See the REST API v2.0 documentation and its changelog for how v2.0 differs in authentication, JSON types and error handling. Everything below describes v1.0 on servers up to and including 19.x.
 
 ---

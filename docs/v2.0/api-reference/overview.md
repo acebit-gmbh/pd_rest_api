@@ -1,8 +1,5 @@
 # API Reference Overview
 
-!!! warning "In Development"
-    API v2.0 is currently in development. Endpoints, schemas, and behaviors are subject to change.
-
 ## Base URL
 
 All v2.0 API endpoints are available at:
@@ -77,7 +74,7 @@ All list endpoints support pagination via query parameters:
 | `offset` | integer | `0` | `>= 0` | Number of items to skip |
 | `limit` | integer | `100` | `1..1000` | Maximum number of items to return |
 
-**Validation rules (19.0.5):**
+**Validation rules:**
 
 - Non-integer or overflowing values (e.g., `limit=abc`, `offset=9999999999999999999`) → `400 Bad Request`.
 - `offset < 0` or `limit < 1` → `400 Bad Request`.
