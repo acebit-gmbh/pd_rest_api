@@ -108,6 +108,8 @@ GET /v2.0/databases/{db}/folders/{id}/children
 
 Returns a paginated list of all items (folders and entries) inside a specific folder.
 
+From Server 20.0.0, both children endpoints include accessible `encrypted_file` and `certificate` entries. They use the compact entry representation and always report `has_otp: false`; type-specific fields require [Get Entry](entries.md#get-entry). Existing database policies, permissions and recycle-bin filtering still apply. Server 19.x excludes these types.
+
 ### Path Parameters
 
 | Parameter | Type | Required | Description |

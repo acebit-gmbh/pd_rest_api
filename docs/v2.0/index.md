@@ -21,7 +21,7 @@ API v2.0 introduces significant improvements over [v1.0](../v1.0/):
 | **Administration** | Password operations only | Full server administration via `/admin/` endpoints: users, groups, permissions, alerts, secrets |
 | **Session scope** | N/A | `"client"` (default) or `"admin"` -- separates normal usage from server management |
 | **Folders** | Mixed with entries via `itemclass` field | First-class resource with dedicated CRUD endpoints |
-| **Document content** | Not supported | Download and upload document BLOBs via `/entries/{id}/content` |
+| **Binary content** | Not supported | Download and upload document BLOBs; Server 20.0.0 also supports certificate public/private files through `/entries/{id}/content` |
 | **Pagination** | Not supported | All JSON list endpoints support `?offset=0&limit=100` |
 | **Error format** | `{"code": 401, "error": "..."}` | `{"error": {"code": 401, "message": "..."}}` |
 
@@ -34,7 +34,7 @@ API v2.0 introduces significant improvements over [v1.0](../v1.0/):
 - **Native JSON types** -- Boolean fields return `true`/`false`, numeric fields return integers, eliminating the need to parse string-encoded values.
 - **Full server administration** -- Manage users, groups, permissions, alerts, and secrets programmatically, not just password entries.
 - **Folder management as a first-class resource** -- Folders have their own endpoints with full CRUD operations, separate from entries.
-- **Document content management** -- Download and upload document entry BLOBs (up to 64 MB) via the REST API -- a long-requested feature that was not available in v1.0.
+- **Document and certificate content** -- Download and upload documents, and certificate public/private files from Server 20.0.0, through `/entries/{id}/content` (up to 64 MB per upload). Server 20.0.0 also exposes encrypted-file entries as passwords and native-client file references.
 - **Pagination on all list endpoints** -- Efficiently handle large datasets with `offset`/`limit` parameters and total count metadata.
 
 ## Getting Started
@@ -78,7 +78,7 @@ v2.0 groups its endpoints by resource, separated into client and admin scopes:
 | [Profile (`/me`)](api-reference/users.md#user-profile) | Get profile; change own password; manage own passkeys (list/register/rename/delete) |
 | [Databases](api-reference/databases.md#client-endpoints) | List and read accessible databases; read the category list a database carries (Server 20.0.0 and later) |
 | [Folders](api-reference/overview.md#folders) | Folder management within databases |
-| [Entries](api-reference/overview.md#entries) | Password entry CRUD, move, and document content |
+| [Entries](api-reference/overview.md#entries) | Entry CRUD, move, and document/certificate content |
 | [Recycle Bin](api-reference/recyclebin.md) | List, restore and destroy deleted entries and folders (Server 20.0.0 and later) |
 | [Database Icons](api-reference/icons.md) | List, fetch and upload the icons stored in a database (Server 20.0.0 and later) |
 | [Search](api-reference/overview.md#search) | Search within a database |

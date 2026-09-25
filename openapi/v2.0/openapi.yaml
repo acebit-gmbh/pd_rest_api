@@ -101,7 +101,7 @@ info:
       non-seekable stream) sends chunked by default -- buffer the body
       (`StringContent`, `ByteArrayContent`, `LoadIntoBufferAsync`, or a
       seekable stream). `TransferEncodingChunked = false` does not help.
-    - `413 Payload Too Large` -- JSON bodies cap at 1 MB, document-content
+    - `413 Payload Too Large` -- JSON bodies cap at 1 MB, document/certificate-content
       uploads at 64 MB. This check reads `Content-Length` before the body,
       before authentication and before the CORS headers are added, and the
       connection is closed, so a browser reports a network error.
@@ -1056,6 +1056,11 @@ paths:
       tags:
         - Search
       summary: Search entries in a database
+      description: |
+        Server 20.0.0 includes accessible encrypted_file and certificate
+        entries as compact rows. Existing policy, permission and recycle-bin
+        filters apply before counting and pagination. Server 19.x excludes
+        these entry types.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - name: q
@@ -2515,6 +2520,8 @@ paths:
       description: |
         Returns the direct children of the database root: top-level folders
         and top-level entries, merged in a single paginated list.
+        From Server 20.0.0, includes accessible encrypted_file and certificate
+        entries with the common compact fields and has_otp false.
       parameters:
         - $ref: "#/components/parameters/PaginationOffset"
         - $ref: "#/components/parameters/PaginationLimit"
@@ -2541,6 +2548,10 @@ paths:
       tags:
         - Folders
       summary: List the folders and entries directly inside a folder
+      description: |
+        From Server 20.0.0, includes accessible encrypted_file and certificate
+        entries with the common compact fields and has_otp false. Existing
+        policy, permission and recycle-bin filters continue to apply.
       parameters:
         - $ref: "#/components/parameters/PaginationOffset"
         - $ref: "#/components/parameters/PaginationLimit"
@@ -2593,19 +2604,34 @@ paths:
     parameters:
       - $ref: "#/components/parameters/DatabaseIdPath"
       - $ref: "#/components/parameters/EntryIdPath"
+      - $ref: "#/components/parameters/SecondPasswordHeader"
+      - name: part
+        in: query
+        required: false
+        description: |
+          Certificate file to transfer (Server 20.0.0 and later); public is
+          the default. Other nonempty values, or any nonempty part on a
+          document, answer 400.
+        schema:
+          type: string
+          enum: [public, private]
     get:
       operationId: downloadDocumentContent
       tags:
         - Entries
-      summary: Download the binary content of a document entry
+      summary: Download document or certificate content
       description: |
-        The entry must be of type `document`. Response is the raw file
-        bytes. The `Content-Disposition` header carries the stored
+        Supports document entries and, from Server 20.0.0, certificate
+        public/private files selected by part. Encrypted-file entries contain
+        references and cannot use this route (400). Read permission, seals,
+        database policies and second-password checks apply; recycled entries
+        answer 404. Response is the stored raw bytes.
+        The `Content-Disposition` header carries the stored
         filename (sanitized per RFC 7230 quoted-string rules) and
         `Content-Type` is derived from the filename extension.
       responses:
         "200":
-          description: Document content
+          description: Stored document or selected certificate file
           headers:
             Content-Disposition:
               schema:
@@ -2618,7 +2644,7 @@ paths:
                 type: string
                 format: binary
         "400":
-          description: Entry is not of type `document`
+          description: Entry has no supported binary content, or part is invalid for the entry type
           content:
             application/json:
               schema:
@@ -2626,11 +2652,19 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            Insufficient permissions, a seal/policy restriction, or a missing
+            or incorrect current second password (error.code 4031). Legacy
+            second-password protection that REST cannot verify answers plain
+            error.code 403; do not retry by prompting for a password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: |
-            Entry not found, or no content has been uploaded yet for this
-            document entry.
+            Entry not found or recycled, or the requested document/certificate
+            part has no stored content.
           content:
             application/json:
               schema:
@@ -2639,19 +2673,40 @@ paths:
       operationId: uploadDocumentContent
       tags:
         - Entries
-      summary: Upload (or replace) the binary content of a document entry
+      summary: Upload or replace document or certificate content
       description: |
-        Body is the raw file bytes, maximum 64 MB. The `Content-Disposition`
+        Supports document entries and, from Server 20.0.0, certificate files.
+        For a certificate, replaces only the selected public/private part.
+        Encrypted-file entries have no binary content here (400). The usual
+        update permission, policy, seal and second-password checks apply.
+        Uploads through a link answer 409. An entry being edited by another user
+        answers 403 with error.code 4035. Body is the raw file bytes, maximum
+        64 MiB per selected part. Content-Length: 0 stores empty content.
+        Certificate metadata comes from PEM/DER public-file data only; other
+        formats remain stored as opaque bytes. The `Content-Disposition`
         header on the request (if present) sets the stored filename:
-        `Content-Disposition: attachment; filename="report.pdf"`. CR/LF and
-        other control characters are stripped from the stored name.
+        `Content-Disposition: attachment; filename="report.pdf"`. From Server
+        20.0.0, valid `filename*=UTF-8''<percent-encoded UTF-8 filename>` takes
+        precedence over the ASCII `filename` fallback. Otherwise `filename`
+        is used when available. The resulting name is sanitized before storage,
+        including removal of CR/LF and other control characters. This applies
+        to both document and certificate uploads.
+        Without a filename, a new certificate part uses public.crt or
+        private.key; an existing part keeps its name. Empty uploaded files
+        have a descriptor with size 0; an absent part is null.
       parameters:
         - name: Content-Disposition
           in: header
           required: false
           schema:
             type: string
-          description: 'Optional stored filename, e.g. `attachment; filename="report.pdf"`'
+          description: |
+            Optional stored filename for document or certificate content.
+            Accepts `filename="report.pdf"` and, from Server 20.0.0,
+            `filename*=UTF-8''<percent-encoded UTF-8 filename>`. A valid UTF-8
+            `filename*` takes precedence; otherwise the ASCII `filename` fallback
+            is used when available. The resulting filename is sanitized.
+            Example: `attachment; filename="cafe.pdf"; filename*=UTF-8''caf%C3%A9.pdf`
       requestBody:
         required: true
         content:
@@ -2661,13 +2716,13 @@ paths:
               format: binary
       responses:
         "200":
-          description: Upload succeeded; updated entry returned
+          description: Upload succeeded; compact representation of the updated entry returned
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Entry"
         "400":
-          description: Entry is not of type `document`
+          description: Entry has no supported binary content, or part is invalid for the entry type
           content:
             application/json:
               schema:
@@ -2675,9 +2730,23 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            Insufficient permissions, a seal/policy restriction, or a missing
+            or incorrect current second password (error.code 4031). Legacy
+            second-password protection that REST cannot verify answers plain
+            error.code 403; do not retry by prompting for a password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Upload attempted through a link; nothing was changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "411":
           $ref: "#/components/responses/LengthRequired"
         "413":
@@ -3537,7 +3606,7 @@ components:
     PayloadTooLarge:
       description: |
         The request body exceeds the allowed size limit. JSON endpoints cap at
-        1 MB; the document-content upload endpoint caps at 64 MB. These caps
+        1 MB; the document/certificate content upload endpoint caps at 64 MB. These caps
         are applied to `Content-Length` before the body is read: the
         response carries `error.code` `413` and no CORS headers, and the
         connection is closed. `uploadDatabaseIcon` additionally answers `413`
@@ -4095,7 +4164,8 @@ components:
         A credential entry. The `type` field discriminates between the
         different kinds of entries; type-specific fields are carried in a
         sub-object named after the type (e.g. `credit_card`, `license`,
-        `identity`, `information`, `banking`, `document`, `rdp`, `putty`,
+        `identity`, `information`, `banking`, `document`, `encrypted_file`,
+        `certificate`, `rdp`, `putty`,
         `teamviewer`, `passkey`). For `password` and `custom` entries the
         common password fields (`pass`, `urls`, `custom_fields`, ...) are
         at the top level instead.
@@ -4111,12 +4181,15 @@ components:
             - information
             - banking
             - document
+            - encrypted_file
+            - certificate
             - rdp
             - putty
             - teamviewer
             - passkey
-          description: Entry kind (discriminator)
-          readOnly: true
+          description: |
+            Entry kind (discriminator), accepted in create/update bodies.
+            encrypted_file and certificate require Server 20.0.0 or later.
         id:
           type: string
           format: uuid
@@ -4138,7 +4211,8 @@ components:
           description: |
             Whether a one-time code (TOTP) can be generated for this entry
             (see getEntryOneTimeCode). For a link, from the link's own TOTP
-            settings. False when the caller may not read the entry. Absent on
+            settings. False when the caller may not read the entry, and
+            always false for encrypted_file and certificate. Absent on
             servers older than 20.0.0.
           readOnly: true
         totp:
@@ -4167,7 +4241,8 @@ components:
             `image_index` is 0 to 134, otherwise the standard icon of the
             entry's type (password and custom 0, rdp 123, teamviewer 124,
             putty 125, credit_card 126, banking 127, license 128, identity
-            129, information 131, document 133, passkey 134). With a
+            129, certificate 130, information 131, encrypted_file 132,
+            document 133, passkey 134). With a
             `database_icon` it is the type's icon and serves as the fallback.
             Servers older than 20.0.0 ignored `image_index` here, could
             return `<image_name>.ico`, and reported 132 for documents.
@@ -4215,11 +4290,12 @@ components:
           description: Additional URLs associated with this entry
         is_link:
           type: boolean
+          description: Present in full password, custom, encrypted_file and certificate responses; true for an entry linked to another entry.
         linked_item:
           type: string
           format: uuid
           nullable: true
-          description: ID of the template entry this one links to (when `is_link` is true)
+          description: Target entry ID when is_link is true, otherwise null; present in full password, custom, encrypted_file and certificate responses.
         is_template:
           type: boolean
         info_template:
@@ -4272,6 +4348,10 @@ components:
           $ref: "#/components/schemas/EntryBanking"
         document:
           $ref: "#/components/schemas/EntryDocument"
+        encrypted_file:
+          $ref: "#/components/schemas/EntryEncryptedFile"
+        certificate:
+          $ref: "#/components/schemas/EntryCertificate"
         rdp:
           $ref: "#/components/schemas/EntryRdp"
         putty:
@@ -4434,6 +4514,111 @@ components:
           type: integer
           format: int64
           description: Content size in bytes
+
+    EntryEncryptedFile:
+      type: object
+      description: |
+        Server 20.0.0 and later. Full representation only, subject to read
+        permission and second-password checks. Stores the native client's
+        password and file references; the server never opens these paths.
+        /content is unavailable for this type (400). has_otp is always false.
+        Full responses also carry top-level is_link and linked_item. The type
+        sub-object cannot be written through a link (409).
+        Legacy second-password protection unavailable through REST refuses
+        GET/PATCH with plain error.code 403, not the retryable 4031.
+      properties:
+        pass:
+          type: string
+          description: Password associated with the encrypted files.
+        files:
+          type: array
+          description: Replaces the file-reference list; an empty array clears it.
+          items:
+            type: object
+            required: [name, path]
+            properties:
+              name:
+                type: string
+                minLength: 1
+                description: Nonempty filename of the referenced file.
+              path:
+                type: string
+                description: Directory containing the file; the native client combines path and name. Never opened by the server.
+
+    EntryCertificateFile:
+      type: object
+      nullable: true
+      readOnly: true
+      description: |
+        Descriptor of a certificate public/private file, or null when absent.
+        Upload raw bytes through /content and set the filename with
+        Content-Disposition; submitted descriptor fields are ignored.
+      properties:
+        name:
+          type: string
+          readOnly: true
+          description: Stored filename.
+        type:
+          type: string
+          readOnly: true
+          description: MIME type derived from the filename extension.
+        size:
+          type: integer
+          format: int64
+          readOnly: true
+          description: Stored file size in bytes.
+
+    EntryCertificate:
+      type: object
+      description: |
+        Server 20.0.0 and later. Full representation only, subject to read
+        permission and second-password checks. pass is writable; file
+        descriptors and extracted metadata are read-only. Transfer files
+        through /content?part=public (default) or /content?part=private.
+        Metadata comes only from PEM/DER certificate data in the public file.
+        Unavailable metadata is null; other formats remain opaque downloadable
+        bytes. No PFX parsing, format conversion or certificate-store import.
+        Submitted read-only fields are ignored. has_otp is always false.
+        Full responses also carry top-level is_link and linked_item. The type
+        sub-object and content cannot be written through a link (409).
+        Legacy second-password protection unavailable through REST refuses
+        GET/PATCH and content access with plain error.code 403, not 4031.
+      properties:
+        pass:
+          type: string
+          description: Password associated with the certificate/private key.
+        public_key:
+          $ref: "#/components/schemas/EntryCertificateFile"
+        private_key:
+          $ref: "#/components/schemas/EntryCertificateFile"
+        subject:
+          type: string
+          nullable: true
+          readOnly: true
+          description: Certificate subject when available.
+        issuer:
+          type: string
+          nullable: true
+          readOnly: true
+          description: Certificate issuer when available.
+        valid_from:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: Beginning of the certificate validity period, in UTC.
+        valid_to:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: End of the certificate validity period, in UTC.
+        thumbprint:
+          type: string
+          nullable: true
+          readOnly: true
+          pattern: "^[0-9A-F]{64}$"
+          description: SHA-256 certificate thumbprint as uppercase hexadecimal.
 
     EntryRdp:
       type: object

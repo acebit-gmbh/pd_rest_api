@@ -82,8 +82,8 @@ Returns a paginated list of matching items. Each item is a **compact representat
 !!! info
     Search results use compact representations only. Sensitive fields such as `pass`, `comments`, and `custom_fields` are **not** included. Use the [Get Entry](entries.md#get-entry) or [Get Folder](folders.md#get-folder) endpoint to retrieve the full representation.
 
-!!! note "Unsupported entry types are excluded"
-    Search results exclude entries of desktop-only types that are not supported by the REST/web surface — specifically `encrypted_file` and `certificate`. This matches the behavior of [List Children](folders.md#list-children-navigation), which already excludes them. The `data` array, the `total` count, and pagination all reflect the filtered set. (Such entries previously appeared in results but returned `501 Not Implemented` when opened.)
+!!! note "Encrypted-file and certificate entries"
+    Server 20.0.0 includes accessible `encrypted_file` and `certificate` entries in search, with the same compact representation used by [List Children](folders.md#list-children-navigation). Their `has_otp` is always `false`; use [Get Entry](entries.md#get-entry) for their type-specific fields. Existing policies, permissions and recycle-bin filtering still determine visibility, counts and pagination. Server 19.x excludes these types.
 
 ### Error Responses
 

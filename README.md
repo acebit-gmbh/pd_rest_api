@@ -34,7 +34,7 @@ changes between the two.
 - **Shared secrets with approval workflow** -- Share entries via signed links, with optional multi-approver review and HTTPS/protocol-handler delivery
 - **Alerts management** -- Create, list, update, and delete server alert rules with recipient and scope filters
 - **Folder navigation with breadcrumbs** -- `path` array in folder/entry responses for explorer-style UIs
-- **Document content management** -- Upload/download document BLOBs (up to 64 MB)
+- **Document and certificate content** -- Upload/download documents, and certificate public/private files from Server 20.0.0 (up to 64 MB per upload); encrypted-file entries expose their password and stored file references
 
 **HTTP & developer experience**
 
@@ -49,7 +49,7 @@ See the [v2.0 changelog](docs/v2.0/changelog.md) for the full list of changes vs
 
 The Password Depot Enterprise Server versions from 19.0.0 on that change the REST API, newest first. The [v2.0 changelog](docs/v2.0/changelog.md) has the details; on servers before 19.0.0 the REST API is v1.0 only (see the [v1.0 changelog](docs/v1.0/changelog.md)).
 
-- **20.0.0** -- Serves REST API v2.0 only: v1.0 is removed, and `/v1.0/...` answers `410 Gone`. v2.0 adds one-time codes (`GET .../entries/{id}/otp`, and TOTP settings read and written through `totp`), a recycle bin, database icons, database categories, and a read-only conditional-access `warning` on every entry; changes to existing behavior are marked **(Behavior Change)** in the changelog
+- **20.0.0** -- Serves REST API v2.0 only: v1.0 is removed, and `/v1.0/...` answers `410 Gone`. v2.0 adds one-time codes (`GET .../entries/{id}/otp`, and TOTP settings read and written through `totp`), a recycle bin, database icons, database categories, encrypted-file and certificate entries (including certificate file transfer), and a read-only conditional-access `warning` on every entry; changes to existing behavior are marked **(Behavior Change)** in the changelog
 - **19.2.0** -- Audit export over v2.0 (`GET /admin/audit`, NDJSON); timestamps are true UTC instants; search leaves out the desktop-only entry types `encrypted_file` and `certificate`; a `403` for a wrong second password carries `error.code` `4031`
 - **19.1.0** -- REST API v2.0 introduced beside v1.0, with long-lived API tokens for automation
 - **19.0.0 to 19.0.4** -- REST API v1.0 only

@@ -38,6 +38,8 @@ The presence of `recycle_bin` means the whole feature is there: these endpoints 
 
 An item in the bin **keeps the id it had**, and that id stays the item's own for as long as the bin holds it. It is not addressable through the entries and folders routes while it is there: `GET`, `PATCH`, `DELETE`, `/move`, `/children`, `/content` and `/otp` under `/databases/{db}/entries/{id}` and `/databases/{db}/folders/{id}` all answer `404`, exactly as they do for an id that never existed. `POST /secrets` and `POST /admin/secrets` answer `404` for such an `entry_id` as well. Address the item through the routes on this page instead; once it is restored, its own routes answer again, under the same id.
 
+Encrypted-file and certificate entries follow these same rules. Their bin rows use the compact entry representation; certificate files cannot be downloaded through `/entries/{id}/content` while the entry is in the bin.
+
 A deleted **folder** is one item. It travels into the bin with its sub-folders and its entries, is listed as a single row, and is restored or destroyed as a whole. The entries below it are not listed separately and are not addressable by their own ids.
 
 **How many the bin keeps.** The database's `recycle_bin.keep` says how many items the bin holds. Once there are more, the oldest are dropped -- destroyed, with no further notice, and not counted as a deletion by anyone. A client that wants an item back should not leave it in the bin.

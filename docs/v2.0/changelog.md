@@ -28,6 +28,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - writing a link's fields answers `409`
 - `super_admin` in `roles` is not applied
 - stricter passkey verification
+- encrypted-file and certificate entries are exposed in entry CRUD, children, search and the recycle bin; certificate public/private files use the existing `/content` route
 - new one-time-code endpoint and `has_otp` field; new sub-codes `4012` and `4013` (`401`) and `4032` (`403`)
 - one-time-code settings can be written: `totp` in `POST` and `PATCH` entry bodies, a `totp` object in every entry payload; new sub-codes `4001` to `4006` (`400`, the first of that family) and `4033` (`403`)
 - database icons: new `/databases/{db}/icons` endpoints, an `icons` object on every database, a `database_icon` field on every entry and folder; new sub-codes `4007` and `4008` (`400`), `4034` (`403`), `4042` (`404`) and `4131` (`413`, the first of that family)
@@ -61,6 +62,16 @@ Checks that run before routing still come first: an address under an IP lockout 
     Move every `/v1.0/` call to v2.0 before the server is upgraded. v2.0 is available from Server 19.1.0 (this documentation describes 19.2.0 and later), so the migration can be made and tested against a 19.2.x server first. See [New URL Structure](#new-url-structure) for the route mapping. Detect the removal by the HTTP status `410` (also carried in `error.code`), not by the message, which is localizable.
 
 ### New Features
+
+#### Encrypted-File and Certificate Entries
+
+Server 20.0.0 supports `encrypted_file` and `certificate` in entry reads and writes, children, search, and recycle-bin operations. Compact rows keep the common entry fields and `has_otp: false`; full responses carry the type-specific data subject to the existing read-permission and second-password checks. Database policies, seals and recycle-bin restrictions continue to apply.
+
+- **Encrypted files:** `encrypted_file.pass` and `encrypted_file.files` expose the native client's password and file references (`name` and `path`). They can be written through entry `POST`/`PATCH`. The server never opens those paths and `/content` remains unavailable for this type (`400`).
+- **Certificates:** `certificate.pass` is writable. Read-only `public_key` and `private_key` descriptors contain filename, MIME type and size, or are `null` for an absent file. Read-only subject, issuer, validity dates and SHA-256 thumbprint are extracted from a PEM/DER certificate in the public file only, otherwise `null`. Submitted descriptor/metadata values are ignored.
+- **Certificate file transfer:** `GET`/`PUT /databases/{db}/entries/{id}/content?part=public` (the default) or `?part=private` reads/replaces that file without changing the other. Content is transferred as raw bytes, up to 64 MiB per part per upload; replacing one part preserves the other. `Content-Disposition` supplies the filename; the normal content access checks and second-password requirements apply.
+
+Certificate metadata parsing is best effort and does not reject an otherwise storable file solely because its metadata cannot be extracted. Legacy second-password protection that REST cannot verify blocks these entry reads/updates and content access with plain `403`, rather than the retryable `4031`. Neither type supports one-time codes; `totp.state` remains `unsupported` when readable and `/otp` answers `501`. Server 19.x behavior is unchanged. See [Type-Specific Fields](api-reference/entries.md#type-specific-fields) and [Document and Certificate Content](api-reference/entries.md#document-content).
 
 #### One-Time Codes (TOTP)
 
@@ -128,7 +139,7 @@ A refused upload answers `400` / `4008` (`PD_ERRCODE_ICON_IMAGE`: `data` is not 
 - **`verify_text`** is always a string, and `""` unless `level` is `verify`.
 - **Never withheld.** Every caller who receives the entry receives its warning, also for an entry the caller may only use, for a protected entry without `X-Second-Password`, and for an entry sealed for the caller, in every listing that includes such an entry. For a link, it is the link's own warning, the one the Windows client shows, not that of the entry it points to.
 - **Read-only.** The server ignores `warning` in `POST` and `PATCH` bodies, as it ignores every request key it does not know. A `PATCH` does not change the warning, and an entry created over REST has `null`.
-- **Not enforced by the server.** The entry, its one-time code (`/otp`) and its document content (`/content`) are returned whether or not the warning was shown. Showing it is the client's job, as it is in the Windows client.
+- **Not enforced by the server.** The entry, its one-time code (`/otp`) and its document or certificate content (`/content`) are returned whether or not the warning was shown. Showing it is the client's job, as it is in the Windows client.
 
 `warning` replaces REST API v1.0's `warnmsg`, `warnlvl` and `warnverify`, as a value that is read-only now. v1.0's `serverrqrd` has no counterpart: a REST caller is always connected to the server. See [Conditional Access Warning](api-reference/entries.md#conditional-access-warning).
 
@@ -619,11 +630,11 @@ A `document` entry without an icon of its own reports `icon` `ico133.svg`, the d
 
 These correct the documentation only; the server's behavior is described as it has been.
 
-- **`PUT /databases/{db}/entries/{id}/content` over 64 MB answers `413`, not `400`.** The server refuses a `Content-Length` above the limit before it reads the body. `400` is left for an entry that is not a `document`. The OpenAPI document and the test suite already said `413`. A chunked body no longer reaches that size check at all: any `Transfer-Encoding` header is now refused with `411` while the request headers are read, see [Chunked Request Bodies Answer `411 Length Required`](#chunked-request-bodies-answer-411-length-required-behavior-change).
-- **`Content-Type` is not required on that upload, and is not stored.** The server does not read it. The type reported by `document.type`, and sent as `Content-Type` by `GET .../content`, is derived from the extension of the file name.
+- **`PUT /databases/{db}/entries/{id}/content` over 64 MB answers `413`, not `400`.** The server refuses a `Content-Length` above the limit before it reads the body. `400` is used when the entry has no supported binary content or the `part` parameter is invalid for its type. The OpenAPI document and the test suite already said `413`. A chunked body no longer reaches that size check at all: any `Transfer-Encoding` header is now refused with `411` while the request headers are read, see [Chunked Request Bodies Answer `411 Length Required`](#chunked-request-bodies-answer-411-length-required-behavior-change).
+- **`Content-Type` is not required on that upload, and is not stored.** The server does not read it. The type reported by `document.type` (or a certificate file descriptor), and sent as `Content-Type` by `GET .../content`, is derived from the extension of the file name.
 - **The file name field is `document.name`.** The reference called it `content_name` in two places; v2.0 has no such field. `Content-Disposition` on the upload sets `document.name`, and the download sends it back.
 - **v2.0 responses have no `rights` string.** The overview described a permission string such as `"RMIDCFAPE-Y-HL"` on database and entry responses. That field belongs to REST API v1.0; v2.0 expresses permissions only as token arrays in the [permission rules](api-reference/permissions.md#rights-values).
-- **`410`, `413` and `501` were missing from the status tables** of the overview: `410` for `/v1.0/` paths on Server 20.0.0, `413` for oversized request bodies, `501` for the entry types `encrypted_file` and `certificate`.
+- **`410`, `413` and `501` were missing from the status tables** of the overview: `410` for `/v1.0/` paths on Server 20.0.0, `413` for oversized request bodies, `501` for unsupported operations, such as one-time codes on `encrypted_file` and `certificate` entries.
 - **Mirror servers.** The overview now says that a mirror server answers every request other than `GET` that carries a bearer token with `403`, `POST /auth/logout` included. This is not new in Server 20.0.0; it was not documented.
 - **The JSON examples** of entries and folders showed an `icon` that the server of the time would not have returned for them (it ignored `image_index`). With the change above they are now what Server 20.0.0 returns.
 

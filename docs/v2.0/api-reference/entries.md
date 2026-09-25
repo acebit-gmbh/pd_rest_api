@@ -19,11 +19,11 @@ Returned by list/children and search endpoints.
 
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
-| `type` | string | Yes | Entry type: `password`, `credit_card`, `license`, `identity`, `information`, `banking`, `document`, `rdp`, `putty`, `teamviewer`, `custom`, `passkey`. For folders: `folder`. |
+| `type` | string | Yes | Entry type: `password`, `credit_card`, `license`, `identity`, `information`, `banking`, `document`, `encrypted_file`, `certificate`, `rdp`, `putty`, `teamviewer`, `custom`, `passkey`. `encrypted_file` and `certificate` require Server 20.0.0 or later. For folders: `folder`. |
 | `id` | string (UUID) | No | Unique identifier (server-generated) |
 | `name` | string | Yes | Entry display name |
 | `has_second_pass` | boolean | No | Whether the entry is protected by a second password |
-| `has_otp` | boolean | No | Whether a one-time code (TOTP) can be generated for this entry - see [Get One-Time Code](#get-one-time-code). For a link, whether the link's own TOTP settings produce one, as the Windows client shows. `false` when you may not read the entry. The seed is never returned. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
+| `has_otp` | boolean | No | Whether a one-time code (TOTP) can be generated for this entry - see [Get One-Time Code](#get-one-time-code). For a link, whether the link's own TOTP settings produce one, as the Windows client shows. `false` when you may not read the entry, and always `false` for `encrypted_file` and `certificate`. The seed is never returned. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
 | `totp` | object | No | State of the entry's one-time code: always an object, never `null`, never withheld. The compact form carries `state` only: `none` (no seed), `set` (a code can be computed; the same as `has_otp`), `invalid` (a seed is stored but produces no code), `unsupported` (type `encrypted_file` or `certificate`) or `hidden` (you may not read the entry). This read form is not writable; the write form, which shares the key, is described under [One-Time Code Settings](#one-time-code-settings). The presence of `totp` is how a client detects that the server accepts that write form. Absent on servers older than 20.0.0. |
 | `warning` | object or null | No | The entry's [conditional-access warning](#conditional-access-warning), set in the Windows client: `{"message", "level", "verify_text"}`, or `null` when the entry has none. Never withheld: every caller who receives the entry receives it. For a link, the link's own warning. Show it before the entry is opened or used - see the section for when. Absent on servers older than 20.0.0: treat a missing field like `null`. |
 | `login` | string | Yes | Login/username (only for `password` and `custom` types). |
@@ -53,6 +53,15 @@ Returned by the detail endpoint. Includes all compact fields plus:
 | `comments` | string | Yes | Comments/notes. May require `X-Second-Password` header. |
 | `totp` | object | No | Full form of the one-time-code state (see [One-Time Code Settings](#one-time-code-settings)): `state` as in the compact form; `writable` (whether the entry's type accepts the write form: `password`, `credit_card`, `license`, `banking`, `custom`); and, when `state` is `set` or `invalid`, the stored `digits`, `period`, `algorithm` (`"SHA1"`, `"SHA256"`, `"SHA512"`, or `null` for a stored value the server does not know) and `conforming` (whether the stored seed and parameters would be accepted by the write form today). For `hidden`, only `state` is present. Stored values are echoed as they are - an `invalid` entry may report `digits` `12` or `period` `300`. Never the seed. |
 
+**Link fields (`password`, `custom`, `encrypted_file` and `certificate`):**
+
+| Field | Type | Writable | Description |
+|-------|------|:--------:|-------------|
+| `is_link` | boolean | Yes | Whether this entry is a link to another entry |
+| `linked_item` | string (UUID) or null | Yes | UUID of the linked entry, or `null` if not a link |
+
+For `encrypted_file` and `certificate` links, the full response identifies the link so clients can show the referenced data as read-only. Writing a type sub-object through a link, or uploading certificate content through it, returns `409`. Read the linked entry directly to edit its fields or files; permissions, seals and second-password checks still apply.
+
 **Password and custom types only:**
 
 | Field | Type | Writable | Description |
@@ -61,8 +70,6 @@ Returned by the detail endpoint. Includes all compact fields plus:
 | `pass` | string | Yes | Password. Requires `X-Second-Password` header if `has_second_pass` is `true`. |
 | `pass_id` | string | Yes | Associated HTML element ID or name for the password field (for browser form filling) |
 | `urls` | array of strings | Yes | Associated URLs |
-| `is_link` | boolean | Yes | Whether this entry is a link to another entry |
-| `linked_item` | string (UUID) or null | Yes | UUID of the linked entry, or `null` if not a link |
 | `is_template` | boolean | Yes | Whether this entry is a template |
 | `info_template` | string or null | Yes | Template identifier (only applicable for `custom` type entries) |
 | `param_str` | string | Yes | Command line parameters string |
@@ -72,7 +79,7 @@ Returned by the detail endpoint. Includes all compact fields plus:
 
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
-| `<type>` | object | Yes | Type-specific data as a sub-object keyed by the entry type name. See [Type-Specific Fields](#type-specific-fields). |
+| `<type>` | object | Varies by field | Type-specific data as a sub-object keyed by the entry type name. See [Type-Specific Fields](#type-specific-fields). |
 
 ### Type-Specific Fields
 
@@ -277,8 +284,77 @@ The sub-object is present only in the **full representation**. Clients can gener
 !!! info "Document Entry Restrictions"
     - Document entries **cannot** have a second password (`has_second_pass` is always `false`).
     - Maximum document content size is **64 MB**.
-    - When a document entry is deleted, its binary content is automatically deleted from the server.
+    - The [recycle-bin rules](recyclebin.md) also apply to documents: a recycled entry is inaccessible through its normal routes until restored; permanent deletion destroys it.
     - Use the [Document Content](#get-document-content) endpoints to download or upload the binary content.
+
+#### Encrypted File (`"encrypted_file"`)
+
+*Server 20.0.0 and later.*
+
+An encrypted-file entry stores a password and references to files managed by a native client. It does not contain an uploaded document BLOB. The REST API returns and edits these references; it never opens, downloads, decrypts or modifies a server-side file referenced by `path` and `name`. The [`/content` route](#get-document-content) answers `400` for this entry type.
+
+| Field | Type | Writable | Description |
+|-------|------|:--------:|-------------|
+| `pass` | string | Yes | Password associated with the encrypted files; returned only when the caller can read the entry and its second-password checks pass |
+| `files` | array of objects | Yes | Replaces the stored file-reference list. Each object requires a nonempty `name` and a string `path`; an empty array clears the list |
+| `files[].name` | string | Yes | Nonempty filename of the referenced file |
+| `files[].path` | string | Yes | Directory containing the referenced file; the native client combines `path` and `name`. Not a server download URL |
+
+```json
+{
+    "type": "encrypted_file",
+    "name": "Encrypted archive",
+    "encrypted_file": {
+        "pass": "example-password",
+        "files": [
+            {"name": "archive.enc", "path": "C:\\Example\\"}
+        ]
+    }
+}
+```
+
+Use the type sub-object in `POST` and `PATCH` entry bodies to set its writable fields. Omitting the sub-object leaves its stored fields unchanged on `PATCH`. The entry has `has_otp: false` and an unsupported TOTP state; file-reference support does not enable one-time codes.
+
+#### Certificate (`"certificate"`)
+
+*Server 20.0.0 and later.*
+
+A certificate entry can hold a public-key file and a private-key file, matching the native client. Use the existing [`/content` route](#get-document-content) with `?part=public` (the default) or `?part=private` to transfer either file. Uploading one part leaves the other intact; the downloaded bytes are the bytes that were uploaded.
+
+| Field | Type | Writable | Description |
+|-------|------|:--------:|-------------|
+| `pass` | string | Yes | Password associated with the certificate/private key; protected by the normal read-permission and second-password checks |
+| `public_key` | object or null | No | Public-file descriptor: `name`, `type` (MIME type derived from the filename), and `size` in bytes; `null` when no public file is stored |
+| `private_key` | object or null | No | Private-file descriptor with the same fields; `null` when no private file is stored |
+| `subject` | string or null | No | Subject extracted from the certificate when available |
+| `issuer` | string or null | No | Issuer extracted from the certificate when available |
+| `valid_from` | string (ISO 8601 UTC) or null | No | Beginning of the certificate's validity period when available |
+| `valid_to` | string (ISO 8601 UTC) or null | No | End of the certificate's validity period when available |
+| `thumbprint` | string or null | No | SHA-256 certificate thumbprint as uppercase hexadecimal, when available |
+
+The descriptor and certificate metadata fields are read-only; values submitted for them in entry JSON are ignored. Set `certificate.pass` through the entry's `POST`/`PATCH` body; upload or replace files through `/content`, using `Content-Disposition` to set the filename. Metadata is extracted from the **public** file only, using PEM or DER certificate data. Missing or unparseable metadata is `null`; other file formats remain stored and downloadable as opaque bytes. The server does not parse PFX containers, convert formats, or import certificates into a Windows certificate store.
+
+```json
+{
+    "type": "certificate",
+    "name": "Example certificate",
+    "certificate": {
+        "pass": "",
+        "public_key": {"name": "example.pem", "type": "application/x-pem-file", "size": 2048},
+        "private_key": null,
+        "subject": null,
+        "issuer": null,
+        "valid_from": null,
+        "valid_to": null,
+        "thumbprint": null
+    }
+}
+```
+
+This sub-object is present only in the full representation when the caller may read the entry and its second-password checks pass. Children, search, recycle-bin rows and mutation responses retain the compact representation. Certificates always have `has_otp: false`; they do not support one-time codes.
+
+!!! note "Legacy second-password protection"
+    Reading or updating an `encrypted_file` or `certificate` entry with legacy second-password protection that REST cannot verify returns `403` with `error.code: 403`. Content downloads/uploads also refuse that protection on the entry or a link target. This is not the retryable `4031` response for a missing or incorrect current second password; do not repeatedly prompt for a password.
 
 #### RDP (`"rdp"`)
 
@@ -384,8 +460,8 @@ The sub-object is present only in the **full representation**. Clients can gener
 }
 ```
 
-!!! note "Unsupported Entry Types"
-    Entry types `encrypted_file` and `certificate` are not exposed via the REST API as they are bound to a specific computer and relevant mainly for local databases.
+!!! note "Server 20 availability"
+    Server 20.0.0 exposes `encrypted_file` and `certificate` in entry reads/writes, children, search and the recycle bin, subject to the same policies and permissions as other entries. Server 19.x excludes them from children/search and does not support opening them through REST. Do not infer support from the presence of `has_otp`: these types always report `false`.
 
 ### Custom Field Object
 
@@ -1174,7 +1250,7 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 
 **Admission.** The seed is normalised first - letters are upper-cased, whitespace is dropped anywhere, `=` padding is dropped from the end - and must then be 16 to 128 Base32 characters (`A` to `Z`, `2` to `7`). Any other character is refused; nothing is silently dropped, because a swallowed typo would store a seed no authenticator app shares. The server stores the normalised form. After the sent and the stored values are merged, the server computes a code once; if that fails, the seed is refused as well. A refused write changes nothing, so an accepted write always leaves the entry with `has_otp: true` and `totp.state` `set`. On `PATCH`, only the members that arrive are validated - a stored seed is never re-judged by a parameter change. The first failing member, in the order `secret`, `algorithm`, `digits`, `period`, names the sub-code.
 
-**Entry types.** `password`, `credit_card`, `license`, `banking` and `custom` can carry a one-time code written over REST - the types whose Windows editor has the one-time-code fields. Any other type answers `400` / `4006`; `encrypted_file` and `certificate` answer `501`, as they do on every route. The one exception is `null` on an entry that has no seed: there is nothing to remove, so it does nothing whatever the type; `null` over a stored seed is judged by the type like an object. The check uses the type the entry has **after** the request: the `type` of a `POST` body, or a `type` change sent in the same `PATCH`. An entry of another type that already has a seed - an `rdp` entry, for example - keeps showing it (`has_otp`, `totp` and `/otp` are unchanged), but its seed cannot be changed or removed over REST.
+**Entry types.** `password`, `credit_card`, `license`, `banking` and `custom` can carry a one-time code written over REST - the types whose Windows editor has the one-time-code fields. Any other type answers `400` / `4006`; `encrypted_file` and `certificate` answer `501` for a refused TOTP write; this does not restrict their supported entry and content operations. The one exception is `null` on an entry that has no seed: there is nothing to remove, so it does nothing whatever the type; `null` over a stored seed is judged by the type like an object. The check uses the type the entry has **after** the request: the `type` of a `POST` body, or a `type` change sent in the same `PATCH`. An entry of another type that already has a seed - an `rdp` entry, for example - keeps showing it (`has_otp`, `totp` and `/otp` are unchanged), but its seed cannot be changed or removed over REST.
 
 **Links.** A link may carry a one-time code. The write goes to the link's **own** settings - the ones `/otp` computes the link's code from - and the entry it points to is weighed as on every other write of a link. The `409` that guards a link's `custom_fields` and type sub-object does not apply to `totp`.
 
@@ -1325,7 +1401,7 @@ A value of the wrong JSON type - a string for `image_index`, for example - is a 
 }
 ```
 
-**Standard icon of a type.** `password` and `custom` `0`, `folder` `3`, `rdp` `123`, `teamviewer` `124`, `putty` `125`, `credit_card` `126`, `banking` `127`, `license` `128`, `identity` `129`, `information` `131`, `document` `133`, `passkey` `134`.
+**Standard icon of a type.** `password` and `custom` `0`, `folder` `3`, `rdp` `123`, `teamviewer` `124`, `putty` `125`, `credit_card` `126`, `banking` `127`, `license` `128`, `identity` `129`, `certificate` `130`, `information` `131`, `encrypted_file` `132`, `document` `133`, `passkey` `134`.
 
 **Older servers.** A server older than 20.0.0 stores whatever the three keys carry, checks nothing and resolves nothing. Detect the feature by the [`icons`](databases.md#icons-capability) object on the database, or by the `database_icon` key on any entry or folder.
 
@@ -1419,7 +1495,7 @@ Treat a `level` you do not recognise as `verify`.
 
 **Read-only.** The server ignores `warning` in [Create Entry](#create-entry) and [Update Entry](#update-entry) bodies, as it ignores every request key it does not know. A `PATCH` never changes the warning, and an entry created over REST has `null`.
 
-**Not enforced by the server.** The server returns the entry, its [one-time code](#get-one-time-code) and its [document content](#get-document-content) whether or not the warning was shown. Showing the warning, and stopping when the user cancels, is up to the client - as it is in the Windows client.
+**Not enforced by the server.** The server returns the entry, its [one-time code](#get-one-time-code) and its [document or certificate content](#get-document-content) whether or not the warning was shown. Showing the warning, and stopping when the user cancels, is up to the client - as it is in the Windows client.
 
 ### When to show it
 
@@ -1427,7 +1503,7 @@ Show the warning before each of these actions, and do not perform the action whe
 
 - opening the entry, which is the full [Get Entry](#get-entry) request
 - reading its [one-time code](#get-one-time-code) (`/otp`)
-- downloading its [document content](#get-document-content) (`/content`)
+- downloading its [document or certificate content](#get-document-content) (`/content`)
 - opening its URL
 - filling a form or signing in with it
 
@@ -1437,20 +1513,21 @@ Take the warning from the entry's row: the compact representation carries it bef
 
 ---
 
-## Document Content
+## Document and Certificate Content {#document-content}
 
-These endpoints manage the binary content (BLOB) of entries with `type: "document"`. The content is transferred as raw binary data, not JSON.
+These endpoints transfer raw binary data, not JSON. They support `document` entries and, from Server 20.0.0, the public and private files of `certificate` entries. An `encrypted_file` entry contains file references and has no content BLOB; `/content` answers `400` for that type and for other entry types without binary content.
 
-!!! warning "Document Entries Only"
-    These endpoints are only available for entries where `type` is `"document"`. Calling them on other entry types returns `400 Bad Request`.
+For a certificate, `?part=public` selects the public file and `?part=private` selects the private file. Omitting `part` selects the public file. Any other nonempty certificate value answers `400`; a nonempty `part` on a document also answers `400`.
 
-### Get Document Content
+A download requires read permission; an upload requires update permission. Database policies, seals, second passwords and recycle-bin restrictions continue to apply. A download through a link also checks the target's permissions, seal and second password. Uploading through a link answers `409` and leaves its content unchanged. An upload also answers `403` / `4035` when another user is editing the entry; nothing is written.
+
+### Get Document or Certificate Content {#get-document-content}
 
 ```
 GET /v2.0/databases/{db}/entries/{id}/content
 ```
 
-Downloads the binary content of a document entry.
+Downloads a document or the selected certificate file. A certificate download without `part` requests its public file.
 
 #### Path Parameters
 
@@ -1463,22 +1540,24 @@ Downloads the binary content of a document entry.
 
 `200 OK`
 
-The response body contains the raw binary content. No MIME type is stored with a document: the `Content-Type` header is derived from the extension of the stored file name (`document.name`), exactly like `document.type`. `Content-Disposition` carries that file name.
+For a certificate, append `?part=public` or `?part=private` to the URL. Send `X-Second-Password` (Base64-encoded) when the entry is protected by a second password.
+
+The response body contains the raw stored bytes. `Content-Type` is derived from the filename extension; `Content-Disposition` carries that filename. The name comes from `document.name`, `certificate.public_key.name` or `certificate.private_key.name`, according to the requested content.
 
 | Response Header | Description |
 |-----------------|-------------|
-| `Content-Type` | MIME type derived from the extension of `document.name` (e.g., `application/pdf` for `report.pdf`) |
-| `Content-Disposition` | `attachment; filename="<document.name>"` |
+| `Content-Type` | MIME type derived from the selected file's extension (e.g., `application/pdf` for `report.pdf`) |
+| `Content-Disposition` | `attachment; filename="<filename>"` for the selected content |
 | `Content-Length` | Size of the content in bytes |
 
 #### Error Responses
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Entry is not of type `document` |
+| `400 Bad Request` | Entry has no supported binary content (including `encrypted_file`), the certificate `part` is invalid, or a document request includes a nonempty `part` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions |
-| `404 Not Found` | Database or entry not found, or no content uploaded yet |
+| `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`) |
+| `404 Not Found` | Database/entry not found or recycled, or the requested document/certificate part has no stored content |
 
 #### Example
 
@@ -1492,13 +1571,13 @@ The response body contains the raw binary content. No MIME type is stored with a
 
 ---
 
-### Upload Document Content
+### Upload Document or Certificate Content {#upload-document-content}
 
 ```
 PUT /v2.0/databases/{db}/entries/{id}/content
 ```
 
-Uploads or replaces the binary content of a document entry. The entire content is replaced on each call.
+Uploads or replaces a document or the selected certificate file. Each call replaces that content in full. For a certificate, `?part=public` (the default) and `?part=private` select independent files.
 
 #### Path Parameters
 
@@ -1511,13 +1590,24 @@ Uploads or replaces the binary content of a document entry. The entire content i
 
 | Header | Required | Description |
 |--------|----------|-------------|
-| `Content-Type` | No | Not read by the server. The type reported by `document.type` and by [Get Document Content](#get-document-content) comes from the extension of the file name, so send the name |
-| `Content-Disposition` | No | `attachment; filename="<filename>"` -- sets `document.name` on the entry |
+| `Content-Type` | No | Not stored as the file type. The response MIME type comes from the filename extension, so send the name |
+| `Content-Disposition` | No | Sets the document filename or the selected certificate file's name. Accepts `filename="<ASCII filename>"` and, from Server 20.0.0, `filename*=UTF-8''<percent-encoded UTF-8 filename>`; a valid `filename*` takes precedence |
+| `X-Second-Password` | When protected | Base64-encoded second password for the entry |
 | `Content-Length` | Yes | Size of the body in bytes. A request that carries a `Transfer-Encoding` header, with or without a `Content-Length`, is refused with `411 Length Required` before the body is read (*Server 20.0.0 and later*) |
+
+From Server 20.0.0, use `filename*` for Unicode filenames, with an optional ASCII fallback, for example:
+
+```http
+Content-Disposition: attachment; filename="cafe.pdf"; filename*=UTF-8''caf%C3%A9.pdf
+```
+
+A valid UTF-8 `filename*` takes precedence over `filename`; otherwise the server uses `filename` when available. The resulting filename is sanitized before storage. This applies to both document and certificate uploads.
 
 #### Request Body
 
-Raw binary content of the file. Maximum size: **64 MB**.
+Raw binary content of the file. Maximum size: **64 MiB per upload**. A certificate upload replaces only the selected part; the public and private files have independent limits. An explicit `Content-Length: 0` uploads empty content.
+
+For a new certificate part, omitting the filename uses `public.crt` or `private.key`; replacing a part without a filename keeps its existing name. An uploaded empty file with a name has a descriptor with `size: 0`, whereas an absent certificate part is `null`.
 
 The body must state its size in a `Content-Length` header. The server refuses a request that carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`, with `411 Length Required`, while the request headers are being read - the body is never read and the connection is closed. `curl -T file`, `curl --data-binary @file` and `Invoke-WebRequest -InFile` send a length and are unaffected; `curl -T -` (stdin) and .NET `StreamContent` over a non-seekable stream do not. See the overview's [HTTP status codes](overview.md#http-status-codes) for the full rule and the client-side workarounds.
 
@@ -1525,7 +1615,7 @@ The body must state its size in a `Content-Length` header. The server refuses a 
 
 `200 OK`
 
-Returns the compact representation of the entry. Note that the `document` sub-object with content metadata is only included in the full representation (use `GET /entries/{id}` to retrieve it).
+Returns the compact representation of the entry. The `document` or `certificate` sub-object is present only in the full representation; use `GET /entries/{id}` to retrieve the current content descriptors and certificate metadata.
 
 ```json
 {
@@ -1552,10 +1642,11 @@ Returns the compact representation of the entry. Note that the `document` sub-ob
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Entry is not of type `document` |
+| `400 Bad Request` | Entry has no supported binary content (including `encrypted_file`), the certificate `part` is invalid, or a document request includes a nonempty `part` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions |
-| `404 Not Found` | Database or entry not found |
+| `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`) |
+| `404 Not Found` | Database or entry not found, or the entry is in the recycle bin |
+| `409 Conflict` | Upload attempted through a link |
 | `411 Length Required` | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Refused before the body is read and before authentication; the connection is closed. A request that carries both headers answers `411`, not the `413` below (*Server 20.0.0 and later*) |
 | `413 Payload Too Large` | `Content-Length` exceeds 64 MB. The request is refused before the body is read |
 

@@ -51,7 +51,7 @@ The token expires after **10 minutes of inactivity**. Each successful request re
 - Every request body must state its size in a `Content-Length` header. A request that carries a `Transfer-Encoding` header - whether or not it also sends a `Content-Length` - is refused with `411 Length Required` before the body is read (*Server 20.0.0 and later*); see [Length required (`411`)](#http-status-codes) below
 - Character encoding: **UTF-8**
 - Query parameters are passed in the URL
-- The one binary request body is the document upload (`PUT .../entries/{id}/content`). A [database icon](icons.md#upload-icon) is uploaded as JSON, with the image as Base64 in the `data` field - there is no multipart or binary icon upload
+- The binary content upload (`PUT .../entries/{id}/content`) handles documents and, from Server 20.0.0, certificate public/private files. A [database icon](icons.md#upload-icon) is uploaded as JSON, with the image as Base64 in the `data` field - there is no multipart or binary icon upload
 
 ## Response Format
 
@@ -172,11 +172,11 @@ On error, the server returns a JSON object with a nested `error` object:
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification) |
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
 | `411` | Length Required | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Chunked request bodies are not accepted, and `411` is answered even where `413` would otherwise apply |
-| `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document content; `4131` for an icon upload over its own, smaller limits |
+| `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document/certificate content; `4131` for an icon upload over its own, smaller limits |
 | `459` | TFA Not Activated | Two-factor authentication needs initial setup (QR code URL returned in `error.message`) |
 | `460` | TFA Code Required | A valid 6-digit 2FA code must be provided to complete login |
 | `500` | Internal Server Error | Unexpected server-side error |
-| `501` | Not Implemented | The entry is of a type this API does not support (`encrypted_file`, `certificate`) |
+| `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0 |
 
 ## HTTP Methods
 
@@ -233,7 +233,7 @@ On error, the server returns a JSON object with a nested `error` object:
 | `459` | TFA Not Activated | 2FA initial setup required |
 | `460` | TFA Code Required | 2FA code needed |
 | `500` | Internal Server Error | Server-side failure |
-| `501` | Not Implemented | Entry type not supported by this API |
+| `501` | Not Implemented | Requested operation is unsupported for the entry type (for example, one-time codes on a certificate) |
 
 !!! info "Method Not Allowed (`405`)"
     When a method is not supported for a given endpoint the server returns `405 Method Not Allowed`, and the response includes an `Allow` header listing the supported methods (per [RFC 7231 §6.5.5](https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.5)).
@@ -396,8 +396,8 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `DELETE` | [`/databases/{db}/entries/{id}`](entries.md#delete-entry) | Delete an entry: to the recycle bin, or `?mode=permanent` | Any |
 | `POST` | [`/databases/{db}/entries/{id}/move`](entries.md#move-entry) | Move an entry to a different folder | Any |
 | `GET` | [`/databases/{db}/entries/{id}/otp`](entries.md#get-one-time-code) | Get the entry's current one-time code (TOTP) | Any |
-| `GET` | [`/databases/{db}/entries/{id}/content`](entries.md#get-document-content) | Download document content (BLOB) | Any |
-| `PUT` | [`/databases/{db}/entries/{id}/content`](entries.md#upload-document-content) | Upload/replace document content (BLOB) | Any |
+| `GET` | [`/databases/{db}/entries/{id}/content`](entries.md#get-document-content) | Download document or certificate content (BLOB) | Any |
+| `PUT` | [`/databases/{db}/entries/{id}/content`](entries.md#upload-document-content) | Upload/replace document or certificate content (BLOB) | Any |
 
 ### Recycle Bin
 
