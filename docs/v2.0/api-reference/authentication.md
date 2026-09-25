@@ -4,6 +4,68 @@ API reference for authentication-related endpoints.
 
 ---
 
+## Client Identity and Supported Clients
+
+*Server 20.0.0 and later.* Maintained native clients must identify their platform on every REST request, including login, OIDC discovery and both WebAuthn steps:
+
+```http
+X-PD-Client: android; version=20.0.0; build=123
+```
+
+The platform is required when the header is supplied. Accepted values are `web`, `android`, `ios`, `macos`, `linux`, `windows` and `windows-corp`; input is case-insensitive. `version` and `build` are optional information about the client release.
+
+| Value | Format |
+|-------|--------|
+| Platform | One of the supported platform names above |
+| `version` | Nonempty HTTP token, at most 64 ASCII characters (for example `20.0.0-beta+1`); no spaces, quotes, slashes, colons or semicolons |
+| `build` | Nonnegative integer, at most `9223372036854775807` |
+| Whole header | At most 256 characters |
+
+### Login and WebAuthn Body Alternative
+
+`POST /auth/login` and `POST /auth/webauthn/begin` also accept a `client` object in their JSON bodies. For example, a login request can send:
+
+```json
+{
+    "user": "example-user",
+    "pass": "example-password",
+    "client": {
+        "platform": "android",
+        "version": "20.0.0",
+        "build": 123
+    }
+}
+```
+
+`client.platform` is a required string, at most 32 characters, containing one of the platform names above. `client.version` is an optional string with the same limit as the header value. `client.build` is an optional JSON integer with the same range as the header value. If the header and body both declare a platform, they must agree. WebAuthn complete and OIDC discovery do not accept a JSON client declaration. A WebAuthn challenge retains the platform declared at begin through the header or body; complete may omit the header and use that platform, but a conflicting platform returns `400`. A disabled stored platform is refused first. The Negotiate handshake also retains the declared platform across retries that have no JSON body.
+
+Unknown platforms, malformed identity values, unknown header parameters, duplicate recognized identity members and conflicting header/body platforms return `400 Bad Request`. Extra members of the `client` object are ignored. Do not send the build as a JSON string.
+
+### Platform Policy and Sessions
+
+The server checks the platform's existing **Supported Clients** setting at login and on every authenticated request. The setting for `web` is independent: disabling the Web Client does not disable identified native REST clients whose own platforms are enabled. An admin-scoped session has no platform-policy exemption.
+
+New session tokens retain the platform established at login. Later requests without the header use that stored platform; a header declaring a different platform returns `400`. If the stored platform is disabled, that policy refusal takes precedence over a conflicting header. Clients cannot change the platform of an established session by omitting or changing the header.
+
+For compatibility, a login with neither identity declaration defaults to `web`. Older tokens without a stored platform, including long-lived API tokens, use the request header when supplied and otherwise default to `web`. Maintained native clients must send their identity instead of relying on this fallback. Web clients can omit the header for compatibility with older servers that do not allow it through CORS. The Web Client declares `web` in the JSON `client` object at `/auth/login` or `/auth/webauthn/begin`, then uses the stored challenge/session identity without a custom header. The server does not infer a platform from `User-Agent`.
+
+When Android is disabled, the response is **HTTP `403` with `error.code: 4036`**:
+
+```json
+{
+    "error": {
+        "code": 4036,
+        "message": "The Android client is disabled on this server."
+    }
+}
+```
+
+Other disabled platforms return HTTP `403` with `error.code: 403` and a platform-specific message. Treat these responses as an administrator policy restriction, not as incorrect credentials or a request to retry login. Branch on the numeric status and code.
+
+`X-PD-Client` is permitted by the server's CORS preflight response. Client identity is supplied by the application; it is not device attestation. Version and build are informational and do not grant permissions.
+
+---
+
 ## Login
 
 Authenticates a user and returns an access token for subsequent API requests.
@@ -23,6 +85,7 @@ Authenticates a user and returns an access token for subsequent API requests.
 | `user` | string | Conditional | Username (required for `standard` and `sspi`) |
 | `pass` | string | Conditional | Password (required for `standard` and `sspi`) |
 | `tfacode` | string | No | 6-digit two-factor authentication code |
+| `client` | object | No | Client platform, version and build; see [Client Identity](#client-identity-and-supported-clients). When the header also declares a platform they must agree |
 | `idp` | string | Conditional | Identity Provider ID from `/auth/oidc` (required for `oidc`) |
 | `id_token` | string | Conditional | Identity token obtained from the OIDC/Azure flow (required for `oidc` and `azure`) |
 
@@ -141,7 +204,7 @@ On success, the server returns a JWT access token (same format as all other logi
 
 **Required fields (Step 1):** `user`
 
-**Optional fields (Step 1):** `scope`
+**Optional fields (Step 1):** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients))
 
 !!! warning "Prerequisites"
     - The Password Depot Server must have **WebAuthn** enabled in the server options.
@@ -387,6 +450,14 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
     These claims are for informational/debugging use only. Never parse the token on the client to decide whether to call an admin endpoint -- the server is the sole authority on scope. The presence of `"admin": true` in a JWT does not grant admin access if the user's roles have since been revoked; the server re-checks every request.
 
 ### Error Responses
+
+**400 -- Invalid client identity**
+
+Malformed or conflicting [client identity](#client-identity-and-supported-clients) returns `400`. A new-session token and request header must also name the same platform.
+
+**403 -- Client platform disabled**
+
+A disabled Android client returns `403` with `error.code: 4036` and the message `The Android client is disabled on this server.` Other disabled platforms use `error.code: 403`. This check also applies after login, on authenticated requests; see [Platform Policy and Sessions](#platform-policy-and-sessions).
 
 **401 -- Unauthorized**
 

@@ -16,6 +16,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 **At a glance -- changes that can affect an existing client:**
 
 - REST API v1.0 is no longer served: `/v1.0/...` answers `410 Gone`
+- REST clients declare their platform through `X-PD-Client` or login/WebAuthn-begin JSON; Supported Clients settings apply at login and on token requests, with `403` / `4036` when Android is disabled
 - request bodies must be valid JSON; send `{}` when a request has no body fields
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
 - `importance` strings map to the levels the desktop and mobile clients show
@@ -60,6 +61,14 @@ Checks that run before routing still come first: an address under an IP lockout 
 
 !!! warning "Behavior change for clients"
     Move every `/v1.0/` call to v2.0 before the server is upgraded. v2.0 is available from Server 19.1.0 (this documentation describes 19.2.0 and later), so the migration can be made and tested against a 19.2.x server first. See [New URL Structure](#new-url-structure) for the route mapping. Detect the removal by the HTTP status `410` (also carried in `error.code`), not by the message, which is localizable.
+
+#### Client Platform Restrictions (Behavior Change)
+
+Maintained REST clients now declare their platform through `X-PD-Client` (for example `android; version=20.0.0; build=123`) or a JSON `client` object in `/auth/login` or `/auth/webauthn/begin`. Supported platform names are `web`, `android`, `ios`, `macos`, `linux`, `windows` and `windows-corp`; the server applies each platform's existing Supported Clients switch independently. The Web Client switch no longer acts as a master switch for identified native REST clients. The Web Client declares `web` in login/WebAuthn-begin bodies and relies on the stored identity thereafter, avoiding a new custom header that older servers' CORS rules would reject.
+
+The platform is retained in new session tokens and checked on every authenticated request. Omitting the header cannot change that platform; a conflicting platform returns `400`, unless the stored platform is disabled and its policy refusal applies first. Legacy tokens, including API tokens without a stored platform, use the declared header or the `web` fallback. Login requests with no declaration also keep that fallback. No platform is inferred from `User-Agent`.
+
+Android disabled returns HTTP `403`, `error.code: 4036`, and `The Android client is disabled on this server.` Other disabled platforms return a plain `403` with a platform-specific message. Malformed or conflicting identity declarations return `400`. CORS permits `X-PD-Client`. See [Client Identity and Supported Clients](api-reference/authentication.md#client-identity-and-supported-clients) for the complete client contract.
 
 ### New Features
 

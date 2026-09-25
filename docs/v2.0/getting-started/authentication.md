@@ -6,6 +6,18 @@ The Password Depot REST API v2.0 uses standard **Bearer token** authentication. 
     **v1.0** required two custom headers on every request: `access_token` and `client_id`.
     **v2.0** uses the industry-standard `Authorization: Bearer <token>` header -- a single header that works natively with HTTP clients, API gateways, and middleware.
 
+## Identify Your Client
+
+*Server 20.0.0 and later.* Maintained native clients must send `X-PD-Client` on every REST request, including login:
+
+```http
+X-PD-Client: android; version=20.0.0; build=123
+```
+
+Use your application's platform: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Version and build are optional. The server applies the corresponding Supported Clients setting at login and on subsequent token requests. Android disabled returns HTTP `403` with `error.code: 4036`; another disabled platform returns a plain `403`. Show the policy refusal instead of retrying credentials.
+
+New session tokens retain the login platform. Legacy requests without an identity default to `web` for compatibility; maintained native clients must identify themselves explicitly. The Web Client declares `web` in the body of `/auth/login` or `/auth/webauthn/begin` and uses the stored identity thereafter, preserving compatibility with older servers' CORS rules. See [Client Identity and Supported Clients](../api-reference/authentication.md#client-identity-and-supported-clients) for the login-body alternative, validation rules and token behavior.
+
 ## Authentication Flow
 
 ```

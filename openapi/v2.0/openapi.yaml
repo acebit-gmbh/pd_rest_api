@@ -12,6 +12,31 @@ info:
     endpoint. Tokens are JWTs signed with HS256; presence of the `jti` claim
     indicates a long-lived API token (issued via the Server Manager).
 
+    ## Client identity
+
+    Server 20.0.0 and later: maintained native clients must send `X-PD-Client` on
+    every request, including authentication, for example
+    `android; version=20.0.0; build=123`. Platforms are web, android, ios,
+    macos, linux, windows and windows-corp (case-insensitive input).
+    `/auth/login` and `/auth/webauthn/begin` also accept a client object;
+    other authentication routes do not read a JSON client declaration. WebAuthn complete retains the begin platform if no
+    header is sent; a conflicting platform answers 400 unless that stored
+    platform is disabled and policy refuses first. Negotiate retains the
+    platform across bodyless retries. Malformed identities, duplicate recognized members,
+    unknown platforms and conflicting header/body platforms answer 400.
+    New session tokens retain the login platform; an omitted header uses that
+    platform and a conflicting header answers 400. The stored platform's
+    disabled-policy refusal takes precedence over a conflicting header.
+    Login without an identity defaults to web. Legacy tokens without a stored
+    platform, including API tokens, use the header or default to web.
+    Every authenticated request rechecks the platform's Supported Clients
+    switch, with no admin-scope exemption. The web switch is independent of
+    native platform switches. Android disabled answers 403 / error.code 4036
+    and `The Android client is disabled on this server.` Other disabled
+    platforms answer 403 / error.code 403 with a platform-specific message.
+    `X-PD-Client` is allowed by CORS. No User-Agent inference is performed;
+    this declaration is not device attestation. Version/build are informational.
+
     ## Pagination
 
     List endpoints support pagination via `offset` and `limit` query
@@ -53,8 +78,9 @@ info:
     cannot hold another icon, Server 20.0.0 and later) and `4035`
     (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry` / `deleteFolder`: the item, or
     something inside the folder, is being edited by another user; nothing was
-    deleted, Server 20.0.0 and later)
-    with HTTP `403`;
+    deleted, Server 20.0.0 and later), and `4036`
+    (`PD_ERRCODE_ANDROID_DISABLED` -- the Android client is disabled, at login
+    or on authenticated requests, Server 20.0.0 and later) with HTTP `403`;
     `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
     `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
     that id in this database, Server 20.0.0 and later) with HTTP `404`; and
@@ -84,9 +110,12 @@ info:
     The following error responses may be returned by any endpoint and are
     generally not enumerated per-operation:
 
-    - `400 Bad Request` -- malformed JSON body or unknown enum value.
+    - `400 Bad Request` -- malformed JSON body, unknown enum value, or an
+      invalid/conflicting client identity.
     - `405 Method Not Allowed` -- includes an `Allow` header listing
       supported methods (RFC 7231 §6.5.5).
+    - `403 Forbidden` -- a disabled client platform: error.code 4036 for
+      Android, 403 for other platforms (Server 20.0.0 and later).
     - `403 Forbidden` -- on a mirror server, every request other than `GET`
       that carries a bearer token (`POST /auth/logout` included).
     - `411 Length Required` -- the request carries a `Transfer-Encoding`
@@ -206,6 +235,8 @@ paths:
   # Authentication
   # ---------------------------------------------------------------------------
   /auth/login:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     post:
       operationId: login
       tags:
@@ -219,6 +250,8 @@ paths:
             schema:
               $ref: "#/components/schemas/LoginRequest"
       responses:
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: Authentication successful
           content:
@@ -303,6 +336,8 @@ paths:
                   message: "Password Depot Enterprise Server requires two-factor authentication."
 
   /auth/logout:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     post:
       operationId: logout
       tags:
@@ -315,6 +350,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
   /auth/oidc:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: getOidcProviders
       tags:
@@ -325,6 +362,8 @@ paths:
         - $ref: "#/components/parameters/PaginationOffset"
         - $ref: "#/components/parameters/PaginationLimit"
       responses:
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: Paginated list of OIDC providers
           content:
@@ -343,6 +382,8 @@ paths:
   # Databases (client)
   # ---------------------------------------------------------------------------
   /databases:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: listDatabases
       tags:
@@ -370,6 +411,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
   /databases/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: getDatabase
       tags:
@@ -393,6 +436,8 @@ paths:
   # Folders
   # ---------------------------------------------------------------------------
   /databases/{db}/folders:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: listFolders
       tags:
@@ -481,6 +526,8 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   /databases/{db}/folders/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: getFolder
       tags:
@@ -655,6 +702,8 @@ paths:
   # Entries
   # ---------------------------------------------------------------------------
   /databases/{db}/entries:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: listEntries
       tags:
@@ -788,6 +837,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /databases/{db}/entries/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: getEntry
       tags:
@@ -1019,6 +1070,8 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   /databases/{db}/entries/{id}/move:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     post:
       operationId: moveEntry
       tags:
@@ -1051,6 +1104,8 @@ paths:
   # Search
   # ---------------------------------------------------------------------------
   /databases/{db}/search:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: searchEntries
       tags:
@@ -1096,6 +1151,8 @@ paths:
 
   # --- Admin Databases ---
   /admin/databases:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminListDatabases
       tags:
@@ -1146,6 +1203,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   /admin/databases/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminGetDatabase
       tags:
@@ -1212,6 +1271,8 @@ paths:
 
   # --- Admin Permissions ---
   /admin/databases/{db}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminListPermissions
       tags:
@@ -1269,6 +1330,8 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   /admin/databases/{db}/permissions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminGetPermission
       tags:
@@ -1338,6 +1401,8 @@ paths:
 
   # --- Admin Users ---
   /admin/users:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminListUsers
       tags:
@@ -1418,6 +1483,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /admin/users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminGetUser
       tags:
@@ -1484,6 +1551,8 @@ paths:
 
   # --- Admin Groups ---
   /admin/groups:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminListGroups
       tags:
@@ -1534,6 +1603,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   /admin/groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminGetGroup
       tags:
@@ -1600,6 +1671,8 @@ paths:
 
   # --- Admin Alerts ---
   /admin/alerts:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminListAlerts
       tags:
@@ -1650,6 +1723,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   /admin/alerts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminGetAlert
       tags:
@@ -1716,6 +1791,8 @@ paths:
 
   # --- Admin Secrets ---
   /admin/secrets:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminListSecrets
       tags:
@@ -1766,6 +1843,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   /admin/secrets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: adminGetSecret
       tags:
@@ -1834,6 +1913,8 @@ paths:
   # Self-Service (/me/...)
   # ---------------------------------------------------------------------------
   /me:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: getMyProfile
       tags:
@@ -1879,6 +1960,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
   /me/password:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     post:
       operationId: changeMyPassword
       tags:
@@ -1918,6 +2001,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /me/passkeys:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: listMyPasskeys
       tags:
@@ -1944,6 +2029,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
   /me/passkeys/begin:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     post:
       operationId: beginPasskeyRegistration
       tags:
@@ -1964,6 +2051,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
   /me/passkeys/complete:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     post:
       operationId: completePasskeyRegistration
       tags:
@@ -1989,6 +2078,7 @@ paths:
 
   /me/passkeys/{id}:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/PasskeyId"
     patch:
       operationId: renameMyPasskey
@@ -2037,6 +2127,8 @@ paths:
   # WebAuthn login flow (no token required)
   # ---------------------------------------------------------------------------
   /auth/webauthn/begin:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     post:
       operationId: beginWebAuthnAuth
       tags:
@@ -2059,6 +2151,8 @@ paths:
             schema:
               $ref: "#/components/schemas/WebAuthnAssertionBeginRequest"
       responses:
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: Assertion challenge
           content:
@@ -2073,6 +2167,8 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
 
   /auth/webauthn/complete:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     post:
       operationId: completeWebAuthnAuth
       tags:
@@ -2108,6 +2204,8 @@ paths:
   # Client-scope user and group directory (read-only, compact representation)
   # ---------------------------------------------------------------------------
   /users:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: listUsersDirectory
       tags:
@@ -2139,6 +2237,7 @@ paths:
 
   /users/{id}:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/UserId"
     get:
       operationId: getUserDirectory
@@ -2158,6 +2257,8 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   /groups:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: listGroupsDirectory
       tags:
@@ -2185,6 +2286,7 @@ paths:
 
   /groups/{id}:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/GroupId"
     get:
       operationId: getGroupDirectory
@@ -2207,6 +2309,8 @@ paths:
   # Client-scope secrets (shared links)
   # ---------------------------------------------------------------------------
   /secrets:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
     get:
       operationId: listMySecrets
       tags:
@@ -2258,6 +2362,7 @@ paths:
 
   /secrets/{id}:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/SecretId"
     get:
       operationId: getMySecret
@@ -2294,6 +2399,7 @@ paths:
 
   /secrets/{id}/approve:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/SecretId"
     post:
       operationId: approveSecret
@@ -2316,6 +2422,7 @@ paths:
 
   /secrets/{id}/reject:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/SecretId"
     post:
       operationId: rejectSecret
@@ -2334,6 +2441,7 @@ paths:
 
   /secrets/{id}/revoke:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/SecretId"
     post:
       operationId: revokeSecret
@@ -2355,6 +2463,7 @@ paths:
   # ---------------------------------------------------------------------------
   /admin/secrets/{id}/approve:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/SecretId"
     post:
       operationId: adminApproveSecret
@@ -2373,6 +2482,7 @@ paths:
 
   /admin/secrets/{id}/reject:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/SecretId"
     post:
       operationId: adminRejectSecret
@@ -2391,6 +2501,7 @@ paths:
 
   /admin/secrets/{id}/revoke:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/SecretId"
     post:
       operationId: adminRevokeSecret
@@ -2412,6 +2523,7 @@ paths:
   # ---------------------------------------------------------------------------
   /admin/users/{id}/password:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/UserId"
     post:
       operationId: adminSetUserPassword
@@ -2454,6 +2566,7 @@ paths:
 
   /admin/users/{user_id}/passkeys:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/UserIdPath"
     get:
       operationId: adminListUserPasskeys
@@ -2486,6 +2599,7 @@ paths:
 
   /admin/users/{user_id}/passkeys/{id}:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/UserIdPath"
       - $ref: "#/components/parameters/PasskeyId"
     delete:
@@ -2511,6 +2625,7 @@ paths:
   # ---------------------------------------------------------------------------
   /databases/{db}/children:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
     get:
       operationId: listDatabaseRootChildren
@@ -2541,6 +2656,7 @@ paths:
 
   /databases/{db}/folders/{folder_id}/children:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
       - $ref: "#/components/parameters/FolderIdPath"
     get:
@@ -2571,6 +2687,7 @@ paths:
 
   /databases/{db}/folders/{folder_id}/move:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
       - $ref: "#/components/parameters/FolderIdPath"
     post:
@@ -2602,6 +2719,7 @@ paths:
 
   /databases/{db}/entries/{entry_id}/content:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
       - $ref: "#/components/parameters/EntryIdPath"
       - $ref: "#/components/parameters/SecondPasswordHeader"
@@ -2754,6 +2872,7 @@ paths:
 
   /databases/{db}/entries/{entry_id}/otp:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
       - $ref: "#/components/parameters/EntryIdPath"
     get:
@@ -2819,6 +2938,7 @@ paths:
   # ---------------------------------------------------------------------------
   /databases/{db}/icons:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
     get:
       operationId: listDatabaseIcons
@@ -3013,6 +3133,7 @@ paths:
 
   /databases/{db}/icons/{icon_id}:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
       - name: icon_id
         in: path
@@ -3065,6 +3186,7 @@ paths:
   # ---------------------------------------------------------------------------
   /databases/{db}/recyclebin:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
     get:
       operationId: listRecycleBin
@@ -3145,6 +3267,7 @@ paths:
 
   /databases/{db}/recyclebin/{id}:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
       - $ref: "#/components/parameters/RecycleBinItemId"
     delete:
@@ -3170,6 +3293,7 @@ paths:
 
   /databases/{db}/recyclebin/{id}/restore:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
       - $ref: "#/components/parameters/RecycleBinItemId"
     post:
@@ -3207,6 +3331,7 @@ paths:
   # ---------------------------------------------------------------------------
   /databases/{db}/categories:
     parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
       - $ref: "#/components/parameters/DatabaseIdPath"
     get:
       operationId: listDatabaseCategories
@@ -3283,6 +3408,32 @@ components:
   # Reusable Parameters
   # ---------------------------------------------------------------------------
   parameters:
+    ClientIdentityHeader:
+      name: X-PD-Client
+      in: header
+      required: false
+      description: |
+        Server 20.0.0 and later. Maintained native clients must identify their platform
+        on every request; optional on the wire for compatibility. Syntax:
+        android; version=20.0.0; build=123. Platforms: web, android, ios, macos,
+        linux, windows, windows-corp (case-insensitive). Version/build are
+        optional. Version is a nonempty HTTP token of at most 64 ASCII characters
+        (for example 20.0.0-beta+1), without whitespace, quotes or separators
+        such as slash, colon or semicolon. Build is a nonnegative integer at
+        most 9223372036854775807.
+        Unknown platforms, unknown header parameters, malformed values and
+        duplicate recognized members answer 400. A login or WebAuthn-begin body
+        client.platform must agree with this header.
+        New sessions retain their login platform; omitting this header uses
+        that platform and a conflicting value answers 400, unless disabled
+        platform policy refuses first. Legacy tokens without a stored platform
+        use the header or default to web. The same web fallback applies when
+        login has no identity. Version/build are informational, not permissions.
+      schema:
+        type: string
+        maxLength: 256
+      example: "android; version=20.0.0; build=123"
+
     DatabaseId:
       name: id
       in: path
@@ -3502,15 +3653,26 @@ components:
               message: "Invalid or expired access token"
 
     Forbidden:
-      description: Insufficient permissions
+      description: |
+        Insufficient permissions or a disabled client platform. Server 20.0.0
+        and later uses error.code 4036 when Android is disabled; other disabled
+        platforms use error.code 403 with a platform-specific message. Applies
+        at login and on authenticated requests, including existing sessions.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
-          example:
-            error:
-              code: 403
-              message: "You do not have permission to perform this action"
+          examples:
+            permissionDenied:
+              value:
+                error:
+                  code: 403
+                  message: "You do not have permission to perform this action"
+            androidDisabled:
+              value:
+                error:
+                  code: 4036
+                  message: "The Android client is disabled on this server."
 
     NotFound:
       description: Resource not found
@@ -3647,6 +3809,39 @@ components:
   # ---------------------------------------------------------------------------
   schemas:
     # --- Authentication ---
+    ClientIdentity:
+      type: object
+      description: |
+        Optional client declaration accepted by POST /auth/login and
+        POST /auth/webauthn/begin.
+        If X-PD-Client is also sent, the platforms must agree. Recognized
+        members cannot be duplicated. Invalid declarations answer 400.
+        Version/build are informational; platform selects the Supported
+        Clients policy and is retained in new session tokens.
+      required: [platform]
+      properties:
+        platform:
+          type: string
+          maxLength: 32
+          enum: [web, android, ios, macos, linux, windows, windows-corp]
+          description: Canonical platform names; input is case-insensitive.
+        version:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
+          description: Optional client version as a nonempty HTTP token, for example 20.0.0-beta+1.
+        build:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9223372036854775807
+          description: Optional client build; must be a JSON integer, not a string.
+      example:
+        platform: android
+        version: "20.0.0"
+        build: 123
+
     LoginRequest:
       type: object
       description: |
@@ -3657,6 +3852,8 @@ components:
         - `azure` (deprecated): `id_token`
         - `oidc`: `idp`, `id_token`
       properties:
+        client:
+          $ref: "#/components/schemas/ClientIdentity"
         auth:
           type: string
           enum:
@@ -5683,6 +5880,8 @@ components:
       required:
         - user
       properties:
+        client:
+          $ref: "#/components/schemas/ClientIdentity"
         user:
           type: string
           description: Username

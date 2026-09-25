@@ -45,6 +45,8 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
 The token expires after **10 minutes of inactivity**. Each successful request resets the timer.
 
+From Server 20.0.0, maintained native clients must also send `X-PD-Client` on every request, for example `android; version=20.0.0; build=123`. The server checks the corresponding Supported Clients setting at login and on authenticated requests; new sessions retain the login platform. A disabled Android client returns `403` with `error.code: 4036`; other disabled platforms return a plain `403`. The header is allowed in CORS preflight. See [Client Identity and Supported Clients](authentication.md#client-identity-and-supported-clients) for valid platforms, the optional login-body identity and compatibility behavior.
+
 ## Request Format
 
 - All request bodies must be **JSON** with `Content-Type: application/json`
@@ -155,11 +157,12 @@ On error, the server returns a JSON object with a nested `error` object:
     | `4033` | `403` | `PD_ERRCODE_TOTP_READ_REQUIRED` | Entry `totp` write on `PATCH`: read permission on the entry is required as well |
     | `4034` | `403` | `PD_ERRCODE_ICON_QUOTA` | `POST /databases/{db}/icons`: the database cannot hold another icon |
     | `4035` | `403` | `PD_ERRCODE_ITEM_LOCKED` | `DELETE` of an entry or folder: the item, or something inside the folder, is being edited by another client; nothing was deleted |
+    | `4036` | `403` | `PD_ERRCODE_ANDROID_DISABLED` | The Android client is disabled on this server; applies at login and on authenticated requests |
     | `4041` | `404` | `PD_ERRCODE_NO_ONE_TIME_CODE` | The entry has no one-time code; a `404` for an entry that does not exist keeps `error.code = 404` |
     | `4042` | `404` | `PD_ERRCODE_ICON_NOT_FOUND` | `GET /databases/{db}/icons/{icon_id}`: no usable icon with that id in this database; a `404` for a database that does not exist keeps `error.code = 404` |
     | `4131` | `413` | `PD_ERRCODE_ICON_TOO_LARGE` | `POST /databases/{db}/icons`: too many bytes, too many pixels, or too large a stored record |
 
-    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4032` to `4035`, `4041`, `4042` and `4131` are new. `4035` belongs to [Delete Entry](entries.md#delete-entry) and [Delete Folder](folders.md#delete-folder). `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
+    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4032` to `4036`, `4041`, `4042` and `4131` are new. `4035` belongs to [Delete Entry](entries.md#delete-entry) and [Delete Folder](folders.md#delete-folder). `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
 
 ## Error Codes
 
@@ -167,7 +170,7 @@ On error, the server returns a JSON object with a nested `error` object:
 |:----:|------|-------------|
 | `400` | Bad Request | Invalid request body, missing required fields, or malformed parameters |
 | `401` | Unauthorized | Invalid credentials, expired token, or missing `Authorization` header |
-| `403` | Forbidden | Authenticated but insufficient permissions for the requested action |
+| `403` | Forbidden | Insufficient permissions, or a disabled client platform; Android disabled uses `error.code: 4036` |
 | `404` | Not Found | The requested resource (database, entry, folder, user, etc.) does not exist |
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification) |
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
@@ -221,7 +224,7 @@ On error, the server returns a JSON object with a nested `error` object:
 | `204` | No Content | Request succeeded; no response body (used for DELETE and logout) |
 | `400` | Bad Request | Client error in the request |
 | `401` | Unauthorized | Authentication required or failed |
-| `403` | Forbidden | Insufficient permissions |
+| `403` | Forbidden | Insufficient permissions or a disabled client platform |
 | `404` | Not Found | Resource does not exist |
 | `405` | Method Not Allowed | HTTP method not supported for this endpoint; `Allow` header lists supported methods |
 | `408` | Request Timeout | The request headers stopped arriving part-way through; the connection is closed |
