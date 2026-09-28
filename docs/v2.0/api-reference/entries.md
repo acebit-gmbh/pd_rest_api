@@ -1550,6 +1550,16 @@ The response body contains the raw stored bytes. `Content-Type` is derived from 
 | `Content-Disposition` | `attachment; filename="<filename>"` for the selected content |
 | `Content-Length` | Size of the content in bytes |
 
+The same mapping gives `document.type` and the `type` of `certificate.public_key` and `certificate.private_key`. The extension is matched case-insensitively, and a name without a known extension gives `application/octet-stream`. For the files a certificate entry usually holds:
+
+| Extension | `Content-Type` |
+|-----------|----------------|
+| `.pem`, `.key` | `application/x-pem-file` |
+| `.cer`, `.crt` | `application/x-x509-ca-cert` |
+| `.pfx`, `.p12` | `application/x-pkcs12` |
+
+The type follows the name only, not the content: a DER-encoded key stored as `private.key` is also labelled `application/x-pem-file`. Read the bytes to tell the encodings apart.
+
 #### Error Responses
 
 | Status | Description |

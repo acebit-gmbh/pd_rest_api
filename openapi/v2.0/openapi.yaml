@@ -2785,7 +2785,13 @@ paths:
         answer 404. Response is the stored raw bytes.
         The `Content-Disposition` header carries the stored
         filename (sanitized per RFC 7230 quoted-string rules) and
-        `Content-Type` is derived from the filename extension.
+        `Content-Type` is derived from the filename extension, matched
+        case-insensitively: for example `.pem` and `.key` give
+        `application/x-pem-file`, `.cer` and `.crt`
+        `application/x-x509-ca-cert`, `.pfx` and `.p12`
+        `application/x-pkcs12`, and an unknown extension
+        `application/octet-stream`. The type follows the name, not the
+        content.
       responses:
         "200":
           description: Stored document or selected certificate file
