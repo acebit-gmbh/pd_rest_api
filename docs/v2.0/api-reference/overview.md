@@ -134,6 +134,8 @@ On error, the server returns a JSON object with a nested `error` object:
 | `error.code` | integer | HTTP status code, or an application sub-code (see below) |
 | `error.message` | string | Human-readable error description |
 
+Some responses add members to `error`. `459` and `460` from `POST /auth/login` carry the boolean `error.trust_device_possible` (Server 20.0.0 and later; see [Trusted Devices](authentication.md#trusted-devices)). Clients must ignore members of `error` they do not know.
+
 !!! note "Difference from v1.0"
     v1.0 used a flat format: `{"code": 404, "error": "..."}`. v2.0 uses a nested structure: `{"error": {"code": 404, "message": "..."}}`.
 
@@ -176,8 +178,8 @@ On error, the server returns a JSON object with a nested `error` object:
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
 | `411` | Length Required | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Chunked request bodies are not accepted, and `411` is answered even where `413` would otherwise apply |
 | `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document/certificate content; `4131` for an icon upload over its own, smaller limits |
-| `459` | TFA Not Activated | Two-factor authentication needs initial setup (QR code URL returned in `error.message`) |
-| `460` | TFA Code Required | A valid 6-digit 2FA code must be provided to complete login |
+| `459` | TFA Not Activated | Two-factor authentication needs initial setup (the path of a QR code image, relative to the server's address, is returned in `error.message`) |
+| `460` | TFA Code Required | A valid 6-digit 2FA code, or a trusted-device token the server accepts, must be provided to complete login |
 | `500` | Internal Server Error | Unexpected server-side error |
 | `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0 |
 

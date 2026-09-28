@@ -271,18 +271,21 @@ This returns the full user profile including display name, roles, and group memb
 
 ## Two-Factor Authentication (2FA)
 
-If two-factor authentication is enabled for the user, the login flow has additional steps. The 2FA flow is the same as v1.0.
+If two-factor authentication is enabled for the user, the login flow has additional steps: the server answers `459` or `460`, and the client resends the login with the code. From Server 20.0.0 the client can also ask the server to trust the device, so that later logins need the password but no code (see [Trusted Devices](#trusted-devices) below).
 
 **Summary:**
 
 | Response Code | Meaning | Action Required |
 |:-------------:|---------|-----------------|
-| `459` | TFA not yet activated | Scan QR code from URL in `error.message` field, then resend login with `tfacode` |
+| `459` | TFA not yet activated | Show the QR code whose path is in `error.message` (relative to the server's address), let the user scan it, then resend login with `tfacode`; the first valid code activates the authenticator app |
 | `460` | TFA code required | Prompt user for 6-digit code, resend login with `tfacode` |
+| `459` or `460` after sending `tfatoken` | The server did not accept the trusted-device token | Discard the token, then continue as for `459` / `460` |
 | `401` with `error.code` `4012` | E-mail 2FA: the server cannot send the verification e-mail | Tell the user to contact the administrator; do not retry automatically; never report a wrong password |
 | `401` with `error.code` `4013` | E-mail 2FA: the account has no e-mail address | Tell the user to contact the administrator |
 
-*`4012` and `4013` require Server 20.0.0 or later; see [Error Responses](../api-reference/authentication.md#error-responses).*
+With `459` and `460`, `error.trust_device_possible` says whether the device can be trusted: when it is `true` and the user opted in, send `"trust_device": true` together with `tfacode`.
+
+*`4012`, `4013` and trusted devices require Server 20.0.0 or later; see [Error Responses](../api-reference/authentication.md#error-responses).*
 
 ### Login with 2FA Code
 
@@ -320,8 +323,89 @@ If two-factor authentication is enabled for the user, the login flow has additio
     )
     ```
 
-!!! warning "No Trusted Devices"
-    The REST API does not support trusted devices. Users must supply a valid 2FA code on **every** login.
+### Trusted Devices
+
+*Server 20.0.0 and later.* Send `"trust_device": true` with the code. When the code verifies and the server allows it, the `200` carries a `tfatoken` beside `access_token`:
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "tfatoken": "V2u_NKF0FJFp1KQayE24Z36Up-CncbSVg65JiReTBkU",
+  "tfatoken_expires_at": "2026-10-18T09:12:00.000Z"
+}
+```
+
+Later logins send the password as usual and the stored `tfatoken` instead of `tfacode`. A token the server accepts completes the login with `200`; one it no longer accepts is answered with the normal `460` (or `459`), so discard it and ask for the code.
+
+=== "curl"
+
+    ```bash
+    # Code, and trust this device
+    curl -k -X POST "https://your-server:8714/v2.0/auth/login" \
+      -H "Content-Type: application/json" \
+      -d '{"user":"admin","pass":"my_password","tfacode":"123456","trust_device":true}'
+
+    # Later: the stored token instead of a code
+    curl -k -X POST "https://your-server:8714/v2.0/auth/login" \
+      -H "Content-Type: application/json" \
+      -d '{"user":"admin","pass":"my_password","tfatoken":"V2u_NKF0FJFp1KQayE24Z36Up-CncbSVg65JiReTBkU"}'
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    # Code, and trust this device
+    $body = @{
+        user         = "admin"
+        pass         = "my_password"
+        tfacode      = "123456"
+        trust_device = $true
+    } | ConvertTo-Json
+
+    $response = Invoke-RestMethod `
+      -Uri "https://your-server:8714/v2.0/auth/login" `
+      -Method POST `
+      -Body $body `
+      -ContentType "application/json"
+
+    $tfaToken = $response.tfatoken   # store it like a password
+
+    # Later: the stored token instead of a code
+    $body = @{
+        user     = "admin"
+        pass     = "my_password"
+        tfatoken = $tfaToken
+    } | ConvertTo-Json
+
+    $response = Invoke-RestMethod `
+      -Uri "https://your-server:8714/v2.0/auth/login" `
+      -Method POST `
+      -Body $body `
+      -ContentType "application/json"
+    ```
+
+=== "Python"
+
+    ```python
+    # Code, and trust this device
+    response = requests.post(
+        "https://your-server:8714/v2.0/auth/login",
+        json={"user": "admin", "pass": "my_password", "tfacode": "123456", "trust_device": True},
+        verify=False
+    )
+    tfa_token = response.json().get("tfatoken")  # store it like a password
+
+    # Later: the stored token instead of a code
+    response = requests.post(
+        "https://your-server:8714/v2.0/auth/login",
+        json={"user": "admin", "pass": "my_password", "tfatoken": tfa_token},
+        verify=False
+    )
+    if response.status_code in (459, 460):
+        tfa_token = None  # not accepted: discard it and ask for the code
+    ```
+
+The token is not an access token and never goes into `Authorization`. It survives logout, and it ends with the server's trusted-device period (480 hours by default) or when an administrator resets the user's two-factor options. See [Trusted Devices](../api-reference/authentication.md#trusted-devices) for the full rules and client guidance.
 
 ## OIDC Discovery
 
@@ -395,7 +479,7 @@ The server responds with `204 No Content` on success.
 | Aspect | v1.0 | v2.0 |
 |--------|------|------|
 | Login endpoint | `POST /v1.0/login` | `POST /v2.0/auth/login` |
-| Login response | `access_token` + `client_id` | `access_token` only |
+| Login response | `access_token` + `client_id` | `access_token`; also `tfatoken` when the login trusted the device (Server 20.0.0) |
 | Auth headers | `access_token: ...` and `client_id: ...` | `Authorization: Bearer ...` |
 | Logout endpoint | `POST /v1.0/logout` | `POST /v2.0/auth/logout` |
 | Logout auth | `client_id` header only | `Authorization: Bearer` header |

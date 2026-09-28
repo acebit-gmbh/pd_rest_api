@@ -24,6 +24,13 @@
     Windows client, and REST cannot write it. They check that the key is
     there and that a 'warning' sent in a POST or PATCH body changes nothing.
 
+    The trusted-device checks in the users suite (5.1b2, Server 20.0.0 or
+    later) use the suite's own test user, whose two-factor authentication is
+    disabled: such a login is issued no tfatoken and ignores one it is sent,
+    and a trust_device or tfatoken of the wrong JSON type answers 400. The
+    trust flow itself needs an account with an authenticator app or e-mail
+    codes and is not covered.
+
     Requires an admin account on a running PD Enterprise Server with at least
     one database accessible by the test user.
 
@@ -1838,6 +1845,50 @@ if ($testUserId) {
         if (Assert-NotNull $probeSession.Token "access_token") { Pass-Test }
         Disconnect-PDServer -Session $probeSession
     } catch { Fail-Test $_.Exception.Message }
+} else { Skip-Test "User not created" }
+
+# 5.1b2 Trusted devices (Server 20.0.0 or later). The test user has two-factor
+# authentication disabled, so a login is issued no tfatoken and ignores one it
+# is sent. The members are type-checked before the credentials are: a wrong
+# JSON type answers 400, which does not count towards the IP lockout.
+$tdLoginUri = "https://${Server}:${Port}/v2.0/auth/login"
+$tdBaseUri = "https://${Server}:${Port}/v2.0"
+
+Start-Test "Trusted device: 2FA disabled + trust_device true -> 200 without tfatoken"
+if ($testUserId) {
+    try {
+        $tdBody = @{ user = "apitest_$ts"; pass = "T3stP@ss!"; scope = "client"; trust_device = $true } | ConvertTo-Json
+        $tdResp = Invoke-RestMethod -Uri $tdLoginUri -Method POST -Body $tdBody -ContentType "application/json"
+        if ((Assert-NotNull $tdResp.access_token "access_token") -and
+            (Assert-True (-not ($tdResp.PSObject.Properties.Name -contains 'tfatoken')) "no tfatoken in the 200")) { Pass-Test }
+        Disconnect-PDServer -Session ([PSCustomObject]@{ BaseUri = $tdBaseUri; Token = $tdResp.access_token })
+    } catch { Fail-Test $_.Exception.Message }
+} else { Skip-Test "User not created" }
+
+Start-Test "Trusted device: tfatoken ignored when 2FA is disabled -> 200"
+if ($testUserId) {
+    try {
+        $tdBody = @{ user = "apitest_$ts"; pass = "T3stP@ss!"; scope = "client"; tfatoken = "not-a-token" } | ConvertTo-Json
+        $tdResp = Invoke-RestMethod -Uri $tdLoginUri -Method POST -Body $tdBody -ContentType "application/json"
+        if (Assert-NotNull $tdResp.access_token "access_token") { Pass-Test }
+        Disconnect-PDServer -Session ([PSCustomObject]@{ BaseUri = $tdBaseUri; Token = $tdResp.access_token })
+    } catch { Fail-Test $_.Exception.Message }
+} else { Skip-Test "User not created" }
+
+Start-Test "Trusted device: trust_device as a string -> 400"
+if ($testUserId) {
+    if (Assert-HttpError -ExpectedCode 400 -Action {
+        Invoke-RestMethod -Uri $tdLoginUri -Method POST -ContentType "application/json" `
+            -Body (@{ user = "apitest_$ts"; pass = "T3stP@ss!"; scope = "client"; trust_device = "yes" } | ConvertTo-Json)
+    }) { Pass-Test "400 as expected" }
+} else { Skip-Test "User not created" }
+
+Start-Test "Trusted device: tfatoken as a number -> 400"
+if ($testUserId) {
+    if (Assert-HttpError -ExpectedCode 400 -Action {
+        Invoke-RestMethod -Uri $tdLoginUri -Method POST -ContentType "application/json" `
+            -Body (@{ user = "apitest_$ts"; pass = "T3stP@ss!"; scope = "client"; tfatoken = 123 } | ConvertTo-Json)
+    }) { Pass-Test "400 as expected" }
 } else { Skip-Test "User not created" }
 
 # 5.1c Create user without new_password when standard auth -> 400

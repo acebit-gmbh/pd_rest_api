@@ -12,6 +12,11 @@ info:
     endpoint. Tokens are JWTs signed with HS256; presence of the `jti` claim
     indicates a long-lived API token (issued via the Server Manager).
 
+    Server 20.0.0 and later: a login can also trust the device for
+    two-factor sign-in (`trust_device`), and later logins send the returned
+    `tfatoken` with the password instead of `tfacode`. A `tfatoken` is not
+    an access token and is never sent in `Authorization`.
+
     ## Client identity
 
     Server 20.0.0 and later: maintained native clients must send `X-PD-Client` on
@@ -46,7 +51,11 @@ info:
     ## Error format
 
     All non-2xx responses use the envelope
-    `{ "error": { "code": N, "message": "..." } }`. See the
+    `{ "error": { "code": N, "message": "..." } }`. Some responses add
+    members to `error` -- `459` and `460` from `/auth/login` carry
+    `trust_device_possible` (Server 20.0.0 and later, see
+    `TwoFactorChallengeResponse`); clients must ignore members of `error`
+    they do not know. See the
     `#/components/responses` section for reusable response definitions
     (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `MethodNotAllowed`,
     `LengthRequired`, `PayloadTooLarge`, `TooManyRequests`).
@@ -269,7 +278,9 @@ paths:
             (`PD_ERRCODE_2FA_EMAIL_MISSING`) -- two-factor mode is `email` and
             the account has no e-mail address. Neither 4012 nor 4013 means the
             password was wrong, and neither counts towards the IP lockout (429).
-            4012/4013: Server 20.0.0 and later.
+            A login with a `tfatoken` the server accepts meets neither.
+            4012/4013: Server 20.0.0 and later. Keep a stored `tfatoken` on
+            every `401`.
           content:
             application/json:
               schema:
@@ -315,25 +326,43 @@ paths:
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "459":
-          description: Two-factor authentication not yet activated
+          description: |
+            Two-factor authentication not yet activated: the user's second
+            factor is an authenticator app (TOTP) that has not been activated
+            for the account. `error.message` is the path of a single-use QR
+            code image, relative to the server's address (no `/v2.0` prefix).
+            After the user has scanned it, resend the login with `tfacode`; the
+            first code that verifies activates the app, and `trust_device: true`
+            in that request also trusts the device when
+            `error.trust_device_possible` is `true`. A `459` to a request that
+            carried `tfatoken` also means the token was not accepted: discard it.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/TwoFactorChallengeResponse"
               example:
                 error:
                   code: 459
-                  message: "https://your-server:8714/v2.0/temp/qr123456.png"
+                  message: "/temp/2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881.png"
+                  trust_device_possible: true
         "460":
-          description: Two-factor authentication code required
+          description: |
+            Two-factor authentication code required. Resend the login with
+            `tfacode`, and with `trust_device: true` to trust the device when
+            `error.trust_device_possible` is `true` and the user opted in. A
+            `460` to a request that carried `tfatoken` means the server did not
+            accept the token: discard it and ask for the code (with e-mail
+            two-factor authentication a new code has been sent). A wrong
+            `tfacode` also answers `460`.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/TwoFactorChallengeResponse"
               example:
                 error:
                   code: 460
                   message: "Password Depot Enterprise Server requires two-factor authentication."
+                  trust_device_possible: true
 
   /auth/logout:
     parameters:
@@ -2177,7 +2206,10 @@ paths:
       security: []
       description: |
         Submit the signed assertion produced by the authenticator. On
-        success returns the same `access_token` shape as `/auth/login`.
+        success returns the same `access_token` shape as `/auth/login`. A
+        passkey sign-in involves no second factor: this response never
+        carries `tfatoken` or `tfatoken_expires_at`, and a `tfatoken` in the
+        request is not read.
       requestBody:
         required: true
         content:
@@ -3851,6 +3883,11 @@ components:
         - `negotiate`: (none -- SPNEGO handshake via `WWW-Authenticate`)
         - `azure` (deprecated): `id_token`
         - `oidc`: `idp`, `id_token`
+
+        Two-factor authentication adds `tfacode`, or, from Server 20.0.0, a
+        `tfatoken` from an earlier login that trusted the device
+        (`trust_device`). With `negotiate`, these members must be in the body
+        of the request that completes the handshake.
       properties:
         client:
           $ref: "#/components/schemas/ClientIdentity"
@@ -3889,6 +3926,40 @@ components:
         tfacode:
           type: string
           description: 6-digit two-factor authentication code (if enabled)
+        trust_device:
+          type: boolean
+          nullable: true
+          default: false
+          description: |
+            Server 20.0.0 and later. Asks the server to trust this device: when
+            a `tfacode` verifies in this same request and trusted devices are
+            possible for this sign-in (`trust_device_possible` on `459` /
+            `460`), the `200` carries `tfatoken` and `tfatoken_expires_at`.
+            Otherwise it is ignored -- no code verified, two-factor
+            authentication off for the server or the user, `admin` scope.
+            Must be a JSON boolean; `null` means absent. Any other JSON type,
+            or the key twice, answers `400`, which does not count towards the
+            IP lockout.
+        tfatoken:
+          type: string
+          nullable: true
+          maxLength: 128
+          description: |
+            Server 20.0.0 and later. The trusted-device token an earlier login
+            returned, sent instead of `tfacode`; the password (or `id_token`)
+            is still required. When the server accepts it, the login completes
+            with `200` and `access_token` only -- no new token is issued. When
+            it does not (unknown, expired, revoked, or a second factor it
+            cannot stand in for), the login continues as if no token had been
+            sent: `460` asks for the code, or `459` for the authenticator app
+            to be activated. A token that is not accepted does not count
+            towards the IP lockout. With `tfacode` as well, the token is tried
+            first and the code is verified only if the token is not accepted.
+            Ignored in `admin` scope and when two-factor authentication is off
+            for the server or the user. Must be a JSON string, not a number;
+            `null` and `""` mean absent. A longer string, any other JSON type,
+            or the key twice answers `400`, which does not count towards the
+            IP lockout.
         idp:
           type: string
           description: Identity Provider ID from `/auth/oidc` (required for `oidc`)
@@ -3909,10 +3980,39 @@ components:
 
     LoginResponse:
       type: object
+      description: |
+        Returned by `POST /auth/login` and `POST /auth/webauthn/complete`.
+        `tfatoken` and `tfatoken_expires_at` appear only from
+        `POST /auth/login`, and only when that request made the device
+        trusted; `/auth/webauthn/complete` never returns them.
       properties:
         access_token:
           type: string
           description: Bearer token to use in the Authorization header
+        tfatoken:
+          type: string
+          maxLength: 128
+          description: |
+            Server 20.0.0 and later, `POST /auth/login` only: present when the
+            request carried `trust_device: true` with a `tfacode` that verified
+            and trusted devices are possible for this sign-in. Send it as
+            `tfatoken` on later logins instead of `tfacode`. Opaque (currently
+            43 characters), not a JWT and never a Bearer credential: never send
+            it in `Authorization`, and send it to no endpoint other than
+            `/auth/login`. Returned only this once; the server keeps only a
+            hash of it. Store it like a credential, keyed by server and user,
+            and discard it only when a login that sent it is answered `459` or
+            `460`.
+        tfatoken_expires_at:
+          type: string
+          format: date-time
+          description: |
+            Present with `tfatoken`: the UTC instant after which the server no
+            longer accepts it. Advisory -- the server can stop accepting it
+            earlier, for example when the trusted-device period is lowered or
+            turned off, or when an administrator resets the user's two-factor
+            options. The lifetime is fixed from issue and is not extended by
+            use.
 
     OidcProvider:
       type: object
@@ -5697,6 +5797,11 @@ components:
       properties:
         error:
           type: object
+          description: |
+            Some responses add members to this object, for example
+            `trust_device_possible` on `459` / `460` from `/auth/login` (see
+            `TwoFactorChallengeResponse`). Clients must ignore members they do
+            not know.
           properties:
             code:
               type: integer
@@ -5742,6 +5847,42 @@ components:
             message:
               type: string
               description: Human-readable error message
+
+    TwoFactorChallengeResponse:
+      type: object
+      description: |
+        `459` and `460` from `POST /auth/login`: the standard error envelope,
+        whose `error` also carries `trust_device_possible` (Server 20.0.0 and
+        later). The HTTP status, `error.code` and `error.message` are the same
+        as without it. Clients must ignore members of `error` they do not
+        know.
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              description: "`459` or `460`, the same as the HTTP status."
+            message:
+              type: string
+              description: |
+                `459`: the path of a single-use QR code image, relative to the
+                server's address (for example `/temp/<name>.png`; no `/v2.0`
+                prefix). `460`: a localized message -- the prompt, which with
+                e-mail two-factor authentication names the masked address the
+                code was sent to, or the refusal of a wrong code. Never match
+                on it.
+            trust_device_possible:
+              type: boolean
+              description: |
+                Server 20.0.0 and later: always present on these responses, so
+                its presence tells a client that the server supports trusted
+                devices. `true` when a code verified together with
+                `trust_device: true` makes the device trusted and returns a
+                `tfatoken`: the user's second factor is the authenticator app
+                (TOTP) or e-mail, the server's trusted-device period is not 0,
+                the login is not in `admin` scope, and the server is not a
+                mirror server.
 
     # -------------------------------------------------------------------------
     # Self-Service (/me/...)

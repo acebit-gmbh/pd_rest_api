@@ -85,9 +85,13 @@ Authenticates a user and returns an access token for subsequent API requests.
 | `user` | string | Conditional | Username (required for `standard` and `sspi`) |
 | `pass` | string | Conditional | Password (required for `standard` and `sspi`) |
 | `tfacode` | string | No | 6-digit two-factor authentication code |
+| `trust_device` | boolean | No | *Server 20.0.0 and later.* With a `tfacode`, asks the server to trust this device and return a `tfatoken`. Default `false`; `null` means absent. See [Trusted Devices](#trusted-devices) |
+| `tfatoken` | string | No | *Server 20.0.0 and later.* Trusted-device token from an earlier login, sent instead of `tfacode`; at most 128 characters. `null` and `""` mean absent. See [Trusted Devices](#trusted-devices) |
 | `client` | object | No | Client platform, version and build; see [Client Identity](#client-identity-and-supported-clients). When the header also declares a platform they must agree |
 | `idp` | string | Conditional | Identity Provider ID from `/auth/oidc` (required for `oidc`) |
 | `id_token` | string | Conditional | Identity token obtained from the OIDC/Azure flow (required for `oidc` and `azure`) |
+
+`trust_device` must be a JSON boolean and `tfatoken` a JSON string. Any other JSON type, a `tfatoken` longer than 128 characters, or either key sent twice answers `400`, which does not count towards the IP lockout (`429`). When a request carries both `tfatoken` and `tfacode`, the token is tried first; if the server does not accept it, the code is verified as usual.
 
 ### Authentication Methods
 
@@ -202,6 +206,8 @@ On success, the server returns a JWT access token (same format as all other logi
 }
 ```
 
+A passkey sign-in involves no second factor, so this response never carries a `tfatoken`, and the WebAuthn endpoints do not read one (see [Trusted Devices](#trusted-devices)).
+
 **Required fields (Step 1):** `user`
 
 **Optional fields (Step 1):** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients))
@@ -240,6 +246,16 @@ The `id_token` field must carry **either** (a) a signed OIDC `id_token` (JWT) **
     curl -k -X POST "https://your-server:8714/v2.0/auth/login" \
       -H "Content-Type: application/json" \
       -d '{"user":"admin","pass":"my_password","tfacode":"123456"}'
+
+    # 2FA code, and trust this device (Server 20.0.0 and later)
+    curl -k -X POST "https://your-server:8714/v2.0/auth/login" \
+      -H "Content-Type: application/json" \
+      -d '{"user":"admin","pass":"my_password","tfacode":"123456","trust_device":true}'
+
+    # Trusted device: the stored tfatoken instead of a code (the password is still required)
+    curl -k -X POST "https://your-server:8714/v2.0/auth/login" \
+      -H "Content-Type: application/json" \
+      -d '{"user":"admin","pass":"my_password","tfatoken":"V2u_NKF0FJFp1KQayE24Z36Up-CncbSVg65JiReTBkU"}'
 
     # SSPI (Windows domain) login
     curl -k -X POST "https://your-server:8714/v2.0/auth/login" \
@@ -280,6 +296,36 @@ The `id_token` field must carry **either** (a) a signed OIDC `id_token` (JWT) **
         user    = "admin"
         pass    = "my_password"
         tfacode = "123456"
+    } | ConvertTo-Json
+
+    $response = Invoke-RestMethod `
+      -Uri "https://your-server:8714/v2.0/auth/login" `
+      -Method POST `
+      -Body $body `
+      -ContentType "application/json"
+
+    # 2FA code, and trust this device (Server 20.0.0 and later)
+    $body = @{
+        user         = "admin"
+        pass         = "my_password"
+        tfacode      = "123456"
+        trust_device = $true
+    } | ConvertTo-Json
+
+    $response = Invoke-RestMethod `
+      -Uri "https://your-server:8714/v2.0/auth/login" `
+      -Method POST `
+      -Body $body `
+      -ContentType "application/json"
+
+    # Absent when the server did not trust the device; store it like a password
+    $tfaToken = $response.tfatoken
+
+    # Trusted device: the stored tfatoken instead of a code (the password is still required)
+    $body = @{
+        user     = "admin"
+        pass     = "my_password"
+        tfatoken = $tfaToken
     } | ConvertTo-Json
 
     $response = Invoke-RestMethod `
@@ -354,6 +400,23 @@ The `id_token` field must carry **either** (a) a signed OIDC `id_token` (JWT) **
         verify=False,
     )
 
+    # 2FA code, and trust this device (Server 20.0.0 and later)
+    response = requests.post(
+        "https://your-server:8714/v2.0/auth/login",
+        json={"user": "admin", "pass": "my_password", "tfacode": "123456", "trust_device": True},
+        verify=False,
+    )
+    tfa_token = response.json().get("tfatoken")  # None when the device was not trusted
+
+    # Trusted device: the stored tfatoken instead of a code (the password is still required)
+    response = requests.post(
+        "https://your-server:8714/v2.0/auth/login",
+        json={"user": "admin", "pass": "my_password", "tfatoken": tfa_token},
+        verify=False,
+    )
+    if response.status_code in (459, 460):
+        tfa_token = None  # not accepted: discard it and ask for the code
+
     # SSPI (Windows domain) login
     response = requests.post(
         "https://your-server:8714/v2.0/auth/login",
@@ -390,12 +453,24 @@ The `id_token` field must carry **either** (a) a signed OIDC `id_token` (JWT) **
 }
 ```
 
+When the request carried `"trust_device": true` and made the device trusted (Server 20.0.0 and later; see [Trusted Devices](#trusted-devices)):
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "tfatoken": "V2u_NKF0FJFp1KQayE24Z36Up-CncbSVg65JiReTBkU",
+  "tfatoken_expires_at": "2026-10-18T09:12:00.000Z"
+}
+```
+
 | Field | Type | Description |
 |-------|------|-------------|
 | `access_token` | string | Bearer token for authenticating subsequent requests. Use it via the `Authorization: Bearer <token>` header. |
+| `tfatoken` | string | Only when this request made the device trusted. Send it as `tfatoken` on later logins instead of `tfacode`. Opaque, not a JWT, and never a Bearer credential. Returned only this once. |
+| `tfatoken_expires_at` | string (UTC, ISO 8601) | Present with `tfatoken`: when the server stops accepting the token at the latest. Advisory: the server can stop accepting it earlier. |
 
 !!! info "Simplified Response"
-    Unlike v1.0, the login response returns **only** `access_token`. There is no `client_id` -- the Bearer token alone identifies the session.
+    Unlike v1.0, the login response has no `client_id` -- the Bearer token alone identifies the session. Besides `access_token` it carries only the trusted-device fields above, and those only when the login asked for them with `trust_device`.
 
 ### Token Lifetime
 
@@ -419,9 +494,11 @@ For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines,
     - Use the minimum required scope (`"client"` unless admin access is needed)
     - Revoke tokens immediately when they are no longer needed
 
+A `tfatoken` is not an access token. It authenticates no API request and has no inactivity timeout; it stands in for the two-factor code at `/auth/login` for the server's trusted-device period. See [Trusted Devices](#trusted-devices).
+
 ### Token Structure
 
-The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc7519) signed with HMAC-SHA256. Clients normally treat it as an opaque Bearer credential, but the claims are documented here for debugging, log aggregation, and audit purposes. The server signs the token with a per-instance secret that is not exposed to clients.
+The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc7519) signed with HMAC-SHA256. Clients normally treat it as an opaque Bearer credential, but the claims are documented here for debugging, log aggregation, and audit purposes. The server signs the token with a per-instance secret that is not exposed to clients. This section describes `access_token` only: a `tfatoken` is an opaque random string, not a JWT, and carries no claims.
 
 **Claims emitted by both token types:**
 
@@ -485,7 +562,7 @@ Returned when credentials are invalid or the account is locked (`error.code` `40
 }
 ```
 
-Returned when the user's effective two-factor mode is `email` and the server cannot send e-mail: no SMTP server is configured, or the server's e-mail sender has stopped after repeated connection failures (it resumes only when the Password Depot Server service is restarted). While this lasts, a login that already carries `tfacode` is refused the same way. The HTTP status stays `401` and no token is issued. An administrator must fix this: do not report it as a wrong password and do not retry automatically. It is only reported after the password or identity token was accepted, it does not count towards the IP lockout (`429`), and it is still logged and alerted as a failed login.
+Returned when the user's effective two-factor mode is `email` and the server cannot send e-mail: no SMTP server is configured, or the server's e-mail sender has stopped after repeated connection failures (it resumes only when the Password Depot Server service is restarted). While this lasts, a login that already carries `tfacode` is refused the same way. A login with a `tfatoken` the server accepts is not affected: the [trusted device](#trusted-devices) stands in for the e-mailed code. The HTTP status stays `401` and no token is issued. An administrator must fix this: do not report it as a wrong password and do not retry automatically. It is only reported after the password or identity token was accepted, it does not count towards the IP lockout (`429`), and it is still logged and alerted as a failed login.
 
 An SMTP server that accepts the connection but refuses the message (for example, rejected SMTP credentials) is not detected at login: the client receives `460` and no e-mail arrives.
 
@@ -504,7 +581,7 @@ An SMTP server that accepts the connection but refuses the message (for example,
 }
 ```
 
-Returned when the user's effective two-factor mode is `email` but the account has no e-mail address. An administrator must set `email` on the user or change its `two_factor_mode` (see [Users](users.md#two_factor_mode-values)). It is only reported after the password or identity token was accepted, it does not count towards the IP lockout (`429`), and it is still logged and alerted as a failed login. When the server also cannot send e-mail, `4012` is reported instead.
+Returned when the user's effective two-factor mode is `email` but the account has no e-mail address. An administrator must set `email` on the user or change its `two_factor_mode` (see [Users](users.md#two_factor_mode-values)). It is only reported after the password or identity token was accepted, it does not count towards the IP lockout (`429`), and it is still logged and alerted as a failed login. When the server also cannot send e-mail, `4012` is reported instead. A login with a `tfatoken` the server accepts is not affected.
 
 *Changed in Server 20.0.0.* Earlier servers returned `error.code` `401`.
 
@@ -530,7 +607,7 @@ Content-Type: application/json
 }
 ```
 
-Returned when the IP address has exceeded the configured number of failed login attempts within the Login Interval (Server Manager &rarr; *Options* &rarr; *Security*). The block applies to **all** endpoints, not just `/auth/login`, for the duration of the Unblock-After period. The `Retry-After` header carries the remaining lockout in seconds -- honor it and back off; retrying immediately will not shorten the lockout. Responses with `error.code` `4012` or `4013` do not count towards this limit.
+Returned when the IP address has exceeded the configured number of failed login attempts within the Login Interval (Server Manager &rarr; *Options* &rarr; *Security*). The block applies to **all** endpoints, not just `/auth/login`, for the duration of the Unblock-After period. The `Retry-After` header carries the remaining lockout in seconds -- honor it and back off; retrying immediately will not shorten the lockout. Responses with `error.code` `4012` or `4013` do not count towards this limit, and neither does a `tfatoken` the server does not accept.
 
 ---
 
@@ -589,15 +666,16 @@ Common causes:
 {
   "error": {
     "code": 459,
-    "message": "https://your-server:8714/v2.0/temp/qr123456.png"
+    "message": "/temp/2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881.png",
+    "trust_device_possible": true
   }
 }
 ```
 
-Returned when two-factor authentication is configured on the server but not yet activated for this user. The `error.message` contains a URL to a QR code image that the user must scan with an authenticator app. After scanning, resend the login request with the `tfacode` field.
+Returned when the user's second factor is an authenticator app (TOTP) that has not been activated for this account yet. `error.message` holds the path of a QR code image, relative to the server's address and without the `/v2.0` prefix (here `https://your-server:8714/temp/2d71...4881.png`). The image can be fetched once; every `459` carries a new path. The user scans it with an authenticator app; then resend the login request with the `tfacode` field.
 
 !!! info
-    2FA initialization/registration is only possible through a standard Password Depot client. The REST API only supports confirming an already-initialized 2FA with a code.
+    Activation is completed over REST: the first code that verifies activates the authenticator app for the account, and later logins answer `460`. Add `"trust_device": true` to that request to trust the device at the same time (see [Trusted Devices](#trusted-devices)).
 
 ---
 
@@ -607,15 +685,76 @@ Returned when two-factor authentication is configured on the server but not yet 
 {
   "error": {
     "code": 460,
-    "message": "Password Depot Enterprise Server requires two-factor authentication.\r\nPlease enter the verification code sent to your email address:\r\n us****@*****.com"
+    "message": "Password Depot Enterprise Server requires two-factor authentication.\r\nPlease enter the verification code sent to your email address:\r\n us****@*****.com",
+    "trust_device_possible": true
   }
 }
 ```
 
 Returned when valid credentials were provided but a 2FA code is required. The 2FA code may be delivered via **email** or via an **authenticator app**, depending on the server configuration. Resend the login request with the `tfacode` field included.
 
-!!! warning "No Trusted Devices"
-    The REST API does not support trusted devices or trusted computers. Users must provide a valid 2FA code on **every** login.
+A `460` in answer to a request that carried `tfatoken` means the server did not accept the token: discard it and ask for the code. With e-mail two-factor authentication, that answer has sent a new code as usual.
+
+**`trust_device_possible`** *(Server 20.0.0 and later)*: `459` and `460` from `/auth/login` carry this boolean inside `error`, always `true` or `false`. `true` means that a code verified together with `"trust_device": true` makes the device trusted and returns a `tfatoken`. Its presence tells a client that the server supports trusted devices. The HTTP status, `error.code` and `error.message` are the same as without it. Ignore members of `error` you do not know.
+
+### Trusted Devices
+
+*Server 20.0.0 and later.* A client can ask the server to trust the device it runs on, so that later logins from it need the password (or identity token) but no two-factor code. This suits clients that sign in often, such as a mobile app that replays the stored password after a biometric unlock. The trusted devices form one list per user, shared with the Password Depot Windows client.
+
+**Flow:**
+
+1. A login is answered `460` (or `459`) with `"trust_device_possible": true`.
+2. The client resends the login with `tfacode` and `"trust_device": true`. When the code verifies, the `200` carries `tfatoken` and `tfatoken_expires_at` beside `access_token` (see [Success Response](#success-response)).
+3. Later logins send the credential as usual, plus `tfatoken` instead of `tfacode`:
+
+    ```json
+    {
+      "user": "john.doe",
+      "pass": "my_password",
+      "tfatoken": "V2u_NKF0FJFp1KQayE24Z36Up-CncbSVg65JiReTBkU"
+    }
+    ```
+
+    When the server accepts the token, the login completes with `200` and `access_token` only. No new token is issued: the token is not renewed by use, and its lifetime runs from when the code was entered.
+
+**The token:**
+
+- An opaque string of at most 128 characters (currently 43). It is not a JWT and never a Bearer credential: never send it in `Authorization`, and send it only to `/auth/login`.
+- Returned exactly once. The server keeps only a hash of it and cannot show it again.
+- It belongs to the user who received it, and it replaces only the second factor: the password, or the identity token for `oidc` and `azure`, is always required.
+
+**A token the server does not accept** -- unknown, expired, revoked, or for a second factor it cannot stand in for -- is treated as if none had been sent. The login answers `460` and asks for the code (with e-mail two-factor authentication a new code is sent), or `459` when the authenticator app has to be activated first. Such a token does not count towards the IP lockout (`429`) or the account's failed-login count. When the request also carries `tfacode`, the code is then verified as usual, and with `"trust_device": true` a new token is issued.
+
+**Where trusted devices apply:**
+
+| Situation | Token issued | Token accepted |
+|-----------|--------------|----------------|
+| Authenticator app (TOTP), activated | Yes, with a verified code | Yes |
+| Authenticator app not activated yet (`459`) | Yes, with the first verified code, which also activates the app | No: the user activates the app first |
+| E-mail code | Yes, with a verified code | Yes, also while the server cannot send e-mail (no `4012` / `4013` then) |
+| FIDO2 second factor (`409` over REST) | No | No |
+| Two-factor authentication off for the server or the user | No: `trust_device` is ignored | Ignored |
+| `"scope": "admin"` | No | Ignored |
+| Mirror server | No | Yes, tokens the main server issued |
+| Passkey sign-in (`/auth/webauthn/complete`) | No: no second factor is involved | Not used |
+
+The `auth` methods `standard`, `sspi`, `azure` and `oidc` all support trusted devices. With `negotiate`, `trust_device` and `tfatoken` must be in the body of the request that completes the handshake, as `tfacode` must.
+
+**Lifetime and revocation:**
+
+- A token is accepted for the server's trusted-device period, counted from when it was issued: Server Manager &rarr; *Options* &rarr; *2FA Settings* &rarr; **Trust period for user devices (hours)**, 480 hours (20 days) by default and up to 2400. Lowering the period shortens tokens already issued. Turning it off means no token is accepted or issued.
+- **Reset 2-Factor Authentication options** for the user in the Server Manager revokes all of that user's trusted devices, those of the Windows client and of REST clients alike. Deleting the user revokes them as well.
+- Logout, a password change and disabling the account do not end a token. A disabled account cannot sign in anyway.
+- A user has at most 10 trusted devices from REST logins; issuing another drops the oldest.
+
+**Client guidance:**
+
+- Key the token by server and user, and store it like a credential. On Android, encrypt it with the same Keystore key as the stored password and exclude it from backups.
+- Ask for `trust_device` only when the user opted in and `trust_device_possible` was `true`.
+- Discard the token only when a login that sent it is answered `459` or `460`. Keep it on `401`, `403`, `429` and `4012` / `4013`: those answers say nothing about the token.
+- Never send it as a Bearer token, and send it to no endpoint other than `/auth/login`.
+- Treat `tfatoken_expires_at` as the latest possible end, not as a promise.
+- A server without trusted devices ignores `trust_device` and `tfatoken`: its `459` and `460` carry no `trust_device_possible`, and its `200` never carries `tfatoken`.
 
 ### Client vs Admin Scope
 
@@ -627,6 +766,8 @@ The `scope` field determines which endpoints the session can access:
 | `admin` | No | All client endpoints, plus `/admin/databases` (full CRUD), `/admin/databases/{db}/permissions`, `/admin/users`, `/admin/groups`, `/admin/alerts`, `/admin/secrets` |
 
 When `scope` is omitted, it defaults to `"client"`. A client session sees only the databases the user has read access to; an admin session sees all databases on the server and can perform management operations.
+
+[Trusted devices](#trusted-devices) apply to `client` scope only. An admin-scope login is never issued a `tfatoken` and ignores one it is sent: it needs the two-factor code whenever two-factor authentication applies to the user.
 
 !!! note "Admin Login Example"
     ```json
@@ -654,6 +795,7 @@ Ends the current session. The exact behavior depends on the token type.
 !!! info "Behavior by token type"
     - **Short-lived session tokens** (issued by `POST /auth/login`) are discarded and the server drops the associated session state. The token will be rejected on subsequent use.
     - **Long-lived API tokens** (issued by the Password Depot Server Manager) are **not** revoked by this endpoint. Automated clients often share a single token across runs and should not be able to revoke it via the API. To revoke a long-lived token, use the Password Depot Server Manager.
+    - A [trusted device](#trusted-devices) is not forgotten: a `tfatoken` stays valid after logout.
 
 ### Request Headers
 

@@ -83,6 +83,20 @@ function Connect-PDServer {
     <#
     .SYNOPSIS
         Authenticates with the Password Depot Server v2.0 and returns a session object.
+
+    .DESCRIPTION
+        Trusted devices (Server 20.0.0 and later). -TrustDevice asks the server
+        to trust this device when a two-factor code is verified - one passed
+        with -TfaCode, or one typed at the 460 prompt when the server reports
+        trust_device_possible. -TfaToken sends a token an earlier login
+        returned, instead of a code; the password is still required.
+
+        The session object's TfaToken is the token to keep for the next login:
+        the one this login was issued, else the one passed with -TfaToken
+        unless the server refused it, else $null. TfaTokenExpiresAt is set
+        only when this login was issued a token. Store the token like a
+        password, per server and user. A $null return (459) after -TfaToken
+        means the token is no longer accepted either.
     #>
     param(
         [Parameter(Mandatory)] [string] $Server,
@@ -90,7 +104,9 @@ function Connect-PDServer {
         [Parameter(Mandatory)] [string] $Password,
         [int] $Port = 8714,
         [string] $Scope = "client",
-        [string] $TfaCode
+        [string] $TfaCode,
+        [string] $TfaToken,
+        [switch] $TrustDevice
     )
 
     $baseUri = "https://${Server}:${Port}/v2.0"
@@ -98,7 +114,12 @@ function Connect-PDServer {
 
     if ($TfaCode) {
         $body.tfacode = $TfaCode
+        if ($TrustDevice) { $body.trust_device = $true }
     }
+    if ($TfaToken) {
+        $body.tfatoken = $TfaToken
+    }
+    $keptToken = $TfaToken
 
     try {
         $response = Invoke-RestMethod -Uri "$baseUri/auth/login" -Method POST `
@@ -119,14 +140,23 @@ function Connect-PDServer {
 
         $code = $errorBody.error.code
 
+        # A 459 or 460 to a login that sent a trusted-device token: the server
+        # did not accept it. Drop it; the code decides from here on.
+        if (($code -eq 460 -or $code -eq 459) -and $body.ContainsKey('tfatoken')) {
+            $body.Remove('tfatoken')
+            $keptToken = $null
+        }
+
         if ($code -eq 460) {
             $tfaInput = Read-Host "Enter your 2FA code"
             $body.tfacode = $tfaInput
+            if ($TrustDevice -and $errorBody.error.trust_device_possible) { $body.trust_device = $true }
             $response = Invoke-RestMethod -Uri "$baseUri/auth/login" -Method POST `
                 -Body ($body | ConvertTo-Json) -ContentType "application/json"
         }
         elseif ($code -eq 459) {
-            Write-Warning "2FA setup required. QR code URL: $($errorBody.error.message)"
+            # error.message is a path relative to the server, without /v2.0
+            Write-Warning "2FA setup required. QR code URL: https://${Server}:${Port}$($errorBody.error.message)"
             return $null
         }
         else {
@@ -134,12 +164,17 @@ function Connect-PDServer {
         }
     }
 
+    # Present only when this login made the device trusted
+    if ($response.tfatoken) { $keptToken = $response.tfatoken }
+
     return [PSCustomObject]@{
-        BaseUri = $baseUri
-        Token   = $response.access_token
-        Server  = $Server
-        Port    = $Port
-        Scope   = $Scope
+        BaseUri           = $baseUri
+        Token             = $response.access_token
+        Server            = $Server
+        Port              = $Port
+        Scope             = $Scope
+        TfaToken          = $keptToken
+        TfaTokenExpiresAt = $response.tfatoken_expires_at
     }
 }
 

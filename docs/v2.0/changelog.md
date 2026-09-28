@@ -21,6 +21,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
 - `importance` strings map to the levels the desktop and mobile clients show
 - a password change ends the account's REST sessions
+- `POST /auth/login` can trust a device: `trust_device: true` with a verified `tfacode` returns a `tfatoken`, which later logins send instead of `tfacode`; `459` and `460` carry `error.trust_device_possible`
 - `open_uuid` and `approve_uuid` are optional in the secret representation
 - `include_totp: false` on a shared secret is applied: the recipient no longer gets the entry's one-time code
 - deleted entries and folders answer `404`
@@ -210,7 +211,7 @@ When a user's password is changed anywhere other than `POST /me/password`, all o
 | Password changed by the user in the Windows client | Invalidated |
 | `POST /me/password` | Kept: after the `204`, the account's REST session tokens, including the calling session's, stay valid |
 
-Long-lived API tokens are not affected by any password change.
+Long-lived API tokens are not affected by any password change, and neither are trusted devices (see **Trusted Devices for Two-Factor Sign-In** below).
 
 !!! warning "Behavior change for clients"
     If a session that was working starts returning `401`, sign in again -- the password may have been changed elsewhere.
@@ -220,7 +221,7 @@ Long-lived API tokens are not affected by any password change.
 The server takes the client's address from the connection at the start of every REST request, before authentication. Requests that carry no access token are therefore attributed to the address they come from:
 
 - **Audit:** in `GET /admin/audit`, these records carry the client address in `actor.ip`: the sign-in, two-factor and lockout records written while handling `POST /auth/login`, the alert records fired by a passkey sign-in (`POST /auth/webauthn/complete`), and the records for the anonymous `/shared/` page.
-- **IP lockout:** a wrong two-factor code on `POST /auth/login` (answered with `460`) counts towards the IP lockout for the client's address. Once the limit is reached, further requests from that address are answered with `429` and a `Retry-After` header.
+- **IP lockout:** a wrong two-factor code on `POST /auth/login` (answered with `460`) counts towards the IP lockout for the client's address; a `tfatoken` the server does not accept does not. Once the limit is reached, further requests from that address are answered with `429` and a `Retry-After` header.
 - **Super-administrator cooldown:** after repeated failed sign-ins to a super-administrator account, password sign-ins to super-administrator accounts from that address are refused with `401` for a period.
 - **Concurrent sessions:** the server can be set to refuse a second session. In that mode, a `POST /auth/login` sign-in with a password or identity token is not refused for this reason if it comes from the same address as the account's existing client session over the classic protocol (for example the Windows client). That session is ended instead. From any other address the sign-in is still refused with `401`.
 
@@ -236,11 +237,26 @@ When a user's effective two-factor mode is `email`, `POST /v2.0/auth/login` answ
 | The server cannot send e-mail: no SMTP server is configured, its e-mail sender stopped after repeated connection failures (until the service is restarted), or the code e-mail could not be handed to the sender | `401` | `4012` | `PD_ERRCODE_2FA_EMAIL_SEND_FAILED` |
 | The account has no e-mail address | `401` | `4013` | `PD_ERRCODE_2FA_EMAIL_MISSING` |
 
-If no SMTP server is configured or the e-mail sender has stopped, and the account also has no e-mail address, `4012` is returned. Either sub-code can also answer a request that already carries `tfacode`. With no SMTP server configured, such a login answers `4012` and does not issue the `460` code challenge. Invalid credentials still return `401` with `error.code = 401`. The 2FA challenges (`459`, `460`), the FIDO2 `409` and the second-password `403` / `4031` are unchanged.
+If no SMTP server is configured or the e-mail sender has stopped, and the account also has no e-mail address, `4012` is returned. Either sub-code can also answer a request that already carries `tfacode`. With no SMTP server configured, such a login answers `4012` and does not issue the `460` code challenge. Invalid credentials still return `401` with `error.code = 401`. The status and `error.code` of the 2FA challenges (`459`, `460`), the FIDO2 `409` and the second-password `403` / `4031` are unchanged.
 
 Neither `4012` nor `4013` counts towards the IP lockout (`429`), on the REST API or on the classic client protocol. Both are reported only after the sign-in credentials (password, Windows sign-in or identity token) were accepted and, with `"scope": "admin"`, after the Server Manager access check. Each attempt is still logged and alerted as a failed login.
 
 **Client guidance:** detect the conditions by `HTTP status == 401 && body.error.code == 4012` and `== 4013`. In both cases, advise contacting the administrator and do not retry automatically. This also applies when the request carried a `tfacode`: do not report it as a wrong code. Treat a plain `401` as before. Do not infer a reason from a sub-code you do not recognise: show a neutral sign-in failure, never "wrong password". Always match the numeric code, never the localized message. Servers before 20.0.0 send `error.code = 401` instead, and with no SMTP server configured they issue the `460` challenge to an account that has an e-mail address.
+
+#### Trusted Devices for Two-Factor Sign-In
+
+`POST /v2.0/auth/login` can trust the device a client runs on, so that later logins from it need the password (or identity token) but no two-factor code. Trusted devices form one list per user, shared with the Password Depot Windows client.
+
+- **`trust_device`** (boolean, optional, default `false`) asks the server to trust the device. When it comes with a `tfacode` that verifies in the same request and the server allows trusted devices for this sign-in, the `200` carries `tfatoken` and `tfatoken_expires_at` (UTC, advisory) beside `access_token`. The token is opaque, not a JWT and never a Bearer credential, and it is returned only this once.
+- **`tfatoken`** (string, optional, at most 128 characters) in a later login stands in for `tfacode`. The password, or the identity token for `oidc` and `azure`, is still required. An accepted token completes the login with `200` and `access_token` only: no new token is issued, and the lifetime still runs from when the code was entered. A token the server does not accept is treated as if none had been sent -- `460` asks for the code (with e-mail two-factor authentication a new code is sent), or `459` asks for the authenticator app to be activated -- and it does not count towards the IP lockout (`429`) or the account's failed-login count. With both `tfatoken` and `tfacode`, the token is tried first.
+- **`error.trust_device_possible`** (boolean) is always present in `459` and `460` from `/auth/login`. It is `true` when the user's second factor is the authenticator app (TOTP) or e-mail, the server's trusted-device period is not `0`, the login is not `"scope": "admin"`, and the server is not a mirror server. The HTTP status, `error.code` and `error.message` are unchanged.
+- **Validation.** `trust_device` must be a JSON boolean and `tfatoken` a JSON string; `null`, and an empty `tfatoken`, mean absent. Any other JSON type, a longer `tfatoken`, or either key sent twice answers `400`, which does not count towards the IP lockout.
+- **Where it applies.** The authenticator app once it is activated, and e-mail codes; with e-mail, an accepted token works even while the server cannot send e-mail (no `4012` / `4013`). Before the authenticator app is activated a token is not accepted, and the first verified code sent with `trust_device: true` both activates the app and issues a token. A FIDO2 second factor still answers `409`; no token is issued or accepted for it. In `admin` scope, and when two-factor authentication is off for the server or the user, `trust_device` and `tfatoken` are ignored. `standard`, `sspi`, `azure` and `oidc` sign-ins support trusted devices; with `negotiate` the members must be in the body of the request that completes the handshake, as `tfacode` must. Passkey sign-in needs no second factor and never issues or reads a token. A mirror server accepts the tokens the main server issued and issues none.
+- **Lifetime and revocation.** A token is accepted for the server's trusted-device period, counted from when it was issued: Server Manager &rarr; *Options* &rarr; *2FA Settings* &rarr; **Trust period for user devices (hours)**, 480 hours (20 days) by default and up to 2400. Lowering the period shortens tokens already issued; turning it off means no token is accepted or issued. **Reset 2-Factor Authentication options** for the user in the Server Manager revokes all of that user's trusted devices, those of the Windows client and of REST clients alike, and deleting the user does too. Logout, a password change and disabling the account do not. A user has at most 10 trusted devices from REST logins; issuing another drops the oldest.
+
+A login that sends neither `trust_device` nor `tfatoken` gets the same answers as before, apart from the new member inside `error`. Servers before 20.0.0 ignore `trust_device` and `tfatoken`. See [Trusted Devices](api-reference/authentication.md#trusted-devices).
+
+**Client guidance:** detect support by `trust_device_possible` in a `459` or `460`, or by `tfatoken` in a `200`. Offer "trust this device" only when the user opts in and `trust_device_possible` was `true`. Key the token by server and user, and store it like a credential; on Android, encrypt it with the same Keystore key as the stored password and exclude it from backups. Discard it only when a login that sent it is answered `459` or `460`; keep it on `401`, `403`, `429` and `4012` / `4013`. Never send it as a Bearer token, and send it to no endpoint other than `/auth/login`. Ignore members of `error` you do not know.
 
 ### Administration and Permissions
 
