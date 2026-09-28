@@ -32,8 +32,8 @@ info:
     New session tokens retain the login platform; an omitted header uses that
     platform and a conflicting header answers 400. The stored platform's
     disabled-policy refusal takes precedence over a conflicting header.
-    Login without an identity defaults to web. Legacy tokens without a stored
-    platform, including API tokens, use the header or default to web.
+    Login without an identity defaults to web. Long-lived API tokens carry
+    no platform and use the header or default to web.
     Every authenticated request rechecks the platform's Supported Clients
     switch, with no admin-scope exemption. The web switch is independent of
     native platform switches. Android disabled answers 403 / error.code 4036
@@ -84,12 +84,14 @@ info:
     later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
     `updateEntry` needs read permission on the entry, Server 20.0.0 and later),
     `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
-    cannot hold another icon, Server 20.0.0 and later) and `4035`
-    (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry` / `deleteFolder`: the item, or
-    something inside the folder, is being edited by another user; nothing was
-    deleted, Server 20.0.0 and later), and `4036`
-    (`PD_ERRCODE_ANDROID_DISABLED` -- the Android client is disabled, at login
-    or on authenticated requests, Server 20.0.0 and later) with HTTP `403`;
+    cannot hold another icon, Server 20.0.0 and later), `4035`
+    (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry`, `deleteFolder` or
+    `uploadDocumentContent`: the item, or something inside the folder, is
+    being edited by another user; nothing was deleted or written, Server
+    20.0.0 and later) and `4036`
+    (`PD_ERRCODE_ANDROID_DISABLED` -- the Android client is disabled, at login,
+    on OIDC discovery or on authenticated requests, Server 20.0.0 and later)
+    with HTTP `403`;
     `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
     `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
     that id in this database, Server 20.0.0 and later) with HTTP `404`; and
@@ -361,7 +363,7 @@ paths:
               example:
                 error:
                   code: 460
-                  message: "Password Depot Enterprise Server requires two-factor authentication."
+                  message: "Please enter the verification code from your Authenticator app."
                   trust_device_possible: true
 
   /auth/logout:
@@ -690,7 +692,7 @@ paths:
         with it.
 
         The folder, and everything inside it, must be free: when another
-        client is editing any of them the folder stays where it is and the
+        user is editing any of them the folder stays where it is and the
         answer is `403` with `error.code` `4035`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
@@ -889,7 +891,9 @@ paths:
         "403":
           description: |
             `error.code` 4031: wrong or missing second password.
-            `error.code` 403: no permission, or the entry is sealed.
+            `error.code` 403: no permission, the entry is sealed, or an
+            `encrypted_file` or `certificate` entry, read directly or through a
+            link, has legacy second-password protection that REST cannot verify.
           content:
             application/json:
               schema:
@@ -1039,7 +1043,10 @@ paths:
             `error.code` `403`. A `totp` write without read permission on the
             entry returns `error.code` `4033`
             (`PD_ERRCODE_TOTP_READ_REQUIRED`); a `totp` write on an entry
-            sealed for the caller keeps `error.code` `403`.
+            sealed for the caller keeps `error.code` `403`. So does an
+            `encrypted_file` or `certificate` entry with legacy
+            second-password protection that REST cannot verify; do not
+            re-prompt for a second password.
           content:
             application/json:
               schema:
@@ -1062,7 +1069,7 @@ paths:
         later); without `mode` the entry is moved to the recycle bin, where
         it keeps its id and can be restored.
 
-        The entry must be free: when another client is editing it, it stays
+        The entry must be free: when another user is editing it, it stays
         where it is and the answer is `403` with `error.code` `4035`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
@@ -2885,6 +2892,9 @@ paths:
             or incorrect current second password (error.code 4031). Legacy
             second-password protection that REST cannot verify answers plain
             error.code 403; do not retry by prompting for a password.
+            `error.code` 4035 (`PD_ERRCODE_ITEM_LOCKED`): the entry is being
+            edited by another user; nothing was written (Server 20.0.0 and
+            later). Offer to try again later.
           content:
             application/json:
               schema:
@@ -3454,12 +3464,14 @@ components:
         such as slash, colon or semicolon. Build is a nonnegative integer at
         most 9223372036854775807.
         Unknown platforms, unknown header parameters, malformed values and
-        duplicate recognized members answer 400. A login or WebAuthn-begin body
+        duplicate recognized members answer 400. So do an empty value, a comma
+        or a character outside printable ASCII anywhere in the value, and a
+        second X-PD-Client header. A login or WebAuthn-begin body
         client.platform must agree with this header.
         New sessions retain their login platform; omitting this header uses
         that platform and a conflicting value answers 400, unless disabled
-        platform policy refuses first. Legacy tokens without a stored platform
-        use the header or default to web. The same web fallback applies when
+        platform policy refuses first. Long-lived API tokens carry no platform
+        and use the header or default to web. The same web fallback applies when
         login has no identity. Version/build are informational, not permissions.
       schema:
         type: string
@@ -3689,7 +3701,8 @@ components:
         Insufficient permissions or a disabled client platform. Server 20.0.0
         and later uses error.code 4036 when Android is disabled; other disabled
         platforms use error.code 403 with a platform-specific message. Applies
-        at login and on authenticated requests, including existing sessions.
+        at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated
+        requests, including existing sessions.
       content:
         application/json:
           schema:
@@ -4008,11 +4021,12 @@ components:
           format: date-time
           description: |
             Present with `tfatoken`: the UTC instant after which the server no
-            longer accepts it. Advisory -- the server can stop accepting it
-            earlier, for example when the trusted-device period is lowered or
-            turned off, or when an administrator resets the user's two-factor
-            options. The lifetime is fixed from issue and is not extended by
-            use.
+            longer accepts it under the trusted-device period in force when it
+            was issued. Advisory -- the server can stop accepting it earlier,
+            for example when the period is lowered or turned off, or when an
+            administrator resets the user's two-factor options; if the period
+            is raised, it accepts the token for longer. The lifetime runs from
+            issue and is not extended by use.
 
     OidcProvider:
       type: object
@@ -5831,11 +5845,13 @@ components:
                 later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
                 `updateEntry` needs read permission on the entry, Server 20.0.0 and later),
                 `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
-                cannot hold another icon, Server 20.0.0 and later) and `4035`
-                (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry` / `deleteFolder`: the item, or
-                something inside the folder, is being edited by another user; nothing was
-                deleted, Server 20.0.0 and later)
-                with HTTP `403`;
+                cannot hold another icon, Server 20.0.0 and later), `4035`
+                (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry`, `deleteFolder` or
+                `uploadDocumentContent`: the item, or something inside the folder, is
+                being edited by another user; nothing was deleted or written, Server
+                20.0.0 and later) and `4036` (`PD_ERRCODE_ANDROID_DISABLED` -- the
+                Android client is disabled, at login, on OIDC discovery or on
+                authenticated requests, Server 20.0.0 and later) with HTTP `403`;
                 `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
                 `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
                 that id in this database, Server 20.0.0 and later) with HTTP `404`; and

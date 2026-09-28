@@ -786,6 +786,10 @@ function Set-PDDocumentContent {
     <#
     .SYNOPSIS
         Uploads binary content to a document entry.
+
+        On a certificate entry (Server 20.0.0 or later), -Part selects the
+        file to replace, public or private; the other file is kept. Without
+        -Part the public file is replaced.
     #>
     param(
         [Parameter(Mandatory)] [PSCustomObject] $Session,
@@ -793,9 +797,12 @@ function Set-PDDocumentContent {
         [Parameter(Mandatory)] [string] $EntryId,
         [Parameter(Mandatory)] [byte[]] $Content,
         [Parameter(Mandatory)] [string] $ContentType,
-        [string] $FileName
+        [string] $FileName,
+        [ValidateSet("public", "private")] [string] $Part
     )
     $uri = "$($Session.BaseUri)/databases/$DatabaseId/entries/$EntryId/content"
+    # ValidateSet ignores case; the server does not.
+    if ($Part) { $uri += "?part=$($Part.ToLowerInvariant())" }
     $headers = @{ Authorization = "Bearer $($Session.Token)" }
     if ($FileName) {
         $headers["Content-Disposition"] = "attachment; filename=`"$FileName`""
@@ -811,13 +818,20 @@ function Get-PDDocumentContent {
     .SYNOPSIS
         Downloads binary content of a document entry.
         Returns a hashtable with Content (byte[]), ContentType, and FileName.
+
+        Server 20.0.0 and later also serves the files of a certificate entry:
+        -Part private selects the private file, and -Part public or no -Part
+        the public one. A document takes no -Part; the server answers 400.
     #>
     param(
         [Parameter(Mandatory)] [PSCustomObject] $Session,
         [Parameter(Mandatory)] [string] $DatabaseId,
-        [Parameter(Mandatory)] [string] $EntryId
+        [Parameter(Mandatory)] [string] $EntryId,
+        [ValidateSet("public", "private")] [string] $Part
     )
     $uri = "$($Session.BaseUri)/databases/$DatabaseId/entries/$EntryId/content"
+    # The server matches part case-sensitively; ValidateSet does not.
+    if ($Part) { $uri += "?part=$($Part.ToLowerInvariant())" }
     $headers = @{ Authorization = "Bearer $($Session.Token)" }
     $response = Invoke-WebRequest -Uri $uri -Method GET -Headers $headers -UseBasicParsing
 

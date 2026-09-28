@@ -37,17 +37,29 @@ The platform is required when the header is supplied. Accepted values are `web`,
 }
 ```
 
-`client.platform` is a required string, at most 32 characters, containing one of the platform names above. `client.version` is an optional string with the same limit as the header value. `client.build` is an optional JSON integer with the same range as the header value. If the header and body both declare a platform, they must agree. WebAuthn complete and OIDC discovery do not accept a JSON client declaration. A WebAuthn challenge retains the platform declared at begin through the header or body; complete may omit the header and use that platform, but a conflicting platform returns `400`. A disabled stored platform is refused first. The Negotiate handshake also retains the declared platform across retries that have no JSON body.
+`client` must be a JSON object. `client.platform` is a required string, at most 32 characters, containing one of the platform names above. `client.version` is an optional string with the same limit as the header value. `client.build` is an optional JSON integer with the same range as the header value. `null` is not accepted for `client`, `client.platform`, `client.version` or `client.build`; leave out a value you do not send. If the header and body both declare a platform, they must agree. WebAuthn complete ignores a `client` member in its body, and OIDC discovery is a `GET` without a body. A WebAuthn challenge retains the platform declared at begin through the header or body; complete may omit the header and use that platform, but a conflicting platform returns `400`. A disabled platform is refused with `403` first, whether the challenge stored it or the header of the complete request declares it. The Negotiate handshake also retains the declared platform across retries that have no JSON body.
 
-Unknown platforms, malformed identity values, unknown header parameters, duplicate recognized identity members and conflicting header/body platforms return `400 Bad Request`. Extra members of the `client` object are ignored. Do not send the build as a JSON string.
+Unknown platforms, malformed identity values, unknown header parameters, duplicate recognized identity members and conflicting header/body platforms return `400 Bad Request`, as does an `X-PD-Client` header that is sent more than once, is empty, or contains a comma or a character outside printable ASCII. Send the header once, with a single identity. None of these `400`s counts towards the IP lockout (`429`). Extra members of the `client` object are ignored. Do not send the build as a JSON string.
 
 ### Platform Policy and Sessions
 
-The server checks the platform's existing **Supported Clients** setting at login and on every authenticated request. The setting for `web` is independent: disabling the Web Client does not disable identified native REST clients whose own platforms are enabled. An admin-scoped session has no platform-policy exemption.
+The server checks the platform's existing **Supported Clients** setting at login (including both WebAuthn steps), on OIDC discovery (`GET /auth/oidc`) and on every authenticated request. The setting for `web` is independent: disabling the Web Client does not disable identified native REST clients whose own platforms are enabled. An admin-scoped session has no platform-policy exemption.
+
+Each platform is governed by one of the Supported Clients settings in the Server Manager:
+
+| Platform | Supported Clients setting in the Server Manager |
+|----------|-------------------------------------------------|
+| `web` | Web Client |
+| `android` | Android Edition |
+| `ios` | iOS Edition |
+| `macos` | macOS Edition |
+| `linux` | Linux Edition |
+| `windows` | Standard Edition for Windows |
+| `windows-corp` | Corporate Edition for Windows |
 
 New session tokens retain the platform established at login. Later requests without the header use that stored platform; a header declaring a different platform returns `400`. If the stored platform is disabled, that policy refusal takes precedence over a conflicting header. Clients cannot change the platform of an established session by omitting or changing the header.
 
-For compatibility, a login with neither identity declaration defaults to `web`. Older tokens without a stored platform, including long-lived API tokens, use the request header when supplied and otherwise default to `web`. Maintained native clients must send their identity instead of relying on this fallback. Web clients can omit the header for compatibility with older servers that do not allow it through CORS. The Web Client declares `web` in the JSON `client` object at `/auth/login` or `/auth/webauthn/begin`, then uses the stored challenge/session identity without a custom header. The server does not infer a platform from `User-Agent`.
+For compatibility, a login with neither identity declaration defaults to `web`. Long-lived API tokens carry no platform: a request made with one uses its `X-PD-Client` header when supplied and otherwise defaults to `web`, so automation that sends no header works only while the Web Client is enabled under **Supported Clients**. Maintained native clients must send their identity instead of relying on this fallback. Web clients can omit the header for compatibility with older servers that do not allow it through CORS. The Web Client declares `web` in the JSON `client` object at `/auth/login` or `/auth/webauthn/begin`, then uses the stored challenge/session identity without a custom header. The server does not infer a platform from `User-Agent`.
 
 When Android is disabled, the response is **HTTP `403` with `error.code: 4036`**:
 
@@ -60,7 +72,7 @@ When Android is disabled, the response is **HTTP `403` with `error.code: 4036`**
 }
 ```
 
-Other disabled platforms return HTTP `403` with `error.code: 403` and a platform-specific message. Treat these responses as an administrator policy restriction, not as incorrect credentials or a request to retry login. Branch on the numeric status and code.
+Other disabled platforms return HTTP `403` with `error.code: 403` and a platform-specific message. Treat these responses as an administrator policy restriction, not as incorrect credentials or a request to retry login. They do not count towards the IP lockout (`429`). Branch on the numeric status and code.
 
 `X-PD-Client` is permitted by the server's CORS preflight response. Client identity is supplied by the application; it is not device attestation. Version and build are informational and do not grant permissions.
 
@@ -130,7 +142,7 @@ The authentication follows the standard [HTTP Negotiate protocol (RFC 4559)](htt
 
 **Required fields:** none (the `Authorization: Negotiate` header is handled by the HTTP client library)
 
-**Optional fields:** `scope`
+**Optional fields:** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients)), and for two-factor authentication `tfacode`, `trust_device` and `tfatoken` (see [Trusted Devices](#trusted-devices)). The two-factor members must be in the body of the request that completes the handshake. The platform declared on the first request holds for the whole handshake; a retry may omit it but must not declare a different one.
 
 !!! warning "Prerequisites"
     - The Password Depot Server must have **Integrated Windows Authentication** enabled in the server options.
@@ -467,7 +479,7 @@ When the request carried `"trust_device": true` and made the device trusted (Ser
 |-------|------|-------------|
 | `access_token` | string | Bearer token for authenticating subsequent requests. Use it via the `Authorization: Bearer <token>` header. |
 | `tfatoken` | string | Only when this request made the device trusted. Send it as `tfatoken` on later logins instead of `tfacode`. Opaque, not a JWT, and never a Bearer credential. Returned only this once. |
-| `tfatoken_expires_at` | string (UTC, ISO 8601) | Present with `tfatoken`: when the server stops accepting the token at the latest. Advisory: the server can stop accepting it earlier. |
+| `tfatoken_expires_at` | string (UTC, ISO 8601) | Present with `tfatoken`: when the server stops accepting the token under the trusted-device period in force at issue. Advisory: the server can stop accepting it earlier, and accepts it for longer if the period is raised. |
 
 !!! info "Simplified Response"
     Unlike v1.0, the login response has no `client_id` -- the Bearer token alone identifies the session. Besides `access_token` it carries only the trusted-device fields above, and those only when the login asked for them with `trust_device`.
@@ -517,6 +529,12 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 | Claim | Name | Type | Description |
 |-------|------|------|-------------|
 | `jti` | JWT ID | string | UUID of the `ApiToken` record in the server store. Used server-side for revocation: presenting a token whose `jti` no longer matches an active record returns `401`. Session tokens do **not** carry `jti` -- the server uses the presence of this claim to decide which token type it is looking at (e.g., when deciding the logout behavior) |
+
+**Claim only on session tokens:**
+
+| Claim | Name | Type | Description |
+|-------|------|------|-------------|
+| `client_platform` | -- | string | *Server 20.0.0 and later.* The client platform established at login: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Requests made with the token are checked against that platform's **Supported Clients** setting; see [Platform Policy and Sessions](#platform-policy-and-sessions). Long-lived API tokens do not carry it |
 
 **Telling the two token types apart on the client side:**
 
@@ -685,13 +703,13 @@ Returned when the user's second factor is an authenticator app (TOTP) that has n
 {
   "error": {
     "code": 460,
-    "message": "Password Depot Enterprise Server requires two-factor authentication.\r\nPlease enter the verification code sent to your email address:\r\n us****@*****.com",
+    "message": "Please enter the verification code that was sent to your email address: use*@*******.com",
     "trust_device_possible": true
   }
 }
 ```
 
-Returned when valid credentials were provided but a 2FA code is required. The 2FA code may be delivered via **email** or via an **authenticator app**, depending on the server configuration. Resend the login request with the `tfacode` field included.
+Returned when valid credentials were provided but a 2FA code is required. The 2FA code may be delivered via **email** or via an **authenticator app**, depending on the server configuration. Resend the login request with the `tfacode` field included. A wrong `tfacode` is answered `460` as well, and counts towards the IP lockout (`429`) and the account's failed-login count.
 
 A `460` in answer to a request that carried `tfatoken` means the server did not accept the token: discard it and ask for the code. With e-mail two-factor authentication, that answer has sent a new code as usual.
 
@@ -742,8 +760,8 @@ The `auth` methods `standard`, `sspi`, `azure` and `oidc` all support trusted de
 
 **Lifetime and revocation:**
 
-- A token is accepted for the server's trusted-device period, counted from when it was issued: Server Manager &rarr; *Options* &rarr; *2FA Settings* &rarr; **Trust period for user devices (hours)**, 480 hours (20 days) by default and up to 2400. Lowering the period shortens tokens already issued. Turning it off means no token is accepted or issued.
-- **Reset 2-Factor Authentication options** for the user in the Server Manager revokes all of that user's trusted devices, those of the Windows client and of REST clients alike. Deleting the user revokes them as well.
+- A token is accepted for the server's trusted-device period, counted from when it was issued: Server Manager &rarr; *Options* &rarr; *2FA Settings* &rarr; **Trust period for user devices (hours)**, 480 hours (20 days) by default and up to 2400. The server applies its current period at each login, so lowering it shortens tokens already issued and raising it lengthens them. Turning it off means no token is accepted or issued.
+- **Reset 2FA** for the user in the Server Manager revokes all of that user's trusted devices, those of the Windows client and of REST clients alike. Deleting the user revokes them as well.
 - Logout, a password change and disabling the account do not end a token. A disabled account cannot sign in anyway.
 - A user has at most 10 trusted devices from REST logins; issuing another drops the oldest.
 
@@ -751,9 +769,9 @@ The `auth` methods `standard`, `sspi`, `azure` and `oidc` all support trusted de
 
 - Key the token by server and user, and store it like a credential. On Android, encrypt it with the same Keystore key as the stored password and exclude it from backups.
 - Ask for `trust_device` only when the user opted in and `trust_device_possible` was `true`.
-- Discard the token only when a login that sent it is answered `459` or `460`. Keep it on `401`, `403`, `429` and `4012` / `4013`: those answers say nothing about the token.
+- Discard the token only when a login that sent it is answered `459` or `460`. Keep it on `401`, `403` and `429`, which say nothing about the token, and on `4012` / `4013`, which need an administrator first: a login after that still shows whether the token is accepted.
 - Never send it as a Bearer token, and send it to no endpoint other than `/auth/login`.
-- Treat `tfatoken_expires_at` as the latest possible end, not as a promise.
+- Treat `tfatoken_expires_at` as advisory: the server decides at each login whether it still accepts the token, so a token can end before or after that time.
 - A server without trusted devices ignores `trust_device` and `tfatoken`: its `459` and `460` carry no `trust_device_possible`, and its `200` never carries `tfatoken`.
 
 ### Client vs Admin Scope

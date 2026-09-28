@@ -1,6 +1,6 @@
 # Server Setup
 
-The REST service configuration for v2.0 is identical to v1.0 -- both API versions run on the same server instance and port. If you already have the REST service enabled for v1.0, no additional server configuration is needed.
+The REST service configuration for v2.0 is the same as for v1.0. If the REST service is already enabled, no additional server configuration is needed.
 
 ## Prerequisites
 
@@ -19,16 +19,18 @@ The REST service configuration for v2.0 is identical to v1.0 -- both API version
     - Port configuration via `pdserver.ini`
     - Firewall and network considerations
 
+!!! note "Supported Clients (Server 20.0.0 and later)"
+    Sign-in and every authenticated v2.0 request are checked against the **Supported Clients** option for the client's platform; see [Client Identity and Supported Clients](../api-reference/authentication.md#client-identity-and-supported-clients). The **Web Client** option covers the Password Depot Web Client and any client that declares no platform: scripts and long-lived API tokens that send no `X-PD-Client` header, and the example PowerShell scripts in `examples/v2.0`, such as `PD-RestClient-v2.ps1`. The Android, iOS, macOS and Linux editions and the Standard and Corporate editions for Windows each have their own option.
+
 ## v2.0 Endpoint Availability
 
-Once the REST service is enabled, v2.0 endpoints are automatically available alongside v1.0:
+Once the REST service is enabled, v2.0 endpoints are available automatically:
 
 | API Version | Base URL |
 |-------------|----------|
-| v1.0 | `https://<YOUR_SERVER>:8714/v1.0/` |
 | v2.0 | `https://<YOUR_SERVER>:8714/v2.0/` |
 
-Both versions share the same server process, port, and SSL certificate. No additional configuration is required to enable v2.0.
+On Servers 19.1.0 to 19.x, v1.0 is served beside v2.0 at `https://<YOUR_SERVER>:8714/v1.0/`, on the same server process, port and SSL certificate. Server 20.0.0 serves v2.0 only and answers `/v1.0/...` with `410 Gone`; see **REST API v1.0 Removed** in the [changelog](../changelog.md). No additional configuration is required to enable v2.0.
 
 ## Verifying the Setup
 

@@ -134,7 +134,7 @@ The `path` array contains the ancestor chain from the database root down to the 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `path` | array of objects | Ancestor breadcrumb trail (see [Path / Breadcrumb](#path--breadcrumb)) |
+| `path` | array of objects | Ancestor breadcrumb trail (see [Path / Breadcrumb](#path-breadcrumb)) |
 | `data` | array | Items in this folder (folders and entries) |
 | `total` | integer | Total number of items |
 | `offset` | integer | Current pagination offset |
@@ -548,11 +548,11 @@ No response body. Both modes answer alike.
 |--------|-------------|
 | `400 Bad Request` | `mode` is neither `recycle` nor `permanent`; nothing is deleted. Default message: `The "mode" parameter accepts only "recycle" or "permanent".` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another client (`error.code` `4035`) |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another user (`error.code` `4035`) |
 | `404 Not Found` | Database or folder not found |
 
 !!! note "A folder holding an item someone is editing is not deleted"
-    *Server 20.0.0 and later.* When the folder itself, or any sub-folder or entry below it, is checked out by another client, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the whole folder stays exactly as the request found it, down to the last entry. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other client is done, on a plain `403` they cannot.
+    *Server 20.0.0 and later.* When the folder itself, or any sub-folder or entry below it, is checked out by another user, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the whole folder stays exactly as the request found it, down to the last entry. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other user is done, on a plain `403` they cannot.
 
 ### Examples
 

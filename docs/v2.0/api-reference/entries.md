@@ -506,7 +506,7 @@ This sub-object is present only in the full representation when the caller may r
 GET /v2.0/databases/{db}/entries/{id}
 ```
 
-Returns the **full representation** of a specific entry, including the password, comments, custom fields, and the ancestor `path` for breadcrumb navigation (see [Path / Breadcrumb](folders.md#path--breadcrumb)). If the entry is protected by a second password, the `X-Second-Password` header is required.
+Returns the **full representation** of a specific entry, including the password, comments, custom fields, and the ancestor `path` for breadcrumb navigation (see [Path / Breadcrumb](folders.md#path-breadcrumb)). If the entry is protected by a second password, the `X-Second-Password` header is required.
 
 ### Path Parameters
 
@@ -590,7 +590,7 @@ Returns the **full representation** of a specific entry, including the password,
 | Status | Description |
 |--------|-------------|
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (body `error.code` = `403`), **or** a missing/incorrect `X-Second-Password` for a protected entry (body `error.code` = `4031`) |
+| `403 Forbidden` | Insufficient permissions, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry, read directly or through a link (body `error.code` = `403`), **or** a missing/incorrect `X-Second-Password` for a protected entry (body `error.code` = `4031`) |
 | `404 Not Found` | Database or entry not found, **or** the entry is in the recycle bin |
 
 !!! note "Deleted entries are not addressable"
@@ -896,7 +896,7 @@ Returns the compact representation of the updated entry.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields (body `error.code` = `400`), **or** a refused `totp` write (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions, or a `totp` write on an entry that is sealed for you (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`) |
+| `403 Forbidden` | Insufficient permissions, a `totp` write on an entry that is sealed for you, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`) |
 | `404 Not Found` | Database or entry not found |
 | `501 Not Implemented` | `totp` sent for an entry of type `encrypted_file` or `certificate` |
 
@@ -991,11 +991,11 @@ No response body. Both modes answer alike.
 |--------|-------------|
 | `400 Bad Request` | `mode` is neither `recycle` nor `permanent`; nothing is deleted. Default message: `The "mode" parameter accepts only "recycle" or "permanent".` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the entry is being edited by another client (`error.code` `4035`) |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the entry is being edited by another user (`error.code` `4035`) |
 | `404 Not Found` | Database or entry not found |
 
 !!! note "An entry someone is editing is not deleted"
-    *Server 20.0.0 and later.* When the entry is checked out by another client, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the entry stays exactly as the request found it. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other client is done, on a plain `403` they cannot.
+    *Server 20.0.0 and later.* When the entry is checked out by another user, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the entry stays exactly as the request found it. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other user is done, on a plain `403` they cannot.
 
 ### Examples
 
@@ -1267,7 +1267,7 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 1. `404` when the database or entry does not exist, the id is a folder, or the entry is in the recycle bin; `403` without use permission
 2. `403` without update permission
 3. `400` when the body is not a JSON object
-4. `403` / `4031` for a wrong or missing `X-Second-Password` on a protected entry
+4. `403` / `4031` for a wrong or missing `X-Second-Password` on a protected entry; then a plain `403` for an `encrypted_file` or `certificate` entry with legacy second-password protection that REST cannot verify
 5. `400` / `4007` when the body carries `image_custom`, `image_index` or `image_name` and they do not name a usable icon (see [Assigning an Icon](#assigning-an-icon)); a body without these keys is not checked
 6. `403` when `X-New-Second-Password` is sent without the `second_pass` permission
 7. Without a `totp` key nothing below applies
@@ -1644,7 +1644,7 @@ Returns the compact representation of the entry. The `document` or `certificate`
 |--------|-------------|
 | `400 Bad Request` | Entry has no supported binary content (including `encrypted_file`), the certificate `part` is invalid, or a document request includes a nonempty `part` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`) |
+| `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`), or the entry is being edited by another user (`error.code` `4035`, *Server 20.0.0 and later*); nothing is written |
 | `404 Not Found` | Database or entry not found, or the entry is in the recycle bin |
 | `409 Conflict` | Upload attempted through a link |
 | `411 Length Required` | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Refused before the body is read and before authentication; the connection is closed. A request that carries both headers answers `411`, not the `413` below (*Server 20.0.0 and later*) |
