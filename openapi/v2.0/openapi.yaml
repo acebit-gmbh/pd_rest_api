@@ -6,10 +6,8 @@ info:
 
     ## Authentication
 
-    All endpoints except `/auth/login`, `/auth/oidc`,
-    `/auth/webauthn/{begin,complete}` and, on Server 20.0.0 and later,
-    `/oidc/relay`, `/oidc/relay/collect`, `/oidc/relay/cancel` and
-    `/oidc/callback` require a valid
+    All endpoints except `/auth/login`, `/auth/oidc`, and
+    `/auth/webauthn/{begin,complete}` require a valid
     `Authorization: Bearer {access_token}` header obtained from the login
     endpoint. Tokens are JWTs signed with HS256; presence of the `jti` claim
     indicates a long-lived API token (issued via the Server Manager).
@@ -18,18 +16,6 @@ info:
     two-factor sign-in (`trust_device`), and later logins send the returned
     `tfatoken` with the password instead of `tfacode`. A `tfatoken` is not
     an access token and is never sent in `Authorization`.
-
-    Server 20.0.0 and later: `/oidc/relay`, `/oidc/relay/collect`,
-    `/oidc/relay/cancel` and `/oidc/callback` are the browser sign-in relay,
-    through which the Windows client and the Server Manager sign in with an
-    OpenID Connect provider in the user's own web browser. The server keeps
-    the provider's answer - only when the browser reaches the callback from
-    the network address that registered the sign-in - and hands it to the
-    program that registered the sign-in; it exchanges no code and signs
-    nobody in through these routes. `/oidc/callback` is an HTML page for a
-    browser, not a JSON endpoint. Register, collect and cancel answer `403`
-    to a request that carries an `Origin` header (a request from a web
-    page).
 
     ## Client identity
 
@@ -55,10 +41,6 @@ info:
     platforms answer 403 / error.code 403 with a platform-specific message.
     `X-PD-Client` is allowed by CORS. No User-Agent inference is performed;
     this declaration is not device attestation. Version/build are informational.
-    The browser sign-in relay (`/oidc/relay`, `/oidc/relay/collect`,
-    `/oidc/relay/cancel`, `/oidc/callback`) needs no client identity, and
-    the Supported Clients setting does not apply to it; a malformed
-    `X-PD-Client` header still answers 400 there, as on every route.
 
     ## Pagination
 
@@ -69,11 +51,7 @@ info:
     ## Error format
 
     All non-2xx responses use the envelope
-    `{ "error": { "code": N, "message": "..." } }`, except those that
-    `/oidc/callback`, a page for a browser, gives itself: it answers its own
-    errors with an HTML page (Server 20.0.0 and later). The checks every
-    request passes before it is routed (IP lockout `429`, malformed
-    `X-PD-Client` `400`) use the envelope there too. Some responses add
+    `{ "error": { "code": N, "message": "..." } }`. Some responses add
     members to `error` -- `459` and `460` from `/auth/login` carry
     `trust_device_possible` (Server 20.0.0 and later, see
     `TwoFactorChallengeResponse`); clients must ignore members of `error`
@@ -130,11 +108,7 @@ info:
     `OPTIONS` preflight, and JSON error responses). API responses can carry
     plaintext secrets and must never be written to a shared or browser disk
     cache. The shared-link HTML page (`GET /shared/...`) uses the slightly
-    stricter `Cache-Control: no-cache, no-store`. The browser sign-in
-    callback page (`/oidc/callback`, Server 20.0.0 and later) is
-    `text/html`, keeps `Cache-Control: no-store` and carries its own
-    `Content-Security-Policy`, `Referrer-Policy: no-referrer` and
-    `X-Frame-Options: DENY`.
+    stricter `Cache-Control: no-cache, no-store`.
 
     ## Timestamps
 
@@ -228,7 +202,7 @@ servers:
 
 tags:
   - name: Authentication
-    description: Login, logout, OIDC provider discovery, WebAuthn challenge flow, browser sign-in relay for OIDC providers
+    description: Login, logout, OIDC provider discovery, WebAuthn challenge flow
   - name: Self-Service
     description: Endpoints the current user can call on their own account (profile, password, passkeys)
   - name: Databases
@@ -434,366 +408,6 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/OidcProvider"
-
-  # ---------------------------------------------------------------------------
-  # Browser sign-in relay for OIDC providers (no token required)
-  # ---------------------------------------------------------------------------
-  /oidc/relay:
-    post:
-      operationId: registerOidcBrowserSignIn
-      tags:
-        - Authentication
-      summary: Register a pending browser sign-in with an OIDC provider
-      security: []
-      description: |
-        Server 20.0.0 and later. Registers a pending sign-in before the
-        program opens the provider's authorization URL in the user's web
-        browser, with `https://your-server:8714/v2.0/oidc/callback` as
-        `redirect_uri`. The Windows client and the Server Manager use it for
-        a provider whose administrator has set a browser redirect URL in the
-        Server Manager. The web client and the mobile apps keep their own
-        redirect URIs, and a third-party client does not need this route.
-
-        `state` is the one the authorization request carries; `secret` is
-        the caller's own, never passes through the browser, and the server
-        keeps only its SHA-256. The server keeps the sign-in in memory for
-        `expires_in` seconds - for 30 seconds from the first collect instead,
-        once its answer has been collected - or until it is withdrawn with
-        `/oidc/relay/cancel`, and loses it when it restarts; a mirror server
-        keeps pending sign-ins of its own. The callback keeps an answer only
-        when the browser's request comes from the network address that
-        registered the sign-in (the connection's peer address, so behind a
-        reverse proxy the proxy's).
-
-        No client identity is needed, and the Supported Clients setting does
-        not apply. The call does not count as a failed sign-in. A request
-        that carries an `Origin` header (a request from a web page) answers
-        `403`. While OpenID Connect sign-in is switched off on the server it
-        answers `404`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/OidcRelayRequest"
-      responses:
-        "201":
-          description: The sign-in is registered
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OidcRelayRegistration"
-        "403":
-          $ref: "#/components/responses/OidcRelayFromWebPage"
-        "400":
-          description: |
-            The body is not a JSON object, or `state` or `secret` is missing
-            or is not 43 characters of base64url.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error:
-                  code: 400
-                  message: "The sign-in relay request is not valid."
-        "404":
-          description: OpenID Connect sign-in is switched off on the server.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: A sign-in with this `state` is already registered.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error:
-                  code: 409
-                  message: "A sign-in with this state is already registered."
-        "429":
-          description: |
-            The server holds as many pending sign-ins as it allows: 4096 in
-            total, and 128 per source address (the connection's peer address,
-            so behind a reverse proxy the proxy's). Honor `Retry-After`. An
-            address under an IP lockout is answered `429` as well, as on
-            every route (see the `TooManyRequests` response).
-          headers:
-            Retry-After:
-              schema:
-                type: integer
-                minimum: 1
-              description: Seconds to wait before registering again
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error:
-                  code: 429
-                  message: "Too many sign-ins are waiting. Try again shortly."
-
-  /oidc/relay/collect:
-    post:
-      operationId: collectOidcBrowserSignIn
-      tags:
-        - Authentication
-      summary: Collect the identity provider's answer to a browser sign-in
-      security: []
-      description: |
-        Server 20.0.0 and later. Send the `state` and `secret` that were
-        registered with `/oidc/relay`. The call answers at once and does not
-        wait for the answer: ask about once a second until it answers `200`
-        or `404`, or until `expires_in` has passed. A `202` with `status`
-        `other_address` means that the browser reached the callback from
-        another network address; the Windows client and the Server Manager
-        stop waiting at that point and continue in their built-in sign-in
-        window.
-
-        A repeated collect with the same `state` and `secret` within 30
-        seconds of the first one that received the answer gets the same
-        answer again, so a reply lost on the way does not lose the sign-in.
-        After that the server forgets the sign-in, and a collect answers
-        `404`. Check the answer as after any OpenID Connect redirect -- its
-        `state` must be the one that was registered -- before using it.
-
-        No client identity is needed, and the Supported Clients setting does
-        not apply. The call does not count as a failed sign-in. A request
-        that carries an `Origin` header (a request from a web page) answers
-        `403`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/OidcRelayRequest"
-      responses:
-        "200":
-          description: The identity provider's answer
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OidcRelayAnswer"
-        "202":
-          description: |
-            No answer is kept yet. `status` is `pending` while no answer has
-            reached the callback (ask again in about a second), or
-            `other_address` when an answer reached it from another network
-            address than the one that registered the sign-in; that answer was
-            not kept, and the sign-in stays open.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OidcRelayPending"
-        "403":
-          $ref: "#/components/responses/OidcRelayFromWebPage"
-        "400":
-          description: |
-            The body is not a JSON object, or `state` or `secret` is missing
-            or is not 43 characters of base64url.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error:
-                  code: 400
-                  message: "The sign-in relay request is not valid."
-        "404":
-          description: |
-            The sign-in is unknown, has expired, was withdrawn or is no
-            longer kept after its answer was collected, or the secret is
-            wrong; the answer is the same for each. Also while OpenID Connect
-            sign-in is switched off on the server. Stop asking.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error:
-                  code: 404
-                  message: "The sign-in is unknown or has expired."
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
-
-  /oidc/relay/cancel:
-    post:
-      operationId: cancelOidcBrowserSignIn
-      tags:
-        - Authentication
-      summary: Withdraw a browser sign-in
-      security: []
-      description: |
-        Server 20.0.0 and later. Withdraws a sign-in registered with
-        `/oidc/relay` that the program gives up, so that the server frees its
-        place at once. The Windows client and the Server Manager call it when
-        the user cancels, when the wait times out, and when they continue in
-        their built-in sign-in window instead. The server forgets the
-        sign-in whether or not it had an answer: an answer that reaches the
-        callback afterwards is not kept, and a collect answers `404`.
-
-        No client identity is needed, and the Supported Clients setting does
-        not apply. The call does not count as a failed sign-in. A request
-        that carries an `Origin` header (a request from a web page) answers
-        `403`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/OidcRelayRequest"
-      responses:
-        "204":
-          description: The sign-in is withdrawn; no response body
-        "400":
-          description: |
-            The body is not a JSON object, or `state` or `secret` is missing
-            or is not 43 characters of base64url.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error:
-                  code: 400
-                  message: "The sign-in relay request is not valid."
-        "403":
-          $ref: "#/components/responses/OidcRelayFromWebPage"
-        "404":
-          description: |
-            The sign-in is unknown, has expired or was already withdrawn, or
-            the secret is wrong; the answer is the same for each. Also while
-            OpenID Connect sign-in is switched off on the server.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error:
-                  code: 404
-                  message: "The sign-in is unknown or has expired."
-
-  /oidc/callback:
-    get:
-      operationId: oidcBrowserSignInCallback
-      tags:
-        - Authentication
-      summary: Browser sign-in callback page (the redirect URI)
-      security: []
-      description: |
-        Server 20.0.0 and later. The redirect URI registered at the identity
-        provider, `https://your-server:8714/v2.0/oidc/callback`, beside the
-        redirect URI the provider already has (for Entra ID as a *Web*
-        redirect URI). The provider sends the user's browser here; programs
-        do not call it. The callback answers with an HTML page for the person
-        at the browser, its own errors included, and the page shows nothing
-        taken from the request. Before a request reaches the page it passes
-        the checks every REST request passes, which answer with the JSON
-        error envelope: an IP lockout (`429`) and a malformed `X-PD-Client`
-        header (`400`).
-
-        A query answer (`response_mode=query`, providers that return a code
-        only) is kept at once. A `GET` without a query serves a page whose
-        script takes a fragment answer (`response_mode=fragment`, hybrid
-        `code id_token` providers) from the URL, removes it from the address
-        bar and the browser history, posts it to this path as a form body,
-        and shows the page the server answers that post with; without a
-        fragment, the page says that the sign-in has to be started from
-        Password Depot.
-
-        The answer is kept as it arrived, only for a `state` that is
-        registered, not yet answered and not expired, and only when the
-        browser's request comes from the network address that registered the
-        sign-in; the first answer kept wins. An answer from another address
-        is not kept (`403`), and the sign-in stays open. Answers larger than
-        64 KB are refused, and while the answers the server holds are at
-        their bound in total, the callback keeps nothing and answers `503`.
-        The server exchanges no code and validates no token here. Methods
-        other than `GET` and `POST` answer `405` with `Allow: GET, POST` and
-        a page. No client identity is needed, and the Supported Clients
-        setting does not apply.
-      parameters:
-        - name: state
-          in: query
-          required: false
-          description: The `state` of the authorization request; it selects the registered sign-in
-          schema:
-            type: string
-        - name: code
-          in: query
-          required: false
-          description: Authorization code
-          schema:
-            type: string
-        - name: id_token
-          in: query
-          required: false
-          description: Identity token
-          schema:
-            type: string
-        - name: session_state
-          in: query
-          required: false
-          description: The provider's session state, where the provider sends one
-          schema:
-            type: string
-        - name: error
-          in: query
-          required: false
-          description: Sent instead of a code or token when the provider did not complete the sign-in
-          schema:
-            type: string
-        - name: error_description
-          in: query
-          required: false
-          description: The provider's description of `error`
-          schema:
-            type: string
-      responses:
-        "200":
-          $ref: "#/components/responses/OidcCallbackPage"
-        "400":
-          $ref: "#/components/responses/OidcCallbackUnusable"
-        "403":
-          $ref: "#/components/responses/OidcCallbackOtherAddress"
-        "404":
-          $ref: "#/components/responses/OidcCallbackUnknown"
-        "409":
-          $ref: "#/components/responses/OidcCallbackAnswered"
-        "503":
-          $ref: "#/components/responses/OidcCallbackBusy"
-    post:
-      operationId: oidcBrowserSignInCallbackForm
-      tags:
-        - Authentication
-      summary: Browser sign-in callback page, answer posted as a form body
-      security: []
-      description: |
-        Server 20.0.0 and later. The same page as `GET`, for an answer the
-        provider posts (`response_mode=form_post`) and for the page's own
-        post of a fragment answer. The body is kept at once, as it arrived,
-        whatever parameters it holds; the rules of `GET` apply.
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: "#/components/schemas/OidcCallbackParameters"
-      responses:
-        "200":
-          $ref: "#/components/responses/OidcCallbackPage"
-        "400":
-          $ref: "#/components/responses/OidcCallbackUnusable"
-        "403":
-          $ref: "#/components/responses/OidcCallbackOtherAddress"
-        "404":
-          $ref: "#/components/responses/OidcCallbackUnknown"
-        "409":
-          $ref: "#/components/responses/OidcCallbackAnswered"
-        "503":
-          $ref: "#/components/responses/OidcCallbackBusy"
 
   # ---------------------------------------------------------------------------
   # Databases (client)
@@ -4062,27 +3676,6 @@ components:
   # ---------------------------------------------------------------------------
   # Reusable Responses
   # ---------------------------------------------------------------------------
-  headers:
-    OidcCallbackContentSecurityPolicy:
-      description: |
-        The callback page's own policy: `default-src 'none'`, hash sources
-        for the page's inline script and style, `connect-src 'self'`,
-        `base-uri 'none'`, `form-action 'none'`, `frame-ancestors 'none'`.
-      schema:
-        type: string
-    ReferrerPolicyNoReferrer:
-      schema:
-        type: string
-        enum: [no-referrer]
-    XFrameOptionsDeny:
-      schema:
-        type: string
-        enum: [DENY]
-    CacheControlNoStore:
-      schema:
-        type: string
-        enum: [no-store]
-
   responses:
     BadRequest:
       description: |
@@ -4261,139 +3854,6 @@ components:
             error:
               code: 429
               message: "Your IP address has been blocked. Please contact your PD server administrator or try again later."
-
-    OidcRelayFromWebPage:
-      description: |
-        The request carries an `Origin` header: it comes from a web page.
-        The browser sign-in relay's register, collect and cancel routes do
-        not answer web pages (Server 20.0.0 and later).
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-          example:
-            error:
-              code: 403
-              message: "The sign-in relay does not answer web pages."
-
-    OidcCallbackPage:
-      description: |
-        An HTML page. The answer was kept: the page says that the sign-in is
-        complete, or that the identity provider did not complete it when the
-        answer carries `error`. For a `GET` without a query, the page that
-        relays a fragment answer and then shows the page the server answers
-        its own post with: the sign-in is complete, the provider did not
-        complete it, it was started from another network address, the
-        server is busy, or the sign-in has expired.
-      headers:
-        Content-Security-Policy:
-          $ref: "#/components/headers/OidcCallbackContentSecurityPolicy"
-        Referrer-Policy:
-          $ref: "#/components/headers/ReferrerPolicyNoReferrer"
-        X-Frame-Options:
-          $ref: "#/components/headers/XFrameOptionsDeny"
-        Cache-Control:
-          $ref: "#/components/headers/CacheControlNoStore"
-      content:
-        text/html:
-          schema:
-            type: string
-
-    OidcCallbackUnusable:
-      description: |
-        An HTML page saying that the sign-in has expired or was already
-        completed: a `POST` without a usable body, or an answer larger than
-        64 KB.
-      headers:
-        Content-Security-Policy:
-          $ref: "#/components/headers/OidcCallbackContentSecurityPolicy"
-        Referrer-Policy:
-          $ref: "#/components/headers/ReferrerPolicyNoReferrer"
-        X-Frame-Options:
-          $ref: "#/components/headers/XFrameOptionsDeny"
-        Cache-Control:
-          $ref: "#/components/headers/CacheControlNoStore"
-      content:
-        text/html:
-          schema:
-            type: string
-
-    OidcCallbackUnknown:
-      description: |
-        An HTML page saying that the sign-in has expired or was already
-        completed: no registered, unexpired sign-in has the answer's
-        `state`, or OpenID Connect sign-in is switched off on the server.
-      headers:
-        Content-Security-Policy:
-          $ref: "#/components/headers/OidcCallbackContentSecurityPolicy"
-        Referrer-Policy:
-          $ref: "#/components/headers/ReferrerPolicyNoReferrer"
-        X-Frame-Options:
-          $ref: "#/components/headers/XFrameOptionsDeny"
-        Cache-Control:
-          $ref: "#/components/headers/CacheControlNoStore"
-      content:
-        text/html:
-          schema:
-            type: string
-
-    OidcCallbackAnswered:
-      description: |
-        An HTML page saying that the sign-in is complete: the sign-in was
-        already answered, for example when the page is reloaded. The first
-        answer is the one kept.
-      headers:
-        Content-Security-Policy:
-          $ref: "#/components/headers/OidcCallbackContentSecurityPolicy"
-        Referrer-Policy:
-          $ref: "#/components/headers/ReferrerPolicyNoReferrer"
-        X-Frame-Options:
-          $ref: "#/components/headers/XFrameOptionsDeny"
-        Cache-Control:
-          $ref: "#/components/headers/CacheControlNoStore"
-      content:
-        text/html:
-          schema:
-            type: string
-
-    OidcCallbackOtherAddress:
-      description: |
-        An HTML page saying that the sign-in was started from another
-        network address: the browser's request did not come from the
-        address that registered the sign-in. The answer was not kept, the
-        sign-in stays open, and `/oidc/relay/collect` answers `202` with
-        `status` `other_address`.
-      headers:
-        Content-Security-Policy:
-          $ref: "#/components/headers/OidcCallbackContentSecurityPolicy"
-        Referrer-Policy:
-          $ref: "#/components/headers/ReferrerPolicyNoReferrer"
-        X-Frame-Options:
-          $ref: "#/components/headers/XFrameOptionsDeny"
-        Cache-Control:
-          $ref: "#/components/headers/CacheControlNoStore"
-      content:
-        text/html:
-          schema:
-            type: string
-
-    OidcCallbackBusy:
-      description: |
-        An HTML page saying that the server is busy: the answers the server
-        holds are at their bound in total. The answer was not kept.
-      headers:
-        Content-Security-Policy:
-          $ref: "#/components/headers/OidcCallbackContentSecurityPolicy"
-        Referrer-Policy:
-          $ref: "#/components/headers/ReferrerPolicyNoReferrer"
-        X-Frame-Options:
-          $ref: "#/components/headers/XFrameOptionsDeny"
-        Cache-Control:
-          $ref: "#/components/headers/CacheControlNoStore"
-      content:
-        text/html:
-          schema:
-            type: string
 
   # ---------------------------------------------------------------------------
   # Schemas
@@ -4603,106 +4063,6 @@ components:
         response_type:
           type: string
           description: OAuth 2.0 response type
-
-    OidcRelayRequest:
-      type: object
-      description: |
-        Server 20.0.0 and later. Body of `/oidc/relay`,
-        `/oidc/relay/collect` and `/oidc/relay/cancel`. Both values are 43
-        characters of base64url:
-        32 random bytes, encoded without padding. Use a new pair for every
-        sign-in.
-      required: [state, secret]
-      properties:
-        state:
-          type: string
-          minLength: 43
-          maxLength: 43
-          pattern: "^[A-Za-z0-9_-]{43}$"
-          description: The `state` parameter of the authorization request
-        secret:
-          type: string
-          minLength: 43
-          maxLength: 43
-          pattern: "^[A-Za-z0-9_-]{43}$"
-          description: |
-            A secret of the caller's own. It never passes through the
-            browser; send it to the relay routes only. The server keeps only
-            its SHA-256.
-      example:
-        state: Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs
-        secret: rFQA7F5dB1oQKQUZkYu8VXgYGwP1uXQRGg-fD3XNDDs
-
-    OidcRelayRegistration:
-      type: object
-      description: Server 20.0.0 and later. Answer of `/oidc/relay`.
-      required: [expires_in]
-      properties:
-        expires_in:
-          type: integer
-          description: |
-            Seconds for which the server keeps this sign-in, counted from
-            now. The answer must reach the callback, and be collected,
-            within that time.
-          example: 360
-
-    OidcRelayAnswer:
-      type: object
-      description: Server 20.0.0 and later. Answer of `/oidc/relay/collect` once the identity provider has answered.
-      required: [response]
-      properties:
-        response:
-          type: string
-          description: |
-            The identity provider's answer exactly as it reached the
-            callback, as a form-encoded parameter string: the query string,
-            the form body, or the URL fragment without `#`. It carries the
-            provider's parameters, such as `code`, `id_token`, `state` and
-            `session_state`, or `error` and `error_description` when the
-            provider did not complete the sign-in.
-          example: "code=SplxlOBeZQQYbYS6WxSbIA&id_token=eyJhbGciOi...&state=Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs"
-
-    OidcRelayPending:
-      type: object
-      description: Server 20.0.0 and later. Answer of `/oidc/relay/collect` while no answer is kept.
-      required: [status]
-      properties:
-        status:
-          type: string
-          enum: [pending, other_address]
-          description: |
-            `pending` -- no answer has reached the callback yet.
-            `other_address` -- an answer reached the callback from another
-            network address than the one that registered the sign-in; it was
-            not kept, and the sign-in stays open.
-
-    OidcCallbackParameters:
-      type: object
-      description: |
-        Server 20.0.0 and later. The identity provider's answer posted to
-        `/oidc/callback` as a form body (`response_mode=form_post`), or the
-        page's own post of a fragment answer. The whole body is kept,
-        whatever parameters it holds; these are the ones providers send.
-      properties:
-        state:
-          type: string
-          description: The `state` of the authorization request; it selects the registered sign-in
-        code:
-          type: string
-          description: Authorization code
-        id_token:
-          type: string
-          description: Identity token
-        session_state:
-          type: string
-          description: The provider's session state, where the provider sends one
-        error:
-          type: string
-          description: Sent instead of a code or token when the provider did not complete the sign-in
-        error_description:
-          type: string
-          description: The provider's description of `error`
-      additionalProperties: true
 
     # --- Databases ---
     DatabaseBasic:

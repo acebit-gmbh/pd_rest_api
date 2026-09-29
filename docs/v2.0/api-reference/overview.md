@@ -36,8 +36,6 @@ All endpoints require an `Authorization: Bearer <token>` header, **except**:
 - `POST /v2.0/auth/webauthn/begin` -- begin a WebAuthn/Passkey authentication
 - `POST /v2.0/auth/webauthn/complete` -- complete a WebAuthn/Passkey authentication
 - `GET /v2.0/auth/oidc` -- discover OIDC providers
-- `POST /v2.0/oidc/relay`, `POST /v2.0/oidc/relay/collect` and `POST /v2.0/oidc/relay/cancel` -- register a browser sign-in with an OIDC provider, collect the provider's answer, or withdraw the sign-in (*Server 20.0.0 and later*; see [Browser Sign-In Relay](authentication.md#browser-sign-in-relay))
-- `GET` and `POST /v2.0/oidc/callback` -- the page the identity provider sends the browser to (*Server 20.0.0 and later*)
 
 Include the header on every authenticated request:
 
@@ -47,11 +45,11 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
 The token expires after **10 minutes of inactivity**. Each successful request resets the timer.
 
-From Server 20.0.0, maintained native clients must also send `X-PD-Client` on every request, for example `android; version=20.0.0; build=123`. The server checks the corresponding Supported Clients setting at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated requests; new sessions retain the login platform. A disabled Android client returns `403` with `error.code: 4036`; other disabled platforms return a plain `403`. The header is allowed in CORS preflight. See [Client Identity and Supported Clients](authentication.md#client-identity-and-supported-clients) for valid platforms, the optional login-body identity and compatibility behavior. The routes of the [Browser Sign-In Relay](authentication.md#browser-sign-in-relay) under `/v2.0/oidc/` need no client identity and are not checked against Supported Clients.
+From Server 20.0.0, maintained native clients must also send `X-PD-Client` on every request, for example `android; version=20.0.0; build=123`. The server checks the corresponding Supported Clients setting at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated requests; new sessions retain the login platform. A disabled Android client returns `403` with `error.code: 4036`; other disabled platforms return a plain `403`. The header is allowed in CORS preflight. See [Client Identity and Supported Clients](authentication.md#client-identity-and-supported-clients) for valid platforms, the optional login-body identity and compatibility behavior.
 
 ## Request Format
 
-- All request bodies must be **JSON** with `Content-Type: application/json`. The one exception is the body a browser posts to the [browser sign-in callback](authentication.md#callback-page) (`POST /v2.0/oidc/callback`), which is `application/x-www-form-urlencoded`
+- All request bodies must be **JSON** with `Content-Type: application/json`
 - Every request body must state its size in a `Content-Length` header. A request that carries a `Transfer-Encoding` header - whether or not it also sends a `Content-Length` - is refused with `411 Length Required` before the body is read (*Server 20.0.0 and later*); see [Length required (`411`)](#http-status-codes) below
 - Character encoding: **UTF-8**
 - Query parameters are passed in the URL
@@ -67,7 +65,7 @@ All responses are returned as **JSON** with native types:
 
 ### Cache Headers
 
-Every API response includes the headers `Cache-Control: no-store` and `Pragma: no-cache`. This applies to all `/v2.0` and `/v1.0` endpoints, `/file` and `/temp` downloads, `OPTIONS` preflight responses, and JSON error responses. API responses can carry plaintext secrets (entry passwords, shared-secret values, second-password-decrypted fields), so they must never be written to a shared or browser disk cache. The shared-link HTML page (`GET /shared/...`) uses the slightly stricter `Cache-Control: no-cache, no-store`. The HTML page of the [browser sign-in callback](authentication.md#callback-page) (`/v2.0/oidc/callback`, *Server 20.0.0 and later*) keeps `Cache-Control: no-store` and carries its own `Content-Security-Policy`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`. These headers do not change any status code or response body.
+Every API response includes the headers `Cache-Control: no-store` and `Pragma: no-cache`. This applies to all `/v2.0` and `/v1.0` endpoints, `/file` and `/temp` downloads, `OPTIONS` preflight responses, and JSON error responses. API responses can carry plaintext secrets (entry passwords, shared-secret values, second-password-decrypted fields), so they must never be written to a shared or browser disk cache. The shared-link HTML page (`GET /shared/...`) uses the slightly stricter `Cache-Control: no-cache, no-store`. These headers do not change any status code or response body.
 
 ## Pagination
 
@@ -135,8 +133,6 @@ On error, the server returns a JSON object with a nested `error` object:
 |-------|------|-------------|
 | `error.code` | integer | HTTP status code, or an application sub-code (see below) |
 | `error.message` | string | Human-readable error description |
-
-The [browser sign-in callback](authentication.md#callback-page) (`/v2.0/oidc/callback`) is the exception: it is a page for a person at a web browser, and it answers its own errors with an HTML page. The checks that every request passes before it is routed - an IP lockout (`429`), a malformed `X-PD-Client` header (`400`) - answer it with this object as usual.
 
 Some responses add members to `error`. `459` and `460` from `POST /auth/login` carry the boolean `error.trust_device_possible` (Server 20.0.0 and later; see [Trusted Devices](authentication.md#trusted-devices)). Clients must ignore members of `error` they do not know.
 
@@ -357,16 +353,6 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `GET` | [`/auth/oidc`](authentication.md#oidc-providers) | List configured OIDC/Azure identity providers | -- |
 | `POST` | [`/auth/webauthn/begin`](authentication.md#webauthn) | Begin WebAuthn/Passkey authentication | -- |
 | `POST` | [`/auth/webauthn/complete`](authentication.md#webauthn) | Complete WebAuthn/Passkey authentication | -- |
-
-### Browser Sign-In Relay
-
-| Method | Path | Description | Scope |
-|--------|------|-------------|:-----:|
-| `POST` | [`/oidc/relay`](authentication.md#register-a-browser-sign-in) | Register a browser sign-in with an OIDC provider | -- |
-| `POST` | [`/oidc/relay/collect`](authentication.md#collect-the-answer) | Collect the identity provider's answer to a browser sign-in | -- |
-| `POST` | [`/oidc/relay/cancel`](authentication.md#cancel-a-browser-sign-in) | Withdraw a browser sign-in the program gives up | -- |
-| `GET` | [`/oidc/callback`](authentication.md#callback-page) | Page the identity provider sends the browser to (HTML) | -- |
-| `POST` | [`/oidc/callback`](authentication.md#callback-page) | The same page, for an answer posted as a form body (HTML) | -- |
 
 ### User Profile
 
