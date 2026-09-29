@@ -8,6 +8,7 @@ The REST service configuration for v2.0 is the same as for v1.0. If the REST ser
 - **REST web service** enabled in Server Manager
 - **SSL certificate** configured (mandatory since v18.0.0)
 - **Port 8714** open and accessible (default REST port)
+- For sign-in with an identity provider in the user's own web browser (the Windows client and the Server Manager, *Server 20.0.0 and later*): the REST port reachable **from the users' computers**, with a certificate those computers trust, and reached by the users' browsers from the same network address as the Password Depot program on the same computer (not through a web proxy that only the browser uses); see [Browser Sign-In Relay](../api-reference/authentication.md#browser-sign-in-relay)
 
 ## Setup Instructions
 

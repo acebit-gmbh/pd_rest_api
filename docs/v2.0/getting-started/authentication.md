@@ -187,6 +187,9 @@ Authentication via one of the OIDC identity providers registered on the server. 
 }
 ```
 
+!!! info "Browser sign-in for the Windows client and the Server Manager"
+    From Server 20.0.0, the Windows client and the Server Manager can sign in with a provider in the user's own web browser, through the server's [Browser Sign-In Relay](../api-reference/authentication.md#browser-sign-in-relay). A REST client that signs in with `oidc` does not need it: it keeps its own redirect URI and sends the `id_token` to `/auth/login` as shown above.
+
 ### Azure AD Authentication *(deprecated)*
 
 Predefined Azure AD / Entra ID authentication. Use `oidc` instead for new integrations.

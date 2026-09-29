@@ -6,7 +6,7 @@ API reference for authentication-related endpoints.
 
 ## Client Identity and Supported Clients
 
-*Server 20.0.0 and later.* Maintained native clients must identify their platform on every REST request, including login, OIDC discovery and both WebAuthn steps:
+*Server 20.0.0 and later.* Maintained native clients must identify their platform on every REST request, including login, OIDC discovery and both WebAuthn steps (the [Browser Sign-In Relay](#browser-sign-in-relay) excepted):
 
 ```http
 X-PD-Client: android; version=20.0.0; build=123
@@ -44,6 +44,8 @@ Unknown platforms, malformed identity values, unknown header parameters, duplica
 ### Platform Policy and Sessions
 
 The server checks the platform's existing **Supported Clients** setting at login (including both WebAuthn steps), on OIDC discovery (`GET /auth/oidc`) and on every authenticated request. The setting for `web` is independent: disabling the Web Client does not disable identified native REST clients whose own platforms are enabled. An admin-scoped session has no platform-policy exemption.
+
+The routes of the [Browser Sign-In Relay](#browser-sign-in-relay) under `/v2.0/oidc/` need no client identity, and the Supported Clients setting does not apply to them: the callback is called by a web browser, and the relay signs nobody in.
 
 Each platform is governed by one of the Supported Clients settings in the Server Manager:
 
@@ -1021,3 +1023,406 @@ If no OIDC providers are configured, the server returns an empty `data` array:
       "id_token": "<token obtained from OIDC flow>"
     }
     ```
+
+---
+
+## Browser Sign-In Relay
+
+*Server 20.0.0 and later.* The Password Depot Windows client and the Server Manager can sign a user in with an OpenID Connect provider in the user's own web browser. The identity provider sends the browser to a page on the Password Depot Server, the [callback](#callback-page); the server keeps the provider's answer and hands it to the program that registered the sign-in. That program checks the answer and signs in as before. The server exchanges no code and signs nobody in through these routes.
+
+**Who uses it:** the Windows client and the Server Manager, for a provider whose administrator has set a *Browser redirect URL* in the Server Manager's provider dialog. The web client and the mobile apps keep their own redirect URIs, and the [`OidcProvider`](#oidcprovider-schema) objects returned by `GET /auth/oidc` do not change: they do not include the browser redirect. A third-party client does not need these routes.
+
+**Flow:**
+
+1. The program creates the `state` of its authorization request and a secret of its own, and registers both with [`POST /v2.0/oidc/relay`](#register-a-browser-sign-in).
+2. It opens the provider's authorization URL in the user's browser, with the callback `https://your-server:8714/v2.0/oidc/callback` as `redirect_uri`.
+3. When the user has signed in, the provider sends the browser to the callback. The server keeps the answer under its `state` when the browser's request comes from the network address that registered the sign-in.
+4. The program polls [`POST /v2.0/oidc/relay/collect`](#collect-the-answer) with `state` and secret about once a second, and receives the answer.
+5. It checks the answer as after any OpenID Connect redirect and signs in over its usual connection.
+
+A program that gives a sign-in up -- the user cancels, the wait times out, or the program continues in its built-in sign-in window instead -- withdraws it with [`POST /v2.0/oidc/relay/cancel`](#cancel-a-browser-sign-in).
+
+**Rules for these routes:**
+
+- **No bearer token and no client identity.** `X-PD-Client` is not required, and the **Supported Clients** setting does not apply (see [Platform Policy and Sessions](#platform-policy-and-sessions)). The checks that every REST request passes before it is routed still apply: an address under an IP lockout is answered `429`, and a malformed `X-PD-Client` header `400`, both with the JSON error object.
+- **Not a sign-in.** These calls do not count as failed sign-ins towards the IP lockout.
+- **Not for web pages.** Register, collect and cancel answer `403` to a request that carries an `Origin` header, which browsers add to requests made by web pages. The callback is not affected.
+- **Same network address.** The callback keeps an answer only when the browser's request comes from the network address that registered the sign-in. Otherwise the answer is not kept, the callback answers `403` with a page saying that the sign-in was started from another network address, and the sign-in stays open; collect then answers `202` with `"status": "other_address"`. The address is the connection's peer address, so behind a reverse proxy it is the proxy's.
+- **OpenID Connect sign-in switched off.** While OpenID Connect sign-in is switched off on the server, these routes answer `404`.
+- **Limits.** The server holds up to 4096 pending sign-ins in total and 128 per source address; at either cap, register answers `429` with `Retry-After`. An answer is kept up to 64 KB, and the answers held at once are bounded in total as well: at that bound, the callback answers `503` with a page saying that the server is busy.
+- **In memory.** A pending sign-in is kept for 6 minutes from its registration. Once its answer has been collected, it is kept for 30 seconds from that first collect instead, and a withdrawn sign-in is forgotten at once. Pending sign-ins are lost when the server restarts. A mirror server serves these routes too, with pending sign-ins of its own: a program registers and collects at the server that the callback URL names.
+- **`state` and `secret`** are each 43 characters of base64url (`A`-`Z`, `a`-`z`, `0`-`9`, `-`, `_`): 32 random bytes, encoded without padding. Use a new pair for every sign-in.
+
+!!! warning "Prerequisites"
+    - OpenID Connect sign-in must be switched on in the server options, and the provider must have its *Browser redirect URL* set in the Server Manager: an `https://` address that ends in `/v2.0/oidc/callback`, such as `https://your-server:8714/v2.0/oidc/callback`, with the name and REST port under which the users' computers reach the server.
+    - The REST port must be reachable from the users' computers and serve a certificate those computers trust.
+    - The users' browsers must reach the REST port from the same network address as the Password Depot program on the same computer - not, for example, through a web proxy that only the browser uses. Otherwise the callback keeps no answer, and the Windows client and the Server Manager continue in their built-in sign-in window.
+    - The callback URL must be registered at the identity provider as a redirect URI, beside the redirect URI the provider already has, not instead of it. For Entra ID, register it as a *Web* redirect URI.
+
+### Register a Browser Sign-In
+
+Registers a pending sign-in before the program opens the browser.
+
+| | |
+|---|---|
+| **Endpoint** | `POST /v2.0/oidc/relay` |
+| **Auth required** | No |
+| **Content-Type** | `application/json` |
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|:--------:|-------------|
+| `state` | string | Yes | The `state` parameter of the authorization request: 43 characters of base64url |
+| `secret` | string | Yes | A secret of the caller's own: 43 characters of base64url. It never passes through the browser; send it to the relay routes only. The server keeps only its SHA-256 |
+
+```json
+{
+    "state": "Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs",
+    "secret": "rFQA7F5dB1oQKQUZkYu8VXgYGwP1uXQRGg-fD3XNDDs"
+}
+```
+
+#### Request Examples
+
+=== "curl"
+
+    ```bash
+    curl -k -X POST "https://your-server:8714/v2.0/oidc/relay" \
+      -H "Content-Type: application/json" \
+      -d '{"state":"Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs","secret":"rFQA7F5dB1oQKQUZkYu8VXgYGwP1uXQRGg-fD3XNDDs"}'
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    # 32 random bytes as base64url, without padding
+    function New-RelayToken {
+        $bytes = New-Object byte[] 32
+        [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+        [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    }
+
+    $state  = New-RelayToken
+    $secret = New-RelayToken
+    $body   = @{ state = $state; secret = $secret } | ConvertTo-Json
+
+    $response = Invoke-RestMethod `
+      -Uri "https://your-server:8714/v2.0/oidc/relay" `
+      -Method POST `
+      -Body $body `
+      -ContentType "application/json"
+
+    $expiresIn = $response.expires_in   # 360
+    ```
+
+=== "Python"
+
+    ```python
+    import base64
+    import secrets
+
+    import requests
+
+    def relay_token():
+        # 32 random bytes as base64url, without padding
+        return base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+
+    state, secret = relay_token(), relay_token()
+    response = requests.post(
+        "https://your-server:8714/v2.0/oidc/relay",
+        json={"state": state, "secret": secret},
+        verify=False,
+    )
+    expires_in = response.json()["expires_in"]  # 360
+    ```
+
+#### Success Response
+
+**Status:** `201 Created`
+
+```json
+{
+    "expires_in": 360
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `expires_in` | integer | Seconds for which the server keeps this sign-in, counted from now. The answer must reach the callback, and be collected, within that time |
+
+Then open the authorization URL with this `state` and `redirect_uri=https://your-server:8714/v2.0/oidc/callback`, and [collect the answer](#collect-the-answer).
+
+#### Error Responses
+
+Errors use the standard JSON error object.
+
+| Status | When |
+|:------:|------|
+| `400` | The body is not a JSON object, or `state` or `secret` is missing or is not 43 characters of base64url |
+| `403` | The request carries an `Origin` header: it comes from a web page |
+| `404` | OpenID Connect sign-in is switched off on the server |
+| `405` | A method other than `POST`; the `Allow` header is `POST` |
+| `409` | A sign-in with this `state` is already registered |
+| `429` | The server holds as many pending sign-ins as it allows: 4096 in total, and 128 per source address. The source address is the connection's peer address, so behind a reverse proxy it is the proxy's. The `Retry-After` header gives the seconds to wait. An address under an IP lockout is answered `429` as well |
+
+### Collect the Answer
+
+Asks for the identity provider's answer to a registered sign-in.
+
+| | |
+|---|---|
+| **Endpoint** | `POST /v2.0/oidc/relay/collect` |
+| **Auth required** | No |
+| **Content-Type** | `application/json` |
+
+#### Request Body
+
+The `state` and `secret` that were registered:
+
+```json
+{
+    "state": "Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs",
+    "secret": "rFQA7F5dB1oQKQUZkYu8VXgYGwP1uXQRGg-fD3XNDDs"
+}
+```
+
+The call answers at once; it does not wait for the answer to arrive. Ask about once a second until it answers `200` or `404`, or until `expires_in` has passed. A `202` with `"status": "other_address"` means that the browser reached the server from another network address: the Windows client and the Server Manager stop waiting at that point and continue in their built-in sign-in window.
+
+#### Request Examples
+
+=== "curl"
+
+    ```bash
+    curl -k -X POST "https://your-server:8714/v2.0/oidc/relay/collect" \
+      -H "Content-Type: application/json" \
+      -d '{"state":"Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs","secret":"rFQA7F5dB1oQKQUZkYu8VXgYGwP1uXQRGg-fD3XNDDs"}'
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    # $state, $secret and $expiresIn from the registration.
+    # Invoke-WebRequest tells the 202 from the 200; a 404 throws.
+    $body = @{ state = $state; secret = $secret } | ConvertTo-Json
+    $deadline = (Get-Date).AddSeconds($expiresIn)
+    $answer = $null
+
+    while ((Get-Date) -lt $deadline) {
+        $r = Invoke-WebRequest `
+          -Uri "https://your-server:8714/v2.0/oidc/relay/collect" `
+          -Method POST `
+          -Body $body `
+          -ContentType "application/json" `
+          -UseBasicParsing
+        $reply = $r.Content | ConvertFrom-Json
+        if ($r.StatusCode -eq 200) {
+            $answer = $reply.response
+            break
+        }
+        if ($reply.status -eq "other_address") {
+            break   # the browser reached the server from another address
+        }
+        Start-Sleep -Seconds 1   # "pending": no answer yet
+    }
+    ```
+
+=== "Python"
+
+    ```python
+    import time
+    from urllib.parse import parse_qsl
+
+    # state, secret and expires_in from the registration
+    relay = "https://your-server:8714/v2.0/oidc/relay"
+    body = {"state": state, "secret": secret}
+    deadline = time.monotonic() + expires_in
+    answer = None
+    while time.monotonic() < deadline:
+        response = requests.post(f"{relay}/collect", json=body, verify=False)
+        if response.status_code == 200:
+            answer = dict(parse_qsl(response.json()["response"]))
+            break
+        if response.status_code != 202 or response.json()["status"] == "other_address":
+            break  # 404: unknown or expired; other_address: see above
+        time.sleep(1)
+
+    if answer is None:
+        requests.post(f"{relay}/cancel", json=body, verify=False)  # give the sign-in up
+    elif answer.get("state") == state and "error" not in answer:
+        id_token = answer.get("id_token")
+    ```
+
+#### Success Responses
+
+**Status:** `200 OK` -- the answer
+
+```json
+{
+    "response": "code=SplxlOBeZQQYbYS6WxSbIA&id_token=eyJhbGciOi...&state=Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs&session_state=..."
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `response` | string | The identity provider's answer exactly as it reached the callback, as a form-encoded parameter string: the query string, the form body, or the URL fragment without `#`. It carries the provider's parameters, such as `code`, `id_token`, `state` and `session_state`, or `error` and `error_description` when the provider did not complete the sign-in |
+
+A repeated collect with the same `state` and `secret` within 30 seconds of the first one that received the answer gets the same answer again, so a reply lost on the way does not lose the sign-in. After that the server forgets the sign-in, and a collect answers `404`. Check the answer as after any OpenID Connect redirect -- its `state` must be the one that was registered -- before using it.
+
+**Status:** `202 Accepted` -- no answer kept yet
+
+```json
+{
+    "status": "pending"
+}
+```
+
+| `status` | Meaning |
+|----------|---------|
+| `pending` | The sign-in is registered, and no answer has reached the callback yet. Ask again in about a second |
+| `other_address` | An answer reached the callback from another network address than the one that registered the sign-in. It was not kept, and the sign-in stays open for an answer from the registering address |
+
+#### Error Responses
+
+Errors use the standard JSON error object.
+
+| Status | When |
+|:------:|------|
+| `400` | The body is not a JSON object, or `state` or `secret` is missing or is not 43 characters of base64url |
+| `403` | The request carries an `Origin` header: it comes from a web page |
+| `404` | The sign-in is unknown, has expired, was withdrawn or is no longer kept after its answer was collected, or the secret is wrong; the answer is the same for each. Also while OpenID Connect sign-in is switched off on the server. Stop asking |
+| `405` | A method other than `POST`; the `Allow` header is `POST` |
+
+### Cancel a Browser Sign-In
+
+Withdraws a registered sign-in that the program gives up, so that the server frees its place at once. The Windows client and the Server Manager call it when the user cancels, when the wait times out, and when they continue in their built-in sign-in window instead.
+
+| | |
+|---|---|
+| **Endpoint** | `POST /v2.0/oidc/relay/cancel` |
+| **Auth required** | No |
+| **Content-Type** | `application/json` |
+
+#### Request Body
+
+The `state` and `secret` that were registered:
+
+```json
+{
+    "state": "Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs",
+    "secret": "rFQA7F5dB1oQKQUZkYu8VXgYGwP1uXQRGg-fD3XNDDs"
+}
+```
+
+#### Request Examples
+
+=== "curl"
+
+    ```bash
+    curl -k -X POST "https://your-server:8714/v2.0/oidc/relay/cancel" \
+      -H "Content-Type: application/json" \
+      -d '{"state":"Wzm01KFTtCWkMeUTwKwGZ9n2WW3y9hBExsatSdm5PSs","secret":"rFQA7F5dB1oQKQUZkYu8VXgYGwP1uXQRGg-fD3XNDDs"}'
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    # $state and $secret from the registration
+    $body = @{ state = $state; secret = $secret } | ConvertTo-Json
+
+    Invoke-RestMethod `
+      -Uri "https://your-server:8714/v2.0/oidc/relay/cancel" `
+      -Method POST `
+      -Body $body `
+      -ContentType "application/json"
+    ```
+
+=== "Python"
+
+    ```python
+    # state and secret from the registration
+    response = requests.post(
+        "https://your-server:8714/v2.0/oidc/relay/cancel",
+        json={"state": state, "secret": secret},
+        verify=False,
+    )
+    withdrawn = response.status_code == 204
+    ```
+
+#### Success Response
+
+**Status:** `204 No Content`
+
+No response body. The server has forgotten the sign-in, whether or not it had an answer: an answer that reaches the callback afterwards is not kept, and a collect answers `404`.
+
+#### Error Responses
+
+Errors use the standard JSON error object.
+
+| Status | When |
+|:------:|------|
+| `400` | The body is not a JSON object, or `state` or `secret` is missing or is not 43 characters of base64url |
+| `403` | The request carries an `Origin` header: it comes from a web page |
+| `404` | The sign-in is unknown, has expired or was already withdrawn, or the secret is wrong; the answer is the same for each. Also while OpenID Connect sign-in is switched off on the server |
+| `405` | A method other than `POST`; the `Allow` header is `POST` |
+
+### Callback Page
+
+The redirect URI registered at the identity provider. The provider sends the user's browser here; programs do not call it.
+
+| | |
+|---|---|
+| **Endpoint** | `GET /v2.0/oidc/callback`, `POST /v2.0/oidc/callback` |
+| **Auth required** | No |
+| **Content-Type** | `application/x-www-form-urlencoded` (`POST`) |
+| **Response** | An HTML page (`text/html`) |
+
+The callback answers with an HTML page for the person at the browser, not with JSON, and it shows its own errors as a page as well. The page shows nothing taken from the request. Before a request reaches the page, it passes the checks that every REST request passes: an address under an IP lockout is answered `429`, and a malformed `X-PD-Client` header `400`, both with the JSON error object.
+
+**How the answer arrives:**
+
+| The provider answers in | The callback receives | Then |
+|-------------------------|-----------------------|------|
+| The query (`response_mode=query`; providers that return a code only) | `GET /v2.0/oidc/callback?code=...&state=...` | The answer is kept at once |
+| A form body (`response_mode=form_post`) | `POST /v2.0/oidc/callback` with `Content-Type: application/x-www-form-urlencoded` | The answer is kept at once |
+| The fragment (`response_mode=fragment`; hybrid `code id_token` providers) | `GET /v2.0/oidc/callback` without a query: the browser does not send the fragment | The page's script takes the answer from the fragment, removes it from the address bar and the browser history, and posts it to the same path as a form body |
+
+The answer is kept only for a `state` that is registered, not yet answered and not expired, and only when the browser's request comes from the network address that registered the sign-in; the first answer kept wins. An answer from another address is not kept, and the sign-in stays open for an answer from the registering address. An answer is kept as it arrived: the server exchanges no code and validates no token here. Answers larger than 64 KB are refused, and while the answers the server holds are at their bound in total, the callback keeps nothing and answers `503`.
+
+**Form body** (`POST`): the parameters of the provider's answer, for example:
+
+| Field | Description |
+|-------|-------------|
+| `state` | The `state` of the authorization request; it selects the registered sign-in |
+| `code` | Authorization code |
+| `id_token` | Identity token |
+| `session_state` | The provider's session state, where the provider sends one |
+| `error`, `error_description` | Sent instead when the provider did not complete the sign-in |
+
+The whole body is kept, whatever parameters it holds.
+
+**Response headers:**
+
+| Header | Value |
+|--------|-------|
+| `Content-Type` | `text/html` |
+| `Content-Security-Policy` | The page's own policy: `default-src 'none'`, hash sources for the page's inline script and style, `connect-src 'self'`, `base-uri 'none'`, `form-action 'none'`, `frame-ancestors 'none'` |
+| `Referrer-Policy` | `no-referrer` |
+| `X-Frame-Options` | `DENY` |
+| `Cache-Control` | `no-store` |
+
+**Statuses:**
+
+| Status | The page says | When |
+|:------:|---------------|------|
+| `200` | The sign-in is complete | The answer was kept |
+| `200` | The identity provider did not complete the sign-in | The answer was kept, and it carries `error` |
+| `200` | Completing the sign-in | A `GET` without a query: the page relays the fragment. Without a fragment it says that the sign-in has to be started from Password Depot |
+| `400` | The sign-in has expired or was already completed | A `POST` without a usable body, or an answer larger than 64 KB |
+| `403` | The sign-in was started from another network address | The browser's request did not come from the address that registered the sign-in. The answer was not kept, and the sign-in stays open |
+| `404` | The sign-in has expired or was already completed | No registered, unexpired sign-in has the answer's `state`; also while OpenID Connect sign-in is switched off on the server |
+| `405` | The sign-in has to be started from Password Depot | A method other than `GET` and `POST`; the `Allow` header is `GET, POST` |
+| `409` | The sign-in is complete | The sign-in was already answered, for example when the page is reloaded |
+| `503` | The server is busy; sign in again shortly | The answers the server holds are at their bound in total. The answer was not kept |
+
+The relaying page shows the page that the server answers its own post with: the sign-in is complete, the provider did not complete it, the sign-in was started from another network address, the server is busy, or the sign-in has expired.

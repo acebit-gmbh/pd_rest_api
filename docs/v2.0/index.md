@@ -74,7 +74,7 @@ v2.0 groups its endpoints by resource, separated into client and admin scopes:
 
 | Resource | Description |
 |----------|-------------|
-| [Auth](api-reference/authentication.md) | Login, logout, OIDC discovery, WebAuthn begin/complete |
+| [Auth](api-reference/authentication.md) | Login, logout, OIDC discovery, WebAuthn begin/complete; the browser sign-in relay for OIDC providers (Server 20.0.0 and later) |
 | [Profile (`/me`)](api-reference/users.md#user-profile) | Get profile; change own password; manage own passkeys (list/register/rename/delete) |
 | [Databases](api-reference/databases.md#client-endpoints) | List and read accessible databases; read the category list a database carries (Server 20.0.0 and later) |
 | [Folders](api-reference/overview.md#folders) | Folder management within databases |
