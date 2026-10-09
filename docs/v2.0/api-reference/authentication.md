@@ -225,7 +225,7 @@ A passkey sign-in involves no second factor, so this response never carries a `t
 **Optional fields (Step 1):** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients))
 
 !!! warning "Prerequisites"
-    - The Password Depot Server must have **WebAuthn** enabled in the server options.
+    - The Password Depot Server must have **WebAuthn** enabled in the server options. Otherwise Step 1 answers `400` "This method of authentication is not supported..." for every user name; this answer does not count towards the failed-login limit (`429`).
     - The PD user account must have the **WebAuthn** authentication method enabled and at least one passkey registered.
     - Passkey registration is handled through the native Password Depot client application (not via the REST API).
     - The `session_id` is single-use and expires after the server's configured WebAuthn timeout (default: 60 seconds).
@@ -565,7 +565,7 @@ A disabled Android client returns `403` with `error.code: 4036` and the message 
 }
 ```
 
-Returned when credentials are invalid or the account is locked (`error.code` `401`).
+Returned when credentials are invalid or the account is locked (`error.code` `401`). A sign-in with a method the account may not use -- one not among its `auth_modes`, or one the server's **Authentication methods** policy does not allow for it -- receives the answer the same request gets for an account the server does not know: this one for `standard` and `sspi`, `401` "The server cannot find the user account specified." for `azure` and `oidc`. A `standard` or `sspi` sign-in is answered like a method switched off on the server, `401` "This method of authentication is not supported..." for every user name, when the **Authentication methods** policy is enforced at server scope and does not include the method. The server log names the actual reason.
 
 ---
 
@@ -664,7 +664,7 @@ If authentication ultimately fails after the SPNEGO exchange, the server returns
 {
   "error": {
     "code": 401,
-    "message": "Windows authentication failed: no matching Password Depot user found for DOMAIN\\svc_account$"
+    "message": "Windows authentication succeeded but no matching Password Depot user found for \"DOMAIN\\svc_account$\"."
   }
 }
 ```
@@ -672,7 +672,7 @@ If authentication ultimately fails after the SPNEGO exchange, the server returns
 Common causes:
 
 - The Windows identity does not match any PD user's SAM or UPN field
-- The PD user does not have the IWA authentication method enabled
+- The PD user does not have the IWA authentication method enabled, or the server's **Authentication methods** policy does not allow `iwa` for the user
 - Kerberos ticket cannot be obtained (e.g., client not domain-joined, clock skew, or DNS resolution failure)
 - The client is not in the same domain or a trusted domain
 

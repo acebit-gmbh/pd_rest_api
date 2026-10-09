@@ -274,7 +274,14 @@ paths:
         "401":
           description: |
             Authentication failed; no token is issued. `error.code` gives the
-            reason: `401` -- invalid credentials or locked account; `4012`
+            reason: `401` -- invalid credentials, a locked account, or a
+            sign-in method the account may not use (not in its `auth_modes`,
+            or not allowed by the server's Authentication methods policy),
+            which is answered as an unknown account is, except a `standard`
+            or `sspi` sign-in that the policy's value enforced at server scope
+            excludes: like a method switched off on the server, it is
+            answered "This method of authentication is not supported..."
+            for every user name; `4012`
             (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED`) -- two-factor mode is `email`
             and the server cannot send the verification e-mail; `4013`
             (`PD_ERRCODE_2FA_EMAIL_MISSING`) -- two-factor mode is `email` and
@@ -2180,6 +2187,11 @@ paths:
         generic 401 response for unknown users, disabled accounts,
         WebAuthn-not-enabled users, and users with no registered
         passkeys. The real reason is recorded only in the server log.
+
+        When WebAuthn is switched off on the server, the request is
+        answered `400` "This method of authentication is not
+        supported..." for every user name; this answer does not count
+        towards the IP lockout (429).
       requestBody:
         required: true
         content:

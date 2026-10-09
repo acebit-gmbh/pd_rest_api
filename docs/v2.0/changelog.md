@@ -172,19 +172,41 @@ Disabling an account does not revoke any of its tokens. They are refused while t
 
 #### Sign-In Methods Follow the Server and Account Settings (Behavior Change)
 
-`POST /v2.0/auth/login` honours the server-wide switch for each sign-in method, in both `client` and `admin` scope. For `sspi`, `azure` and `oidc` it also checks that the account's `auth_modes` include the method:
+`POST /v2.0/auth/login` honours the server-wide switch for each sign-in method, in both `client` and `admin` scope, and checks that the account's `auth_modes` include the method (for `standard` that check is not new; its answer is):
 
 | `auth` | Server setting | Answer when the server setting is off | Answer when the account lacks the mode |
 |--------|----------------|---------------------------------------|----------------------------------------|
-| omitted / `standard` | Standard Authentication | `401` "This method of authentication is not supported..." | unchanged: `401` "Standard authentication is not enabled for this user." |
-| `sspi` | Windows Domain Credentials | `401` "This method of authentication is not supported..." | `401` "This method of authentication is not supported..." |
-| `azure` | Entra ID | `401` "This method of authentication is not supported..." | `401` "This method of authentication is not supported..." |
-| `oidc` | OpenID Connect | `401` "This method of authentication is not supported..." | `401` "Logon failure: unknown user name or bad password." |
+| omitted / `standard` | Standard Authentication | `401` "This method of authentication is not supported..." | `401` "Logon failure: unknown user name or bad password." |
+| `sspi` | Windows Domain Credentials | `401` "This method of authentication is not supported..." | `401` "Logon failure: unknown user name or bad password." |
+| `azure` | Entra ID | `401` "This method of authentication is not supported..." | `401` "The server cannot find the user account specified." |
+| `oidc` | OpenID Connect | `401` "This method of authentication is not supported..." | `401` "The server cannot find the user account specified." |
 
-The server setting is checked first, before the user name, token or identity provider is looked at. These responses carry `error.code` `401`. `auth: "negotiate"` still requires Integrated Windows Authentication on the server and the `iwa` mode on the account.
+The server setting is checked first, before the user name, token or identity provider is looked at. These responses carry `error.code` `401`. `auth: "negotiate"` still requires Integrated Windows Authentication on the server and the `iwa` mode on the account. An account that lacks the mode is answered as an account the server does not know; see **A Sign-In Method the Account May Not Use Is Answered Like an Unknown Account** below.
 
 !!! warning "Behavior change for clients"
     A sign-in method that works on one server may be switched off on another, or not allowed for one account. Handle the `401`, and do not infer the reason from the message, which is localizable.
+
+#### A Sign-In Method the Account May Not Use Is Answered Like an Unknown Account (Behavior Change)
+
+A sign-in with a method the account may not use is answered exactly as the same request is answered for an account the server does not know. This holds for `POST /v2.0/auth/login` and the passkey sign-in (`/auth/webauthn/begin` and `/auth/webauthn/complete`), in `client` and `admin` scope alike. An account may not use a method when:
+
+- the method is not among the account's `auth_modes`, or
+- the server's **Authentication methods** policy (`auth.methods.allowed`, set in the Server Manager under *Policies* for the server, a group or the user) does not allow the method for the account.
+
+| Sign-in | Answer |
+|---------|--------|
+| `auth` omitted / `standard` | `401` "Logon failure: unknown user name or bad password." -- the answer to a wrong user name or password |
+| `sspi` | `401` "Logon failure: unknown user name or bad password." |
+| `azure`, `oidc` | `401` "The server cannot find the user account specified." -- the answer to a valid token whose identity no account carries |
+| `negotiate` | `401` "Windows authentication succeeded but no matching Password Depot user found for "DOMAIN\user"." -- the answer to a Windows identity no account carries; the name is the Windows account name |
+| passkey (`/auth/webauthn/begin`, `/auth/webauthn/complete`) | `401` "Authentication failed." -- the one answer to every refused passkey sign-in |
+
+Each answer carries `error.code` `401` and no sub-code. For `standard` and `sspi` the method is checked before the password is verified, and for a passkey before its signature is, so the refusal is never counted as a failed attempt of the account; like every refused sign-in, it counts towards the address's failed-login limit (`429`). The actual reason is recorded for administrators: the server log names the method the account's `auth_modes` leave out, or the policy setting and the scope that declares it, and so does the sign-in's audit record for `standard`, `sspi`, `azure` and `oidc`.
+
+On `POST /v2.0/auth/login`, a method switched off on the server is still answered `401` "This method of authentication is not supported..." for every user name, `auth: "negotiate"` included (see the table in **Sign-In Methods Follow the Server and Account Settings**). So is a `standard` or `sspi` sign-in when the **Authentication methods** policy is enforced at server scope and does not include the method; such a value refuses the method to every account. When passkey sign-in (WebAuthn) is switched off on the server, `/auth/webauthn/begin` answers `400` with the same message for every user name, before the user name is looked at, and this answer does not count towards the failed-login limit.
+
+!!! warning "Behavior change for clients"
+    A refused method and a wrong user name or password receive the same `401`. Show `error.message`, offer the user the other sign-in methods your client supports, and advise contacting the administrator when a method that should work keeps being refused. Do not retry automatically, and match the numeric code, never the message, which is localizable.
 
 #### OIDC Identities Matched Within Their Provider (Behavior Change)
 
