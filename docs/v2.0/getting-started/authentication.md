@@ -14,9 +14,9 @@ The Password Depot REST API v2.0 uses standard **Bearer token** authentication. 
 X-PD-Client: android; version=20.0.0; build=123
 ```
 
-Use your application's platform: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Version and build are optional. The server applies the corresponding Supported Clients setting at login, on OIDC discovery and on subsequent token requests. Android disabled returns HTTP `403` with `error.code: 4036`; another disabled platform returns a plain `403`. Show the policy refusal instead of retrying credentials.
+Use your application's platform: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Version and build are optional. The server applies its **Allowed client platforms** policy for that platform at login, on OIDC discovery and on subsequent token requests. An Android client the policy does not allow receives HTTP `403` with `error.code: 4036`; another platform it does not allow receives a plain `403`. Show the policy refusal instead of retrying credentials.
 
-New session tokens retain the login platform. A login that declares no platform counts as `web`, and so does a request made with a long-lived API token that sends no `X-PD-Client`, so such scripts work only while the **Web Client** option under Supported Clients is enabled. Maintained native clients must identify themselves explicitly. The Web Client declares `web` in the body of `/auth/login` or `/auth/webauthn/begin` and uses the stored identity thereafter, preserving compatibility with older servers' CORS rules. See [Client Identity and Supported Clients](../api-reference/authentication.md#client-identity-and-supported-clients) for the login-body alternative, validation rules and token behavior.
+New session tokens retain the login platform. A login that declares no platform counts as `web`, and so does a request made with a long-lived API token that sends no `X-PD-Client`, so such scripts work only while the policy allows `web`. Maintained native clients must identify themselves explicitly. The Web Client declares `web` in the body of `/auth/login` or `/auth/webauthn/begin` and uses the stored identity thereafter, preserving compatibility with older servers' CORS rules. See [Client Identity and Supported Clients](../api-reference/authentication.md#client-identity-and-supported-clients) for the login-body alternative, validation rules and token behavior.
 
 ## Authentication Flow
 
@@ -169,7 +169,7 @@ The HTTP client library handles the Negotiate handshake automatically:
     ```
 
 !!! warning "Prerequisites"
-    - **Integrated Windows Authentication** must be enabled in the server options
+    - The server must allow **Integrated Windows Authentication**: from Server 20.0.0 the **Allowed sign-in methods** policy must include it (`iwa`) for the user; earlier servers enable it in the server options
     - The PD user must have the **IWA** auth method enabled with SAM or UPN populated
     - The client must be in the same or a trusted Active Directory domain
     - No additional SPN registration is needed -- the standard `HOST` SPNs on the server's computer account cover HTTP Negotiate
@@ -211,7 +211,7 @@ Predefined Azure AD / Entra ID authentication. Use `oidc` instead for new integr
 
 ### Token Lifetime
 
-Access tokens expire after **10 minutes of inactivity** by default. The inactivity timer resets on every authenticated API call, so active sessions stay alive indefinitely.
+Access tokens expire after a period of inactivity: from Server 20.0.0 the server's **Disconnect after inactivity** policy as it applies to the user, 60 minutes by default, or about 7 days where it has no limit; on earlier servers 10 minutes. The inactivity timer resets on every authenticated API call, so active sessions stay alive indefinitely.
 
 For **automation and service accounts**, the Password Depot Server Manager can generate **long-lived tokens** that do not expire on inactivity. See the [full reference](../api-reference/authentication.md#token-lifetime) for details and security recommendations.
 
@@ -266,12 +266,12 @@ This returns the full user profile including display name, roles, and group memb
 
 ## Token Expiration
 
-!!! warning "10-Minute Timeout"
-    The `access_token` expires after **10 minutes of inactivity**. Each successful API request resets the timer. If a request returns `401 Unauthorized`, the client must re-authenticate by calling the login endpoint again.
+!!! warning "Inactivity Timeout"
+    The `access_token` expires after the server's inactivity period: from Server 20.0.0 the **Disconnect after inactivity** policy that applies to the user (60 minutes by default), on earlier servers **10 minutes**. Each successful API request resets the timer. Do not assume a fixed period: if a request returns `401 Unauthorized`, the client must re-authenticate by calling the login endpoint again.
 
 ## Two-Factor Authentication (2FA)
 
-If two-factor authentication is enabled for the user, the login flow has additional steps: the server answers `459` or `460`, and the client resends the login with the code. From Server 20.0.0 the server's policies can require a second factor and choose its method (see [Which Second Factor Is Asked](../api-reference/authentication.md#which-second-factor-is-asked)), and the client can also ask the server to trust the device, so that later logins need the password but no code (see [Trusted Devices](#trusted-devices) below).
+If two-factor authentication is enabled for the user, the login flow has additional steps: the server answers `459` or `460`, and the client resends the login with the code. From Server 20.0.0 the server's policies decide whether a second factor is asked and which one (see [Which Second Factor Is Asked](../api-reference/authentication.md#which-second-factor-is-asked)), and the client can also ask the server to trust the device, so that later logins need the password but no code (see [Trusted Devices](#trusted-devices) below).
 
 **Summary:**
 
@@ -405,7 +405,7 @@ Later logins send the password as usual and the stored `tfatoken` instead of `tf
         tfa_token = None  # not accepted: discard it and ask for the code
     ```
 
-The token is not an access token and never goes into `Authorization`. It survives logout, and it ends with the trusted-device period (the server's, 480 hours by default, or a shorter one the server's policies set for the user) or when an administrator resets the user's two-factor options. See [Trusted Devices](../api-reference/authentication.md#trusted-devices) for the full rules and client guidance.
+The token is not an access token and never goes into `Authorization`. It survives logout, and it ends with the trusted-device period that the server's policies set for the user (20 days by default) or when an administrator resets the user's two-factor options. See [Trusted Devices](../api-reference/authentication.md#trusted-devices) for the full rules and client guidance.
 
 ## OIDC Discovery
 

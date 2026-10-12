@@ -43,9 +43,9 @@ Include the header on every authenticated request:
 Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 ```
 
-The token expires after **10 minutes of inactivity**. Each successful request resets the timer.
+The token expires after a period of inactivity, and each successful request resets the timer. From Server 20.0.0 the period is the server's **Disconnect after inactivity** policy as it applies to the user, 60 minutes by default; earlier servers use 10 minutes. See [Token Lifetime](authentication.md#token-lifetime).
 
-From Server 20.0.0, maintained native clients must also send `X-PD-Client` on every request, for example `android; version=20.0.0; build=123`. The server checks the corresponding Supported Clients setting at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated requests; new sessions retain the login platform. A disabled Android client returns `403` with `error.code: 4036`; other disabled platforms return a plain `403`. The header is allowed in CORS preflight. See [Client Identity and Supported Clients](authentication.md#client-identity-and-supported-clients) for valid platforms, the optional login-body identity and compatibility behavior.
+From Server 20.0.0, maintained native clients must also send `X-PD-Client` on every request, for example `android; version=20.0.0; build=123`. The server checks its **Allowed client platforms** policy for that platform at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated requests; new sessions retain the login platform. An Android client the policy does not allow receives `403` with `error.code: 4036`; other platforms it does not allow receive a plain `403`. The header is allowed in CORS preflight. See [Client Identity and Supported Clients](authentication.md#client-identity-and-supported-clients) for valid platforms, the optional login-body identity and compatibility behavior.
 
 ## Request Format
 

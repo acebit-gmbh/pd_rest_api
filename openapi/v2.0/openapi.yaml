@@ -17,6 +17,14 @@ info:
     `tfatoken` with the password instead of `tfacode`. A `tfatoken` is not
     an access token and is never sent in `Authorization`.
 
+    A session token expires after a period of inactivity; every
+    authenticated request resets the timer. From Server 20.0.0 the period is
+    the server's Disconnect after inactivity policy (session.idle_timeout)
+    as it applies to the user: 60 minutes by default, 10 to 10000 minutes,
+    or no limit, with which a session ends after 600000 seconds (about 7
+    days) without a request. Earlier servers use 10 minutes. Long-lived API
+    tokens do not expire on inactivity.
+
     ## Client identity
 
     Server 20.0.0 and later: maintained native clients must send `X-PD-Client` on
@@ -34,16 +42,17 @@ info:
     disabled-policy refusal takes precedence over a conflicting header.
     Login without an identity defaults to web. Long-lived API tokens carry
     no platform and use the header or default to web.
-    Every authenticated request rechecks the platform's Supported Clients
-    switch, with no admin-scope exemption. The web switch is independent of
-    native platform switches. Android disabled answers 403 / error.code 4036
-    and `The Android client is disabled on this server.` Other disabled
-    platforms answer 403 / error.code 403 with a platform-specific message.
-    The server's Allowed client platforms policy (session.platforms.allowed)
-    applies on top of these switches where it is set: a platform it leaves
-    out is refused with the same answer - a value enforced at server scope
-    where the switch is checked, the account's own value once the sign-in has
-    proven the account and on every authenticated request.
+    Which platforms may sign in and send requests is decided by the server's
+    Allowed client platforms policy (session.platforms.allowed), each
+    platform on its own and with no admin-scope exemption; by default every
+    platform but web is allowed. A value enforced at server scope is checked
+    at login, on OIDC discovery and on every authenticated request, before
+    the account is known; otherwise the account's value is checked once the
+    sign-in has proven the account and on every authenticated request. An
+    Android client the policy does not allow answers 403 / error.code 4036
+    and `The Android client is disabled on this server.` Other platforms it
+    does not allow answer 403 / error.code 403 with a platform-specific
+    message.
     `X-PD-Client` is allowed by CORS. No User-Agent inference is performed;
     this declaration is not device attestation. Version/build are informational.
 
@@ -282,11 +291,10 @@ paths:
             reason: `401` -- invalid credentials, a locked account, or a
             sign-in method the account may not use (not in its `auth_modes`,
             or not allowed by the server's Allowed sign-in methods policy),
-            which is answered as an unknown account is, except a `standard`
-            or `sspi` sign-in that the policy's value enforced at server scope
-            excludes: like a method switched off on the server, it is
-            answered "This method of authentication is not supported..."
-            for every user name; `4012`
+            which is answered as an unknown account is, except a method the
+            policy's value enforced at server scope excludes: it is answered
+            "This method of authentication is not supported..." for every
+            user name; `4012`
             (`PD_ERRCODE_2FA_EMAIL_SEND_FAILED`) -- two-factor mode is `email`
             and the server cannot send the verification e-mail; `4013`
             (`PD_ERRCODE_2FA_EMAIL_MISSING`) -- two-factor mode is `email` and
@@ -296,8 +304,7 @@ paths:
             4012/4013: Server 20.0.0 and later. Keep a stored `tfatoken` on
             every `401`.
             Server 20.0.0 and later: `401` also answers a login that must
-            complete a second factor (required by the server's two-factor
-            setting, the account's `two_factor_mode` or the server's policies)
+            complete a second factor (required by the server's policies)
             when the server's Allowed second-factor methods policy allows none
             of its methods: "A second factor is required, but no method is
             allowed for this account. Contact your administrator.", after the
@@ -334,10 +341,11 @@ paths:
         "409":
           description: |
             The second factor asked of the user is FIDO2 (security key /
-            passkey): the account's `two_factor_mode` or the server's
-            two-factor setting names it, or, from Server 20.0.0, the server's
-            policies (Preferred second factor, Allowed second-factor methods)
-            choose it. The interactive FIDO2 challenge cannot be driven from a
+            passkey): from Server 20.0.0 the server's policies (Preferred
+            second factor, Allowed second-factor methods; the account's
+            `two_factor_mode` is its own entry in them) choose it, on earlier
+            servers the account's `two_factor_mode` or the server's two-factor
+            setting. The interactive FIDO2 challenge cannot be driven from a
             stateless REST request -- log in via the native Password Depot
             client, or ask an administrator to switch the user's
             `two_factor_mode` to `totp` or `email`, or to change the policy.
@@ -1520,8 +1528,10 @@ paths:
             Refused. `error.code` gives the reason: `403` -- the session is
             not admin-scoped, the account has neither the `server_admin` nor
             the `user_admin` role, or it may not set the requested `roles` or
-            `member_of`; `4032` (`PD_ERRCODE_LICENSE_LIMIT`) -- the server's
-            licensed number of users is reached (Server 20.0.0 and later).
+            `member_of`, or (Server 20.0.0 and later) the `two_factor_mode`
+            write is refused, in which case no user is created; `4032`
+            (`PD_ERRCODE_LICENSE_LIMIT`) -- the server's licensed number of
+            users is reached (Server 20.0.0 and later).
           content:
             application/json:
               schema:
@@ -1540,7 +1550,10 @@ paths:
                       code: 4032
                       message: "Number of registered clients 26 exceeds the number of installed licenses 25."
         "409":
-          description: A user with this name already exists
+          description: |
+            A user with this name already exists, or (Server 20.0.0 and
+            later) the user's policies changed while `two_factor_mode` was
+            written.
           content:
             application/json:
               schema:
@@ -1592,9 +1605,26 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            Insufficient permissions, or (Server 20.0.0 and later) the
+            `two_factor_mode` write is refused: the caller may not change the
+            user's sign-in policies, or the change would leave no
+            administrator able to sign in to the Server Manager. The account
+            is left as it was.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Another user has this name, or (Server 20.0.0 and later) the
+            user's policies changed while `two_factor_mode` was written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: adminDeleteUser
       tags:
@@ -2111,6 +2141,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WebAuthnRegistrationBeginResponse"
+        "400":
+          description: |
+            Passkeys are not allowed for the caller: from Server 20.0.0 the
+            server's Allowed sign-in methods policy does not include
+            `webauthn` for the user, on earlier servers WebAuthn is switched
+            off. Answered "This method of authentication is not
+            supported...".
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -2209,8 +2250,10 @@ paths:
         WebAuthn-not-enabled users, and users with no registered
         passkeys. The real reason is recorded only in the server log.
 
-        When WebAuthn is switched off on the server, the request is
-        answered `400` "This method of authentication is not
+        When the server does not allow passkey sign-in at all - from Server
+        20.0.0 the Allowed sign-in methods value enforced at server scope
+        leaves out `webauthn`, on earlier servers WebAuthn is switched off -
+        the request is answered `400` "This method of authentication is not
         supported..." for every user name; this answer does not count
         towards the IP lockout (429).
       requestBody:
@@ -3901,8 +3944,9 @@ components:
         POST /auth/webauthn/begin.
         If X-PD-Client is also sent, the platforms must agree. Recognized
         members cannot be duplicated. Invalid declarations answer 400.
-        Version/build are informational; platform selects the Supported
-        Clients policy and is retained in new session tokens.
+        Version/build are informational; platform selects the entry of the
+        Allowed client platforms policy and is retained in new session
+        tokens.
       required: [platform]
       properties:
         platform:
@@ -4062,8 +4106,8 @@ components:
           description: |
             Present with `tfatoken`: the UTC instant after which the server no
             longer accepts it under the trusted-device period in force for the
-            user when it was issued (the server's, or a shorter one the
-            server's policies set for the user). Advisory -- the server can
+            user when it was issued (the server's Trusted devices: period
+            without a second factor policy). Advisory -- the server can
             stop accepting it earlier,
             for example when the period is lowered or turned off, or when an
             administrator resets the user's two-factor options; if the period
@@ -5430,12 +5474,22 @@ components:
             - totp
             - fido2
           description: |
-            Per-user 2FA mode. `default` inherits the server-wide setting;
-            `disabled` opts out (suitable for service accounts); `fido2` uses
-            a registered passkey / security key as the second factor. From
-            Server 20.0.0 the server's policies can require a second factor
-            and choose its method on top of this mode, `disabled` included;
-            they never remove a second factor this mode asks for.
+            The user's own 2FA setting. `default`: none of the user's own;
+            `disabled`: no second factor (suitable for service accounts);
+            `totp`, `email`, `fido2`: that method (`fido2` uses a registered
+            passkey / security key). From Server 20.0.0 this is the user's own
+            entry in the server's second-factor policies: `disabled` is the
+            user's Require a second factor set to off, a method the user's
+            Preferred second factor. Reading derives it from those entries (a
+            requirement set for the user and the values of the server and
+            the user's groups do not change it); writing a method also
+            removes the user's own "not required", never a requirement, and
+            `default` removes the user's preference and own "not required".
+            Values enforced for the server or a group win. A write the caller
+            may not make (it must hold every server role the user holds) or
+            that would leave no administrator able to sign in to the Server
+            Manager answers 403; a concurrent change of the user's policies
+            answers 409.
         display_name:
           type: string
           description: Friendly name (`FullName` internally)
@@ -5942,8 +5996,8 @@ components:
                 `trust_device: true` makes the device trusted and returns a
                 `tfatoken`: the second factor asked of the user is the
                 authenticator app (TOTP) or e-mail, the trusted-device period
-                that applies to the user (the server's, or a shorter one the
-                server's policies set for the user) is not 0, the login is not
+                that applies to the user (the server's Trusted devices: period
+                without a second factor policy) is not 0, the login is not
                 in `admin` scope, and the server is not a mirror server.
 
     # -------------------------------------------------------------------------

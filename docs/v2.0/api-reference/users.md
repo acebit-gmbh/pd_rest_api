@@ -20,7 +20,7 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | `department` | string | Yes | Department |
 | `email` | string | Yes | Email address. **Required** when the user's effective 2FA mode is `email` (see `two_factor_mode` below). |
 | `phone` | string | Yes | Phone number |
-| `two_factor_mode` | string | Yes | Per-user two-factor authentication mode (see values below). Default is `"default"` (inherit server-wide setting). |
+| `two_factor_mode` | string | Yes | The user's own two-factor setting (see values below). `"default"` when the user has none and follows the settings of the server (and, from Server 20.0.0, of the user's groups). |
 | `sam` | string | Yes | SAM account name (e.g., `"DOMAIN\\username"`) |
 | `upn` | string | Yes | User Principal Name (e.g., `"user@domain.local"`) |
 | `dn` | string | Yes | Distinguished Name (LDAP DN) |
@@ -47,17 +47,19 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 
 | Value | Description |
 |-------|-------------|
-| `"default"` | Inherit the server-wide 2FA setting |
-| `"disabled"` | Never require 2FA for this user (useful for service accounts), unless the server's **Require a second factor** policy requires it (Server 20.0.0 and later) |
+| `"default"` | No setting of the user's own: the server's settings apply (from Server 20.0.0 the policies set for the server and the user's groups) |
+| `"disabled"` | No second factor for this user (useful for service accounts); from Server 20.0.0, unless a group or the server enforces **Require a second factor** for the user |
 | `"totp"` | TOTP (authenticator app). User must register a secret first. |
 | `"email"` | Email-based one-time codes. **Requires `email` field to be set.** |
 | `"fido2"` | FIDO2 / WebAuthn. User must register a FIDO2 credential first. |
 
 !!! warning "Service accounts and 2FA"
-    If the server-wide 2FA default is `"email"` and you create a user without an `email` address, login will fail at runtime with `401` and `error.code` `4013`. For service / automation accounts (gMSA, CI pipelines, API tokens), set `"two_factor_mode": "disabled"` at creation to opt out explicitly.
+    If the second factor that applies to a new user is `"email"` and you create the user without an `email` address, login will fail at runtime with `401` and `error.code` `4013`. For service / automation accounts (gMSA, CI pipelines, API tokens), set `"two_factor_mode": "disabled"` at creation to opt out explicitly.
 
-!!! note "Server policies"
-    From Server 20.0.0, the server's policies (set in the Server Manager under *Policies* for the server, a group or the user) can require a second factor and choose its method on top of `two_factor_mode`; a policy never removes a second factor `two_factor_mode` or the server's setting asks for. See [Which Second Factor Is Asked](authentication.md#which-second-factor-is-asked).
+!!! note "Server policies (Server 20.0.0 and later)"
+    `two_factor_mode` is the user's own entry in the server's second-factor policies, which the Server Manager shows on the user's *Policies* tab: `disabled` is the user's **Require a second factor** set to off, a method is the user's **Preferred second factor**, and `default` means the user has neither. Reading the field derives it from those entries; a requirement set for the user, and the values set for the server or the user's groups, do not change it, so it does not tell which second factor a login asks.
+
+    Writing the field changes those entries: a method sets the user's **Preferred second factor** and removes the user's own "not required", never a requirement set for the user; `disabled` sets the user's **Require a second factor** to off; `default` removes the user's preference and the user's own "not required". The write is recorded in the audit trail as a policy change. It answers `403` when the caller may not change the user's sign-in policies -- the caller must hold every server role the user holds -- or when it would leave no administrator able to sign in to the Server Manager, and `409` when the user's policies changed at the same time. The values set for the server and the user's groups apply beside these entries, and an enforced one wins. See [Which Second Factor Is Asked](authentication.md#which-second-factor-is-asked).
 
 !!! note "Email requirement"
     When a user's effective 2FA mode resolves to `email`, the server requires a non-empty `email` field. Setting `two_factor_mode` to `email` without an email address is permitted at the API level but the user will not be able to log in until an email is added (`401`, `error.code` `4013`).
@@ -551,7 +553,7 @@ Creates a new user.
 | `department` | string | No | Department |
 | `email` | string | Conditional | Email address. **Required** if the effective 2FA mode for this user is `email` (see `two_factor_mode`). |
 | `phone` | string | No | Phone number |
-| `two_factor_mode` | string | No | Per-user 2FA mode: `"default"` (inherit server setting), `"disabled"`, `"totp"`, `"email"`, `"fido2"`. See the [User Object](#user-object) reference. For service accounts, set `"disabled"` to opt out. |
+| `two_factor_mode` | string | No | The user's own 2FA setting: `"default"` (none of the user's own), `"disabled"`, `"totp"`, `"email"`, `"fido2"`. See the [User Object](#user-object) reference. For service accounts, set `"disabled"` to opt out. |
 | `sam` | string | No | SAM account name |
 | `upn` | string | No | User Principal Name |
 | `dn` | string | No | Distinguished Name |
@@ -580,7 +582,7 @@ Creates a new user.
     `new_password` is sent as **plaintext** in the JSON body -- the server hashes and stores it. Always call this endpoint over HTTPS. The server applies the configured password policy (complexity, length) if one is active; otherwise it only rejects empty strings.
 
 !!! tip "Service account recipe"
-    Automation / service accounts (CI pipelines, cron jobs, gMSA) usually don't have an email address. If the server-wide 2FA default is `"email"`, the account cannot sign in (`401`, `error.code` `4013`) at first login. Opt out explicitly:
+    Automation / service accounts (CI pipelines, cron jobs, gMSA) usually don't have an email address. If the second factor that applies to a new user is `"email"`, the account cannot sign in (`401`, `error.code` `4013`) at first login. Opt out explicitly:
 
     ```json
     {
@@ -629,8 +631,8 @@ Creates a new user.
 |--------|-------------|
 | `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, or password that violates the configured policy. |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | `error.code` `403`: the session is not admin-scoped, the account has neither the `server_admin` nor the `user_admin` role, or it may not set the requested `roles` (requires `server_admin`) or `member_of`. `error.code` `4032` (`PD_ERRCODE_LICENSE_LIMIT`): the server's licensed number of users is reached |
-| `409 Conflict` | A user with this username already exists |
+| `403 Forbidden` | `error.code` `403`: the session is not admin-scoped, the account has neither the `server_admin` nor the `user_admin` role, or it may not set the requested `roles` (requires `server_admin`) or `member_of`. `error.code` `4032` (`PD_ERRCODE_LICENSE_LIMIT`): the server's licensed number of users is reached. From Server 20.0.0 also `error.code` `403` when the `two_factor_mode` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values)); no user is created then |
+| `409 Conflict` | A user with this username already exists, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` was written |
 
 #### Example
 
@@ -784,9 +786,9 @@ Include only the fields you want to update.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions, or attempted to modify `roles` without `server_admin` role |
+| `403 Forbidden` | Insufficient permissions, or attempted to modify `roles` without `server_admin` role, or (Server 20.0.0 and later) the `two_factor_mode` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values)) |
 | `404 Not Found` | User or referenced group not found |
-| `409 Conflict` | Username conflict |
+| `409 Conflict` | Username conflict, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` was written |
 
 #### Example
 
@@ -916,7 +918,7 @@ No response body.
 
 Endpoints to manage WebAuthn / FIDO2 passkeys for the current user (`/me/passkeys/...`) and -- for administrators -- to view and revoke any user's passkeys (`/admin/users/{id}/passkeys/...`).
 
-Passkeys can be used as a passwordless login method via the [`webauthn`](authentication.md#webauthn) auth flow. Server-wide WebAuthn must be enabled in the server options, and the user must have the `webauthn` auth mode in their `auth_modes`.
+Passkeys can be used as a passwordless login method via the [`webauthn`](authentication.md#webauthn) auth flow. From Server 20.0.0 the server's **Allowed sign-in methods** policy must include *Passkeys (WebAuthn)* (`webauthn`) for the user (earlier servers: WebAuthn enabled in the server options), and the user must have the `webauthn` auth mode in their `auth_modes`.
 
 !!! note
     The public key material (`pk`) and signature counter internals are never exposed via the REST API -- the server uses them only for assertion verification.
@@ -1016,7 +1018,7 @@ Empty (or `{}`).
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | WebAuthn is disabled on the server |
+| `400 Bad Request` | Passkeys are not allowed for the caller: from Server 20.0.0 the server's **Allowed sign-in methods** policy does not include `webauthn` for the user; earlier servers have WebAuthn switched off in the server options |
 | `401 Unauthorized` | Missing or invalid token |
 
 ---

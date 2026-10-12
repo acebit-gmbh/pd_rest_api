@@ -19,8 +19,8 @@ The REST service configuration for v2.0 is the same as for v1.0. If the REST ser
     - Port configuration via `pdserver.ini`
     - Firewall and network considerations
 
-!!! note "Supported Clients (Server 20.0.0 and later)"
-    Sign-in and every authenticated v2.0 request are checked against the **Supported Clients** option for the client's platform; see [Client Identity and Supported Clients](../api-reference/authentication.md#client-identity-and-supported-clients). The **Web Client** option covers the Password Depot Web Client and any client that declares no platform: scripts and long-lived API tokens that send no `X-PD-Client` header, and the example PowerShell scripts in `examples/v2.0`, such as `PD-RestClient-v2.ps1`. The Android, iOS, macOS and Linux editions and the Standard and Corporate editions for Windows each have their own option.
+!!! note "Allowed client platforms (Server 20.0.0 and later)"
+    Sign-in and every authenticated v2.0 request are checked against the server's **Allowed client platforms** policy (Server Manager, *Policies*) for the client's platform; see [Client Identity and Supported Clients](../api-reference/authentication.md#client-identity-and-supported-clients). Its **Web client** entry covers the Password Depot Web Client and any client that declares no platform: scripts and long-lived API tokens that send no `X-PD-Client` header, and the example PowerShell scripts in `examples/v2.0`, such as `PD-RestClient-v2.ps1`; it is not allowed by default. Android, iOS, macOS, Linux, Windows and Windows (Corporate Edition) each have their own entry.
 
 ## v2.0 Endpoint Availability
 

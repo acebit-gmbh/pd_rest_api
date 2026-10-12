@@ -43,25 +43,25 @@ Unknown platforms, malformed identity values, unknown header parameters, duplica
 
 ### Platform Policy and Sessions
 
-The server checks the platform's existing **Supported Clients** setting at login (including both WebAuthn steps), on OIDC discovery (`GET /auth/oidc`) and on every authenticated request. The setting for `web` is independent: disabling the Web Client does not disable identified native REST clients whose own platforms are enabled. An admin-scoped session has no platform-policy exemption.
+Which platforms may use the API is decided by the server's **Allowed client platforms** policy (`session.platforms.allowed`), set in the Server Manager under *Policies* for the server, a group or the user. Each platform is allowed or refused on its own: leaving out `web` does not refuse identified native REST clients whose own platforms are allowed. An admin-scoped session has no platform-policy exemption. By default every platform but `web` is allowed; on a server upgraded from an earlier version the policy starts with the platforms its Supported Clients settings enabled.
 
-Each platform is governed by one of the Supported Clients settings in the Server Manager:
+Each platform is one entry of the policy in the Server Manager:
 
-| Platform | Supported Clients setting in the Server Manager |
-|----------|-------------------------------------------------|
-| `web` | Web Client |
-| `android` | Android Edition |
-| `ios` | iOS Edition |
-| `macos` | macOS Edition |
-| `linux` | Linux Edition |
-| `windows` | Standard Edition for Windows |
-| `windows-corp` | Corporate Edition for Windows |
+| Platform | Entry of **Allowed client platforms** in the Server Manager |
+|----------|--------------------------------------------------------------|
+| `web` | Web client |
+| `android` | Android |
+| `ios` | iOS |
+| `macos` | macOS |
+| `linux` | Linux |
+| `windows` | Windows |
+| `windows-corp` | Windows (Corporate Edition) |
 
-*Server 20.0.0 and later.* The server's **Allowed client platforms** policy (`session.platforms.allowed`, set in the Server Manager under *Policies* for the server, a group or the user) applies on top of these settings: where it is set for an account, a platform must be both enabled and listed. A platform the policy leaves out is refused exactly as a disabled one (see below). A value enforced at server scope is checked where the Supported Clients setting is; otherwise the account's value is checked once the sign-in has proven the account -- after the password, identity token or Windows sign-in was accepted, or after the passkey assertion was verified -- and on every authenticated request, long-lived API tokens included.
+A value enforced at server scope refuses the platform to every account alike; it is checked at login (including both WebAuthn steps), on OIDC discovery (`GET /auth/oidc`) and on every authenticated request, before the account is known. Otherwise the value that applies to the account is checked once the sign-in has proven the account -- after the password, identity token or Windows sign-in was accepted, or after the passkey assertion was verified -- and on every authenticated request, long-lived API tokens included. A platform the policy leaves out is refused as described below. A mirror server that has not yet received its main server's policies after an upgrade refuses every platform.
 
 New session tokens retain the platform established at login. Later requests without the header use that stored platform; a header declaring a different platform returns `400`. If the stored platform is disabled, that policy refusal takes precedence over a conflicting header. Clients cannot change the platform of an established session by omitting or changing the header.
 
-For compatibility, a login with neither identity declaration defaults to `web`. Long-lived API tokens carry no platform: a request made with one uses its `X-PD-Client` header when supplied and otherwise defaults to `web`, so automation that sends no header works only while the Web Client is enabled under **Supported Clients**. Maintained native clients must send their identity instead of relying on this fallback. Web clients can omit the header for compatibility with older servers that do not allow it through CORS. The Web Client declares `web` in the JSON `client` object at `/auth/login` or `/auth/webauthn/begin`, then uses the stored challenge/session identity without a custom header. The server does not infer a platform from `User-Agent`.
+For compatibility, a login with neither identity declaration defaults to `web`. Long-lived API tokens carry no platform: a request made with one uses its `X-PD-Client` header when supplied and otherwise defaults to `web`, so automation that sends no header works only while **Allowed client platforms** allows `web` for the token's account. Maintained native clients must send their identity instead of relying on this fallback. Web clients can omit the header for compatibility with older servers that do not allow it through CORS. The Web Client declares `web` in the JSON `client` object at `/auth/login` or `/auth/webauthn/begin`, then uses the stored challenge/session identity without a custom header. The server does not infer a platform from `User-Agent`.
 
 When Android is disabled, the response is **HTTP `403` with `error.code: 4036`**:
 
@@ -147,7 +147,7 @@ The authentication follows the standard [HTTP Negotiate protocol (RFC 4559)](htt
 **Optional fields:** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients)), and for two-factor authentication `tfacode`, `trust_device` and `tfatoken` (see [Trusted Devices](#trusted-devices)). The two-factor members must be in the body of the request that completes the handshake. The platform declared on the first request holds for the whole handshake; a retry may omit it but must not declare a different one.
 
 !!! warning "Prerequisites"
-    - The Password Depot Server must have **Integrated Windows Authentication** enabled in the server options.
+    - The server must allow Integrated Windows Authentication: from Server 20.0.0 its **Allowed sign-in methods** policy must include *Integrated Windows Authentication (SSO)* (`iwa`) for the account, which it does not by default; earlier servers enable it in the server options.
     - The PD user account must have the **IWA** authentication method enabled and its **SAM** or **UPN** field populated to match the Windows identity.
     - The client machine must be joined to the same Active Directory domain (or a trusted domain).
     - No additional SPN registration is needed -- the standard `HOST/<servername>` SPNs (registered automatically for every domain-joined computer) cover HTTP Negotiate authentication.
@@ -227,7 +227,7 @@ A passkey sign-in involves no second factor, so this response never carries a `t
 **Optional fields (Step 1):** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients))
 
 !!! warning "Prerequisites"
-    - The Password Depot Server must have **WebAuthn** enabled in the server options. Otherwise Step 1 answers `400` "This method of authentication is not supported..." for every user name; this answer does not count towards the failed-login limit (`429`).
+    - The server must allow passkey sign-in: from Server 20.0.0 its **Allowed sign-in methods** policy must include *Passkeys (WebAuthn)* (`webauthn`) for the account, as it does by default; earlier servers enable WebAuthn in the server options. Where the value enforced at server scope (earlier servers: the server option) leaves it out, Step 1 answers `400` "This method of authentication is not supported..." for every user name; this answer does not count towards the failed-login limit (`429`).
     - The PD user account must have the **WebAuthn** authentication method enabled and at least one passkey registered.
     - Passkey registration is handled through the native Password Depot client application (not via the REST API).
     - The `session_id` is single-use and expires after the server's configured WebAuthn timeout (default: 60 seconds).
@@ -488,7 +488,7 @@ When the request carried `"trust_device": true` and made the device trusted (Ser
 
 ### Token Lifetime
 
-By default, access tokens expire after **10 minutes of inactivity** (the timer resets on every authenticated API call). This is suitable for interactive use and short-lived scripts.
+Access tokens expire after a period of inactivity; the timer resets on every authenticated API call. From Server 20.0.0 the period is the server's **Disconnect after inactivity** policy (`session.idle_timeout`) as it applies to the user, the same period that ends the user's desktop connections: 60 minutes by default, set in the Server Manager under *Policies* for the server, a group or the user, from 10 minutes to 10000 minutes or *No limit*, with which a session ends after 600000 seconds (about 7 days) without a request. The period is read on every request, so a shorter one applies to an open session from its next request. Servers before 20.0.0 end a session after **10 minutes of inactivity**. Session tokens suit interactive use and short-lived scripts.
 
 For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines, monitoring scripts), a Super Administrator can generate **long-lived tokens** in the Password Depot Server Manager for any user account, in client or admin scope, with an expiry date 1 to 730 days ahead (180 by default). Long-lived tokens do not expire on inactivity. They stay valid until 00:00 on their expiry date, or until they are revoked or deleted in the Server Manager. An admin-scope token needs an account with a server role, and a Super Administrator's token must be admin scope.
 
@@ -496,7 +496,7 @@ For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines,
     - Scheduled tasks and cron jobs that need unattended access
     - CI/CD pipelines that retrieve secrets during deployment
     - Monitoring scripts that periodically check database health
-    - Any scenario where re-authenticating every 10 minutes is impractical
+    - Any scenario where re-authenticating after each idle period is impractical
 
     Long-lived tokens are managed exclusively in the **Password Depot Server Manager** -- in the user's properties dialog under the **API Tokens** tab. Each token has a descriptive name, scope, expiry date, and last-used timestamp. Contact your server administrator to generate one.
 
@@ -522,7 +522,7 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 | `sub` | Subject | string | User ID (UUID). Primary identifier for the token's owner |
 | `aud` | Audience | string | `https://<server-host>:<rest-port>/` |
 | `iat` | Issued At | int (Unix time) | When the token was created |
-| `exp` | Expiration | int (Unix time) | Absolute expiry. For session tokens this is rolling (extended on each authenticated call); for long-lived tokens it is the fixed expiry chosen at creation |
+| `exp` | Expiration | int (Unix time) | For long-lived tokens, the fixed expiry chosen at creation. For session tokens, the login time plus the inactivity period that applied to the user at login (from Server 20.0.0; 600000 seconds ahead where the period has no limit): the server accepts a session token after this time for as long as the session stays active within its period, so it does not tell when the session ends |
 | `admin` | -- | boolean | `true` if the token carries admin scope, `false` otherwise. This is what distinguishes an admin session from a client session -- the `scope` field in the login body is only used at token-creation time |
 | `refresh` | -- | boolean | `true` for session tokens (eligible for inactivity-based extension), `false` for long-lived tokens |
 
@@ -536,7 +536,7 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 
 | Claim | Name | Type | Description |
 |-------|------|------|-------------|
-| `client_platform` | -- | string | *Server 20.0.0 and later.* The client platform established at login: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Requests made with the token are checked against that platform's **Supported Clients** setting; see [Platform Policy and Sessions](#platform-policy-and-sessions). Long-lived API tokens do not carry it |
+| `client_platform` | -- | string | *Server 20.0.0 and later.* The client platform established at login: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Requests made with the token are checked against the server's **Allowed client platforms** policy for that platform; see [Platform Policy and Sessions](#platform-policy-and-sessions). Long-lived API tokens do not carry it |
 
 **Telling the two token types apart on the client side:**
 
@@ -554,7 +554,7 @@ Malformed or conflicting [client identity](#client-identity-and-supported-client
 
 **403 -- Client platform disabled**
 
-A disabled Android client returns `403` with `error.code: 4036` and the message `The Android client is disabled on this server.` Other disabled platforms use `error.code: 403`. This check also applies after login, on authenticated requests, and to a platform the server's **Allowed client platforms** policy leaves out; see [Platform Policy and Sessions](#platform-policy-and-sessions).
+An Android client that the server's **Allowed client platforms** policy does not allow receives `403` with `error.code: 4036` and the message `The Android client is disabled on this server.` Other platforms it does not allow receive `error.code: 403`. This check also applies after login, on authenticated requests; see [Platform Policy and Sessions](#platform-policy-and-sessions).
 
 **401 -- Unauthorized**
 
@@ -567,9 +567,9 @@ A disabled Android client returns `403` with `error.code: 4036` and the message 
 }
 ```
 
-Returned when credentials are invalid or the account is locked (`error.code` `401`). A sign-in with a method the account may not use -- one not among its `auth_modes`, or one the server's **Allowed sign-in methods** policy does not allow for it -- receives the answer the same request gets for an account the server does not know: this one for `standard` and `sspi`, `401` "The server cannot find the user account specified." for `azure` and `oidc`. A `standard` or `sspi` sign-in is answered like a method switched off on the server, `401` "This method of authentication is not supported..." for every user name, when the **Allowed sign-in methods** policy is enforced at server scope and does not include the method. The server log names the actual reason.
+Returned when credentials are invalid or the account is locked (`error.code` `401`). A sign-in with a method the account may not use -- one not among its `auth_modes`, or one the server's **Allowed sign-in methods** policy does not allow for it -- receives the answer the same request gets for an account the server does not know: this one for `standard` and `sspi`, `401` "The server cannot find the user account specified." for `azure` and `oidc`. A method the server does not allow at all -- left out of the **Allowed sign-in methods** value enforced at server scope (earlier servers: switched off in the server options) -- is answered `401` "This method of authentication is not supported..." for every user name, before the user name, token or identity provider is looked at. The server log names the actual reason.
 
-*Server 20.0.0 and later.* A sign-in of an account that has a session over the classic protocol (for example the Windows client) is answered `401` where the server's **New connection from different device** setting or its **Second sign-in of the same user** policy (`session.concurrent`) refuses a second session; with `auth: "negotiate"` and on the passkey sign-in only the policy applies. It counts towards the IP lockout (`429`).
+*Server 20.0.0 and later.* A sign-in of an account that has a session over the classic protocol (for example the Windows client) is answered `401` where the server's **Second sign-in of the same user** policy (`session.concurrent`) refuses a second session, with every `auth` method and on the passkey sign-in; with `auth: "negotiate"` and on the passkey sign-in only where a value set for a group or the user refuses it. It counts towards the IP lockout (`429`).
 
 *Server 20.0.0 and later.* When a second factor is required for the account and the server's **Allowed second-factor methods** policy allows none of its methods, the login answers `401` with `error.code` `401` and the message "A second factor is required, but no method is allowed for this account. Contact your administrator." It comes only after the password or identity token was accepted (and, in `admin` scope, after the Server Manager access check), and a `tfatoken` does not stand in for it. An administrator must change the policy. The answer has no sub-code of its own: a client treats it as any plain `401` and shows `error.message`. See [Which Second Factor Is Asked](#which-second-factor-is-asked).
 
@@ -646,10 +646,10 @@ Returned when the IP address has exceeded the configured number of failed login 
 }
 ```
 
-Returned when the second factor asked of the user is FIDO2 (security key / passkey): the account's `two_factor_mode` or the server's two-factor setting names it, or, from Server 20.0.0, the server's policies choose it (see [Which Second Factor Is Asked](#which-second-factor-is-asked)). The FIDO2 challenge / assertion flow is interactive and stateful, and cannot be driven from a stateless REST request -- the native Password Depot client and the Server Manager handle it directly. Two ways forward for a REST user:
+Returned when the second factor asked of the user is FIDO2 (security key / passkey): from Server 20.0.0 the server's policies choose it, the account's own `two_factor_mode` among them; earlier servers ask it where the account's `two_factor_mode` or the server's two-factor setting names it (see [Which Second Factor Is Asked](#which-second-factor-is-asked)). The FIDO2 challenge / assertion flow is interactive and stateful, and cannot be driven from a stateless REST request -- the native Password Depot client and the Server Manager handle it directly. Two ways forward for a REST user:
 
 - Log in via the native client first to register / use the security key, then continue working there. REST sessions for this user are not available.
-- Ask an administrator to switch the user's `two_factor_mode` to `totp` (authenticator app) or `email`, both supported via REST, or, where the server's policies choose the security key, to change the **Preferred second factor** or **Allowed second-factor methods** policy.
+- Ask an administrator to switch the user's `two_factor_mode` to `totp` (authenticator app) or `email`, both supported via REST, or, where a value set for a group or the server chooses the security key, to change the **Preferred second factor** or **Allowed second-factor methods** policy.
 
 For automation accounts, prefer **long-lived API tokens** (issued in the Server Manager) or **Negotiate / gMSA** authentication -- neither requires a second factor.
 
@@ -723,13 +723,18 @@ A `460` in answer to a request that carried `tfatoken` means the server did not 
 
 ### Which Second Factor Is Asked
 
-Whether `/auth/login` asks a second factor, and which one, follows the server's two-factor settings (Server Manager &rarr; *Options* &rarr; *2FA Settings*) and the account's `two_factor_mode` (see [Users](users.md#two_factor_mode-values)). *Server 20.0.0 and later:* it also follows the server's policies, set in the Server Manager under *Policies* for the server, a group or the user. A policy applies only where it is set, on top of those settings, and never removes a second factor they ask for:
+*Server 20.0.0 and later.* Whether `/auth/login` asks a second factor, which one, and how long a trusted device stands in for it is decided by the server's policies, set in the Server Manager under *Policies* for the server, a group or the user:
 
-- **Require a second factor** (`auth.second_factor.required`): every login of the account asks a second factor, also when two-factor authentication is off for the server or `two_factor_mode` is `disabled`.
-- **Allowed second-factor methods** (`auth.second_factor.methods`) and **Preferred second factor** (`auth.second_factor.preferred`): the method asked is the account's own `two_factor_mode` where it names one (`totp`, `email` or `fido2`) and the allowed methods include it; otherwise the preferred one, or without a preference the server's method; when the allowed methods do not include that one, the first allowed of the authenticator app, e-mail and security key is asked. The login answers as for that method: `459` or `460` for the authenticator app, `460` (or `4012` / `4013`) for e-mail, `409` for a security key. When a second factor is required and no method is allowed, the login answers `401` (see [Error Responses](#error-responses)).
-- **Trusted devices: period without a second factor** (`auth.trusted_device.max_age`): a shorter trusted-device period for the user (see [Trusted Devices](#trusted-devices)).
+- **Require a second factor** (`auth.second_factor.required`): whether the account's logins ask a second factor. Off by default.
+- **Allowed second-factor methods** (`auth.second_factor.methods`): the methods that may be asked, every one where it is not set.
+- **Preferred second factor** (`auth.second_factor.preferred`): the method asked, the authenticator app by default. When the allowed methods do not include it, the first allowed of the authenticator app, e-mail and security key is asked.
+- **Trusted devices: period without a second factor** (`auth.trusted_device.max_age`): see [Trusted Devices](#trusted-devices).
 
-The policies apply in `client` and `admin` scope alike. A passkey sign-in (`/auth/webauthn/*`) asks no second factor, also where the policies require one.
+The account's `two_factor_mode` is its own entry in these policies (see [Users](users.md#two_factor_mode-values)): `disabled` sets **Require a second factor** off for the user, a method sets the user's **Preferred second factor**. A value set for the user applies before one set for a group or the server, unless that one is enforced. On a server upgraded from an earlier version the policies start with the server's two-factor settings and each account's own mode, so that logins ask what they asked before.
+
+The login answers as for the method asked: `459` or `460` for the authenticator app, `460` (or `4012` / `4013`) for e-mail, `409` for a security key. When a second factor is required and no method is allowed, the login answers `401` (see [Error Responses](#error-responses)). The policies apply in `client` and `admin` scope alike. A passkey sign-in (`/auth/webauthn/*`) asks no second factor, also where the policies require one.
+
+Servers before 20.0.0 decide by the server's two-factor settings (Server Manager &rarr; *Options* &rarr; *2FA Settings*) and the account's `two_factor_mode`: while two-factor authentication is on for the server, `default` asks the server's method, a method asks that method, and `disabled` asks none.
 
 ### Trusted Devices
 
@@ -767,8 +772,8 @@ The policies apply in `client` and `admin` scope alike. A passkey sign-in (`/aut
 | Authenticator app not activated yet (`459`) | Yes, with the first verified code, which also activates the app | No: the user activates the app first |
 | E-mail code | Yes, with a verified code | Yes, also while the server cannot send e-mail (no `4012` / `4013` then) |
 | FIDO2 second factor (`409` over REST) | No | No |
-| No second factor asked of the user (two-factor authentication off for the server or the user, and not required by the server's policies) | No: `trust_device` is ignored | Ignored |
-| Trusted-device period `0` for the user (the server's, or set by the server's policies) | No | No |
+| No second factor asked of the user (not required by the server's policies) | No: `trust_device` is ignored | Ignored |
+| Trusted-device period `0` for the user | No | No |
 | `"scope": "admin"` | No | Ignored |
 | Mirror server | No | Yes, tokens the main server issued |
 | Passkey sign-in (`/auth/webauthn/complete`) | No: no second factor is involved | Not used |
@@ -777,8 +782,7 @@ The `auth` methods `standard`, `sspi`, `azure` and `oidc` all support trusted de
 
 **Lifetime and revocation:**
 
-- A token is accepted for the server's trusted-device period, counted from when it was issued: Server Manager &rarr; *Options* &rarr; *2FA Settings* &rarr; **Trust period for user devices (hours)**, 480 hours (20 days) by default and up to 2400. The server applies its current period at each login, so lowering it shortens tokens already issued and raising it lengthens them. Turning it off means no token is accepted or issued.
-- The server's **Trusted devices: period without a second factor** policy (`auth.trusted_device.max_age`, set in the Server Manager under *Policies* for the server, a group or the user) can set a shorter period for a user. A token of that user is then accepted for the shorter of the two periods, also applied at each login, and `tfatoken_expires_at` reflects it; `0` means no token is accepted or issued for the user. The policy never lengthens the server's period.
+- A token is accepted for the trusted-device period that applies to the user, counted from when it was issued: the server's **Trusted devices: period without a second factor** policy (`auth.trusted_device.max_age`, set in the Server Manager under *Policies* for the server, a group or the user), 20 days by default and at most 100 days. The server applies the period at each login, so lowering it shortens tokens already issued and raising it lengthens them; `tfatoken_expires_at` reflects the period at issue. `0` means no token is accepted or issued for the user.
 - **Reset 2FA** for the user in the Server Manager revokes all of that user's trusted devices, those of the Windows client and of REST clients alike. Deleting the user revokes them as well.
 - Logout, a password change and disabling the account do not end a token. A disabled account cannot sign in anyway.
 - A user has at most 10 trusted devices from REST logins; issuing another drops the oldest.
