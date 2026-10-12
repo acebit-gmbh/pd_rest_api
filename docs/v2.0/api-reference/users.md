@@ -48,13 +48,16 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | Value | Description |
 |-------|-------------|
 | `"default"` | Inherit the server-wide 2FA setting |
-| `"disabled"` | Never require 2FA for this user (useful for service accounts) |
+| `"disabled"` | Never require 2FA for this user (useful for service accounts), unless the server's **Require a second factor** policy requires it (Server 20.0.0 and later) |
 | `"totp"` | TOTP (authenticator app). User must register a secret first. |
 | `"email"` | Email-based one-time codes. **Requires `email` field to be set.** |
 | `"fido2"` | FIDO2 / WebAuthn. User must register a FIDO2 credential first. |
 
 !!! warning "Service accounts and 2FA"
     If the server-wide 2FA default is `"email"` and you create a user without an `email` address, login will fail at runtime with `401` and `error.code` `4013`. For service / automation accounts (gMSA, CI pipelines, API tokens), set `"two_factor_mode": "disabled"` at creation to opt out explicitly.
+
+!!! note "Server policies"
+    From Server 20.0.0, the server's policies (set in the Server Manager under *Policies* for the server, a group or the user) can require a second factor and choose its method on top of `two_factor_mode`; a policy never removes a second factor `two_factor_mode` or the server's setting asks for. See [Which Second Factor Is Asked](authentication.md#which-second-factor-is-asked).
 
 !!! note "Email requirement"
     When a user's effective 2FA mode resolves to `email`, the server requires a non-empty `email` field. Setting `two_factor_mode` to `email` without an email address is permitted at the API level but the user will not be able to log in until an email is added (`401`, `error.code` `4013`).

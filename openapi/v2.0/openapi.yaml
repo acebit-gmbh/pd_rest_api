@@ -276,7 +276,7 @@ paths:
             Authentication failed; no token is issued. `error.code` gives the
             reason: `401` -- invalid credentials, a locked account, or a
             sign-in method the account may not use (not in its `auth_modes`,
-            or not allowed by the server's Authentication methods policy),
+            or not allowed by the server's Allowed sign-in methods policy),
             which is answered as an unknown account is, except a `standard`
             or `sspi` sign-in that the policy's value enforced at server scope
             excludes: like a method switched off on the server, it is
@@ -290,6 +290,13 @@ paths:
             A login with a `tfatoken` the server accepts meets neither.
             4012/4013: Server 20.0.0 and later. Keep a stored `tfatoken` on
             every `401`.
+            Server 20.0.0 and later: `401` also answers a login that must
+            complete a second factor (required by the server's two-factor
+            setting, the account's `two_factor_mode` or the server's policies)
+            when the server's Allowed second-factor methods policy allows none
+            of its methods: "A second factor is required, but no method is
+            allowed for this account. Contact your administrator.", after the
+            credential was accepted; a `tfatoken` does not stand in for it.
           content:
             application/json:
               schema:
@@ -313,13 +320,22 @@ paths:
                     error:
                       code: 4013
                       message: "User email is not defined. Please contact your Password Depot Server administrator."
+                secondFactorNoMethod:
+                  summary: A second factor is required and the policies allow no method (Server 20.0.0 and later)
+                  value:
+                    error:
+                      code: 401
+                      message: "A second factor is required, but no method is allowed for this account. Contact your administrator."
         "409":
           description: |
-            The user account has FIDO2 (security key / passkey) configured as
-            the second factor. The interactive FIDO2 challenge cannot be
-            driven from a stateless REST request -- log in via the native
-            Password Depot client, or ask an administrator to switch the
-            user's `two_factor_mode` to `totp` or `email`.
+            The second factor asked of the user is FIDO2 (security key /
+            passkey): the account's `two_factor_mode` or the server's
+            two-factor setting names it, or, from Server 20.0.0, the server's
+            policies (Preferred second factor, Allowed second-factor methods)
+            choose it. The interactive FIDO2 challenge cannot be driven from a
+            stateless REST request -- log in via the native Password Depot
+            client, or ask an administrator to switch the user's
+            `two_factor_mode` to `totp` or `email`, or to change the policy.
           content:
             application/json:
               schema:
@@ -3966,8 +3982,8 @@ components:
             a `tfacode` verifies in this same request and trusted devices are
             possible for this sign-in (`trust_device_possible` on `459` /
             `460`), the `200` carries `tfatoken` and `tfatoken_expires_at`.
-            Otherwise it is ignored -- no code verified, two-factor
-            authentication off for the server or the user, `admin` scope.
+            Otherwise it is ignored -- no code verified, no second factor
+            asked of the user, `admin` scope.
             Must be a JSON boolean; `null` means absent. Any other JSON type,
             or the key twice, answers `400`, which does not count towards the
             IP lockout.
@@ -3986,8 +4002,8 @@ components:
             to be activated. A token that is not accepted does not count
             towards the IP lockout. With `tfacode` as well, the token is tried
             first and the code is verified only if the token is not accepted.
-            Ignored in `admin` scope and when two-factor authentication is off
-            for the server or the user. Must be a JSON string, not a number;
+            Ignored in `admin` scope and when no second factor is asked of the
+            user. Must be a JSON string, not a number;
             `null` and `""` mean absent. A longer string, any other JSON type,
             or the key twice answers `400`, which does not count towards the
             IP lockout.
@@ -4039,8 +4055,10 @@ components:
           format: date-time
           description: |
             Present with `tfatoken`: the UTC instant after which the server no
-            longer accepts it under the trusted-device period in force when it
-            was issued. Advisory -- the server can stop accepting it earlier,
+            longer accepts it under the trusted-device period in force for the
+            user when it was issued (the server's, or a shorter one the
+            server's policies set for the user). Advisory -- the server can
+            stop accepting it earlier,
             for example when the period is lowered or turned off, or when an
             administrator resets the user's two-factor options; if the period
             is raised, it accepts the token for longer. The lifetime runs from
@@ -5408,7 +5426,10 @@ components:
           description: |
             Per-user 2FA mode. `default` inherits the server-wide setting;
             `disabled` opts out (suitable for service accounts); `fido2` uses
-            a registered passkey / security key as the second factor.
+            a registered passkey / security key as the second factor. From
+            Server 20.0.0 the server's policies can require a second factor
+            and choose its method on top of this mode, `disabled` included;
+            they never remove a second factor this mode asks for.
         display_name:
           type: string
           description: Friendly name (`FullName` internally)
@@ -5913,10 +5934,11 @@ components:
                 its presence tells a client that the server supports trusted
                 devices. `true` when a code verified together with
                 `trust_device: true` makes the device trusted and returns a
-                `tfatoken`: the user's second factor is the authenticator app
-                (TOTP) or e-mail, the server's trusted-device period is not 0,
-                the login is not in `admin` scope, and the server is not a
-                mirror server.
+                `tfatoken`: the second factor asked of the user is the
+                authenticator app (TOTP) or e-mail, the trusted-device period
+                that applies to the user (the server's, or a shorter one the
+                server's policies set for the user) is not 0, the login is not
+                in `admin` scope, and the server is not a mirror server.
 
     # -------------------------------------------------------------------------
     # Self-Service (/me/...)

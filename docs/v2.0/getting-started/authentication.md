@@ -271,7 +271,7 @@ This returns the full user profile including display name, roles, and group memb
 
 ## Two-Factor Authentication (2FA)
 
-If two-factor authentication is enabled for the user, the login flow has additional steps: the server answers `459` or `460`, and the client resends the login with the code. From Server 20.0.0 the client can also ask the server to trust the device, so that later logins need the password but no code (see [Trusted Devices](#trusted-devices) below).
+If two-factor authentication is enabled for the user, the login flow has additional steps: the server answers `459` or `460`, and the client resends the login with the code. From Server 20.0.0 the server's policies can require a second factor and choose its method (see [Which Second Factor Is Asked](../api-reference/authentication.md#which-second-factor-is-asked)), and the client can also ask the server to trust the device, so that later logins need the password but no code (see [Trusted Devices](#trusted-devices) below).
 
 **Summary:**
 
@@ -405,7 +405,7 @@ Later logins send the password as usual and the stored `tfatoken` instead of `tf
         tfa_token = None  # not accepted: discard it and ask for the code
     ```
 
-The token is not an access token and never goes into `Authorization`. It survives logout, and it ends with the server's trusted-device period (480 hours by default) or when an administrator resets the user's two-factor options. See [Trusted Devices](../api-reference/authentication.md#trusted-devices) for the full rules and client guidance.
+The token is not an access token and never goes into `Authorization`. It survives logout, and it ends with the trusted-device period (the server's, 480 hours by default, or a shorter one the server's policies set for the user) or when an administrator resets the user's two-factor options. See [Trusted Devices](../api-reference/authentication.md#trusted-devices) for the full rules and client guidance.
 
 ## OIDC Discovery
 

@@ -506,7 +506,7 @@ For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines,
     - Use the minimum required scope (`"client"` unless admin access is needed)
     - Revoke tokens immediately when they are no longer needed
 
-A `tfatoken` is not an access token. It authenticates no API request and has no inactivity timeout; it stands in for the two-factor code at `/auth/login` for the server's trusted-device period. See [Trusted Devices](#trusted-devices).
+A `tfatoken` is not an access token. It authenticates no API request and has no inactivity timeout; it stands in for the two-factor code at `/auth/login` for the trusted-device period that applies to the user. See [Trusted Devices](#trusted-devices).
 
 ### Token Structure
 
@@ -565,7 +565,9 @@ A disabled Android client returns `403` with `error.code: 4036` and the message 
 }
 ```
 
-Returned when credentials are invalid or the account is locked (`error.code` `401`). A sign-in with a method the account may not use -- one not among its `auth_modes`, or one the server's **Authentication methods** policy does not allow for it -- receives the answer the same request gets for an account the server does not know: this one for `standard` and `sspi`, `401` "The server cannot find the user account specified." for `azure` and `oidc`. A `standard` or `sspi` sign-in is answered like a method switched off on the server, `401` "This method of authentication is not supported..." for every user name, when the **Authentication methods** policy is enforced at server scope and does not include the method. The server log names the actual reason.
+Returned when credentials are invalid or the account is locked (`error.code` `401`). A sign-in with a method the account may not use -- one not among its `auth_modes`, or one the server's **Allowed sign-in methods** policy does not allow for it -- receives the answer the same request gets for an account the server does not know: this one for `standard` and `sspi`, `401` "The server cannot find the user account specified." for `azure` and `oidc`. A `standard` or `sspi` sign-in is answered like a method switched off on the server, `401` "This method of authentication is not supported..." for every user name, when the **Allowed sign-in methods** policy is enforced at server scope and does not include the method. The server log names the actual reason.
+
+*Server 20.0.0 and later.* When a second factor is required for the account and the server's **Allowed second-factor methods** policy allows none of its methods, the login answers `401` with `error.code` `401` and the message "A second factor is required, but no method is allowed for this account. Contact your administrator." It comes only after the password or identity token was accepted (and, in `admin` scope, after the Server Manager access check), and a `tfatoken` does not stand in for it. An administrator must change the policy. The answer has no sub-code of its own: a client treats it as any plain `401` and shows `error.message`. See [Which Second Factor Is Asked](#which-second-factor-is-asked).
 
 ---
 
@@ -640,10 +642,10 @@ Returned when the IP address has exceeded the configured number of failed login 
 }
 ```
 
-Returned when the user account has FIDO2 (security key / passkey) configured as the second factor. The FIDO2 challenge / assertion flow is interactive and stateful, and cannot be driven from a stateless REST request -- the native Password Depot client and the Server Manager handle it directly. Two ways forward for a REST user:
+Returned when the second factor asked of the user is FIDO2 (security key / passkey): the account's `two_factor_mode` or the server's two-factor setting names it, or, from Server 20.0.0, the server's policies choose it (see [Which Second Factor Is Asked](#which-second-factor-is-asked)). The FIDO2 challenge / assertion flow is interactive and stateful, and cannot be driven from a stateless REST request -- the native Password Depot client and the Server Manager handle it directly. Two ways forward for a REST user:
 
 - Log in via the native client first to register / use the security key, then continue working there. REST sessions for this user are not available.
-- Ask an administrator to switch the user's `two_factor_mode` to `totp` (authenticator app) or `email`. Both are supported via REST.
+- Ask an administrator to switch the user's `two_factor_mode` to `totp` (authenticator app) or `email`, both supported via REST, or, where the server's policies choose the security key, to change the **Preferred second factor** or **Allowed second-factor methods** policy.
 
 For automation accounts, prefer **long-lived API tokens** (issued in the Server Manager) or **Negotiate / gMSA** authentication -- neither requires a second factor.
 
@@ -672,7 +674,7 @@ If authentication ultimately fails after the SPNEGO exchange, the server returns
 Common causes:
 
 - The Windows identity does not match any PD user's SAM or UPN field
-- The PD user does not have the IWA authentication method enabled, or the server's **Authentication methods** policy does not allow `iwa` for the user
+- The PD user does not have the IWA authentication method enabled, or the server's **Allowed sign-in methods** policy does not allow `iwa` for the user
 - Kerberos ticket cannot be obtained (e.g., client not domain-joined, clock skew, or DNS resolution failure)
 - The client is not in the same domain or a trusted domain
 
@@ -709,11 +711,21 @@ Returned when the user's second factor is an authenticator app (TOTP) that has n
 }
 ```
 
-Returned when valid credentials were provided but a 2FA code is required. The 2FA code may be delivered via **email** or via an **authenticator app**, depending on the server configuration. Resend the login request with the `tfacode` field included. A wrong `tfacode` is answered `460` as well, and counts towards the IP lockout (`429`) and the account's failed-login count.
+Returned when valid credentials were provided but a 2FA code is required. The 2FA code may be delivered via **email** or via an **authenticator app**, depending on the server configuration (see [Which Second Factor Is Asked](#which-second-factor-is-asked)). Resend the login request with the `tfacode` field included. A wrong `tfacode` is answered `460` as well, and counts towards the IP lockout (`429`) and the account's failed-login count.
 
 A `460` in answer to a request that carried `tfatoken` means the server did not accept the token: discard it and ask for the code. With e-mail two-factor authentication, that answer has sent a new code as usual.
 
 **`trust_device_possible`** *(Server 20.0.0 and later)*: `459` and `460` from `/auth/login` carry this boolean inside `error`, always `true` or `false`. `true` means that a code verified together with `"trust_device": true` makes the device trusted and returns a `tfatoken`. Its presence tells a client that the server supports trusted devices. The HTTP status, `error.code` and `error.message` are the same as without it. Ignore members of `error` you do not know.
+
+### Which Second Factor Is Asked
+
+Whether `/auth/login` asks a second factor, and which one, follows the server's two-factor settings (Server Manager &rarr; *Options* &rarr; *2FA Settings*) and the account's `two_factor_mode` (see [Users](users.md#two_factor_mode-values)). *Server 20.0.0 and later:* it also follows the server's policies, set in the Server Manager under *Policies* for the server, a group or the user. A policy applies only where it is set, on top of those settings, and never removes a second factor they ask for:
+
+- **Require a second factor** (`auth.second_factor.required`): every login of the account asks a second factor, also when two-factor authentication is off for the server or `two_factor_mode` is `disabled`.
+- **Allowed second-factor methods** (`auth.second_factor.methods`) and **Preferred second factor** (`auth.second_factor.preferred`): the method asked is the account's own `two_factor_mode` where it names one (`totp`, `email` or `fido2`) and the allowed methods include it; otherwise the preferred one, or without a preference the server's method; when the allowed methods do not include that one, the first allowed of the authenticator app, e-mail and security key is asked. The login answers as for that method: `459` or `460` for the authenticator app, `460` (or `4012` / `4013`) for e-mail, `409` for a security key. When a second factor is required and no method is allowed, the login answers `401` (see [Error Responses](#error-responses)).
+- **Trusted devices: period without a second factor** (`auth.trusted_device.max_age`): a shorter trusted-device period for the user (see [Trusted Devices](#trusted-devices)).
+
+The policies apply in `client` and `admin` scope alike. A passkey sign-in (`/auth/webauthn/*`) asks no second factor, also where the policies require one.
 
 ### Trusted Devices
 
@@ -751,7 +763,8 @@ A `460` in answer to a request that carried `tfatoken` means the server did not 
 | Authenticator app not activated yet (`459`) | Yes, with the first verified code, which also activates the app | No: the user activates the app first |
 | E-mail code | Yes, with a verified code | Yes, also while the server cannot send e-mail (no `4012` / `4013` then) |
 | FIDO2 second factor (`409` over REST) | No | No |
-| Two-factor authentication off for the server or the user | No: `trust_device` is ignored | Ignored |
+| No second factor asked of the user (two-factor authentication off for the server or the user, and not required by the server's policies) | No: `trust_device` is ignored | Ignored |
+| Trusted-device period `0` for the user (the server's, or set by the server's policies) | No | No |
 | `"scope": "admin"` | No | Ignored |
 | Mirror server | No | Yes, tokens the main server issued |
 | Passkey sign-in (`/auth/webauthn/complete`) | No: no second factor is involved | Not used |
@@ -761,6 +774,7 @@ The `auth` methods `standard`, `sspi`, `azure` and `oidc` all support trusted de
 **Lifetime and revocation:**
 
 - A token is accepted for the server's trusted-device period, counted from when it was issued: Server Manager &rarr; *Options* &rarr; *2FA Settings* &rarr; **Trust period for user devices (hours)**, 480 hours (20 days) by default and up to 2400. The server applies its current period at each login, so lowering it shortens tokens already issued and raising it lengthens them. Turning it off means no token is accepted or issued.
+- The server's **Trusted devices: period without a second factor** policy (`auth.trusted_device.max_age`, set in the Server Manager under *Policies* for the server, a group or the user) can set a shorter period for a user. A token of that user is then accepted for the shorter of the two periods, also applied at each login, and `tfatoken_expires_at` reflects it; `0` means no token is accepted or issued for the user. The policy never lengthens the server's period.
 - **Reset 2FA** for the user in the Server Manager revokes all of that user's trusted devices, those of the Windows client and of REST clients alike. Deleting the user revokes them as well.
 - Logout, a password change and disabling the account do not end a token. A disabled account cannot sign in anyway.
 - A user has at most 10 trusted devices from REST logins; issuing another drops the oldest.
