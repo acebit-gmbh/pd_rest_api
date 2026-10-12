@@ -57,6 +57,8 @@ Each platform is governed by one of the Supported Clients settings in the Server
 | `windows` | Standard Edition for Windows |
 | `windows-corp` | Corporate Edition for Windows |
 
+*Server 20.0.0 and later.* The server's **Allowed client platforms** policy (`session.platforms.allowed`, set in the Server Manager under *Policies* for the server, a group or the user) applies on top of these settings: where it is set for an account, a platform must be both enabled and listed. A platform the policy leaves out is refused exactly as a disabled one (see below). A value enforced at server scope is checked where the Supported Clients setting is; otherwise the account's value is checked once the sign-in has proven the account -- after the password, identity token or Windows sign-in was accepted, or after the passkey assertion was verified -- and on every authenticated request, long-lived API tokens included.
+
 New session tokens retain the platform established at login. Later requests without the header use that stored platform; a header declaring a different platform returns `400`. If the stored platform is disabled, that policy refusal takes precedence over a conflicting header. Clients cannot change the platform of an established session by omitting or changing the header.
 
 For compatibility, a login with neither identity declaration defaults to `web`. Long-lived API tokens carry no platform: a request made with one uses its `X-PD-Client` header when supplied and otherwise defaults to `web`, so automation that sends no header works only while the Web Client is enabled under **Supported Clients**. Maintained native clients must send their identity instead of relying on this fallback. Web clients can omit the header for compatibility with older servers that do not allow it through CORS. The Web Client declares `web` in the JSON `client` object at `/auth/login` or `/auth/webauthn/begin`, then uses the stored challenge/session identity without a custom header. The server does not infer a platform from `User-Agent`.
@@ -552,7 +554,7 @@ Malformed or conflicting [client identity](#client-identity-and-supported-client
 
 **403 -- Client platform disabled**
 
-A disabled Android client returns `403` with `error.code: 4036` and the message `The Android client is disabled on this server.` Other disabled platforms use `error.code: 403`. This check also applies after login, on authenticated requests; see [Platform Policy and Sessions](#platform-policy-and-sessions).
+A disabled Android client returns `403` with `error.code: 4036` and the message `The Android client is disabled on this server.` Other disabled platforms use `error.code: 403`. This check also applies after login, on authenticated requests, and to a platform the server's **Allowed client platforms** policy leaves out; see [Platform Policy and Sessions](#platform-policy-and-sessions).
 
 **401 -- Unauthorized**
 
@@ -566,6 +568,8 @@ A disabled Android client returns `403` with `error.code: 4036` and the message 
 ```
 
 Returned when credentials are invalid or the account is locked (`error.code` `401`). A sign-in with a method the account may not use -- one not among its `auth_modes`, or one the server's **Allowed sign-in methods** policy does not allow for it -- receives the answer the same request gets for an account the server does not know: this one for `standard` and `sspi`, `401` "The server cannot find the user account specified." for `azure` and `oidc`. A `standard` or `sspi` sign-in is answered like a method switched off on the server, `401` "This method of authentication is not supported..." for every user name, when the **Allowed sign-in methods** policy is enforced at server scope and does not include the method. The server log names the actual reason.
+
+*Server 20.0.0 and later.* A sign-in of an account that has a session over the classic protocol (for example the Windows client) is answered `401` where the server's **New connection from different device** setting or its **Second sign-in of the same user** policy (`session.concurrent`) refuses a second session; with `auth: "negotiate"` and on the passkey sign-in only the policy applies. It counts towards the IP lockout (`429`).
 
 *Server 20.0.0 and later.* When a second factor is required for the account and the server's **Allowed second-factor methods** policy allows none of its methods, the login answers `401` with `error.code` `401` and the message "A second factor is required, but no method is allowed for this account. Contact your administrator." It comes only after the password or identity token was accepted (and, in `admin` scope, after the Server Manager access check), and a `tfatoken` does not stand in for it. An administrator must change the policy. The answer has no sub-code of its own: a client treats it as any plain `401` and shows `error.message`. See [Which Second Factor Is Asked](#which-second-factor-is-asked).
 

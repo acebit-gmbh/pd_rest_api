@@ -23,6 +23,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - a password change ends the account's REST sessions
 - `POST /auth/login` can trust a device: `trust_device: true` with a verified `tfacode` returns a `tfatoken`, which later logins send instead of `tfacode`; `459` and `460` carry `error.trust_device_possible`
 - the server's policies can require a second factor, choose its method and shorten the trusted-device period; a login that requires a second factor for which the policies allow no method answers `401`
+- the server's policies can refuse a client platform, with the `403` / `4036` of a disabled platform, lock an account after fewer failed sign-ins, super-administrators included, and decide a second sign-in of the same user
 - `open_uuid` and `approve_uuid` are optional in the secret representation
 - `include_totp: false` on a shared secret is applied: the recipient no longer gets the entry's one-time code
 - deleted entries and folders answer `404`
@@ -164,7 +165,7 @@ A refused upload answers `400` / `4008` (`PD_ERRCODE_ICON_IMAGE`: `data` is not 
 
 A token that belongs to a disabled account is refused on every route that requires a bearer token, including `POST /auth/logout`. Session tokens and long-lived API tokens both answer `401` with `error.code` `401` and the message "The user account is currently disabled." in the server's language. The server checks the account right after it verifies the token's signature. That is before it checks the token's expiry, its inactivity window and, for API tokens, whether the token is still registered. A refused request therefore does not extend the session's inactivity window.
 
-`POST /auth/login` with `auth: "azure"` or `auth: "oidc"` now also answers `401` with the same message for a disabled account, as the standard and `auth: "sspi"` sign-ins already did. Super-administrator accounts are exempt from the token check and from these sign-in checks. Negotiate sign-in and passkey sign-in (`/auth/webauthn/*`) still refuse every disabled account, super-administrators included, each with its own message.
+`POST /auth/login` with `auth: "azure"` or `auth: "oidc"` now also answers `401` with the same message for a disabled account, as the standard and `auth: "sspi"` sign-ins already did. Super-administrator accounts are exempt from the token check and from these sign-in checks, unless the server's lock-out policy (`auth.lockout.threshold`) sets a number of failed sign-ins for the account; the built-in administrator account is always exempt (see **Client Platforms, Account Lock-Out and a Second Sign-In Follow the Server's Policies** below). Negotiate sign-in and passkey sign-in (`/auth/webauthn/*`) still refuse every disabled account, super-administrators included, each with its own message.
 
 Disabling an account does not revoke any of its tokens. They are refused while the account is disabled. Once the account is re-enabled they are accepted again, unless they have expired, timed out or been revoked in the meantime.
 
@@ -247,11 +248,11 @@ The server takes the client's address from the connection at the start of every 
 
 - **Audit:** in `GET /admin/audit`, these records carry the client address in `actor.ip`: the sign-in, two-factor and lockout records written while handling `POST /auth/login`, the alert records fired by a passkey sign-in (`POST /auth/webauthn/complete`), and the records for the anonymous `/shared/` page.
 - **IP lockout:** a wrong two-factor code on `POST /auth/login` (answered with `460`) counts towards the IP lockout for the client's address; a `tfatoken` the server does not accept does not. Once the limit is reached, further requests from that address are answered with `429` and a `Retry-After` header.
-- **Super-administrator cooldown:** after repeated failed sign-ins to a super-administrator account, password sign-ins to super-administrator accounts from that address are refused with `401` for a period.
-- **Concurrent sessions:** the server can be set to refuse a second session. In that mode, a `POST /auth/login` sign-in with a password or identity token is not refused for this reason if it comes from the same address as the account's existing client session over the classic protocol (for example the Windows client). That session is ended instead. From any other address the sign-in is still refused with `401`.
+- **Super-administrator cooldown:** after repeated failed sign-ins to a super-administrator account, password sign-ins to super-administrator accounts from that address are refused with `401` for a period. Where the server's lock-out policy (`auth.lockout.threshold`) sets a number of failed sign-ins for a super-administrator account other than the built-in administrator, the cooldown does not reset the account's count of failed sign-ins, and the account is disabled when it reaches that number, like any other account; see **Client Platforms, Account Lock-Out and a Second Sign-In Follow the Server's Policies** below.
+- **Concurrent sessions:** the server can be set to refuse a second session. In that mode, a `POST /auth/login` sign-in with a password or identity token is refused with `401` while the account has a client session over the classic protocol (for example the Windows client), also when it comes from that session's address: a REST sign-in is another client, never that session reconnecting. The server's policies can decide this too; see **Client Platforms, Account Lock-Out and a Second Sign-In Follow the Server's Policies** below.
 
 !!! warning "Behavior change for clients"
-    Clients behind one shared address (NAT, reverse proxy) share one lockout counter and one super-administrator cooldown, and count as the same address for the concurrent-session rule. Do not retry a rejected two-factor code automatically.
+    Clients behind one shared address (NAT, reverse proxy) share one lockout counter and one super-administrator cooldown. Do not retry a rejected two-factor code automatically.
 
 #### Error Codes 4012 and 4013 for E-mail Two-Factor Failures
 
@@ -302,6 +303,27 @@ A passkey sign-in (`/auth/webauthn/begin`, `/auth/webauthn/complete`) asks no se
 
 !!! warning "Behavior change for clients"
     A login that used to complete with the password alone can be answered `459` or `460`, or a login that used to ask for the authenticator app can ask for an e-mail code: handle every second factor your client supports whenever the server asks for it. The new `401` has no sub-code of its own: it and a wrong user name or password receive the same `401` (`error.code` `401`). Show `error.message`, advise contacting the administrator when the sign-in keeps being refused, and do not retry automatically. Match the status and code, never the message, which is localizable. A stored `tfatoken` can stop being accepted before `tfatoken_expires_at` when a shorter period is set.
+
+#### Client Platforms, Account Lock-Out and a Second Sign-In Follow the Server's Policies (Behavior Change)
+
+Three more of the server's policies, set in the Server Manager under *Policies* for the server, a group or the user, apply to REST sign-ins and sessions on top of the server's settings. Where none of them is set for an account, its sign-ins and sessions are answered as described in the entries above. Where one is set, the stricter of the policy and the setting applies.
+
+| Policy | Effect |
+|--------|--------|
+| **Allowed client platforms** (`session.platforms.allowed`) | A platform must be enabled under **Supported Clients** and listed in the policy. A platform the policy leaves out is refused exactly as a disabled one: `403`, with `error.code` `4036` and "The Android client is disabled on this server." for Android, `error.code` `403` and the platform's message for the others. |
+| **Failed sign-ins before the account is locked** (`auth.lockout.threshold`) | The account is disabled at the failed sign-in that reaches this number, or the server's own **Deactivate user account after multiple failed logins in a row** limit where that is on and smaller. Unlike the server's setting, the policy also disables super-administrator accounts, at the policy's number; until then the server's own limit still starts the super-administrator cooldown above. Only the built-in administrator account is never disabled: its address is refused for a period instead (the cooldown), starting at the smaller of the two numbers. Set to *No limit*, the policy sets no number and the server's setting alone applies. |
+| **Second sign-in of the same user** (`session.concurrent`) | Decides a sign-in of an account that has a session over the classic protocol (for example the Windows client): refuse the new sign-in, end that session, or allow both. With the server's **New connection from different device** setting, the stricter of the two applies, in this order: refuse, end, allow. |
+
+**Allowed client platforms.** A value enforced at server scope refuses the platform to every account alike and is checked where the Supported Clients setting is: at login (both WebAuthn steps included), on OIDC discovery (`GET /auth/oidc`) and on every authenticated request. Otherwise the policy that applies to the account is checked once the sign-in has proven the account -- after the password, identity token or Windows sign-in was accepted and before a second factor is asked, or after the passkey assertion was verified -- and on every authenticated request, long-lived API tokens included, so that a platform can be refused on a later request of an established session. A refused platform does not count towards the IP lockout (`429`); the server log and the audit record name the policy setting and the scope.
+
+**Failed sign-ins before the account is locked.** Failed sign-ins are counted as for the server's own limit. Once the policy has disabled an account, a super-administrator included, every request with one of its session tokens or long-lived API tokens is refused with `401` "The user account is currently disabled.", and so are its sign-ins with `standard`, `sspi`, `azure` and `oidc`; Negotiate and passkey sign-ins refuse every disabled account. The account stays disabled until an administrator enables it again.
+
+**Second sign-in of the same user.** The policy applies to `POST /auth/login` with every `auth` method and to `POST /auth/webauthn/complete`; with `auth: "negotiate"` and on the passkey sign-in it applies alone, without the server setting, so that there only a policy that refuses the new sign-in or ends the other session changes anything. While the account has a Server Manager session, a sign-in this rule applies to is refused instead of ending that session. A refused sign-in answers `401` with the message the server setting's refusal carries, and it counts towards the IP lockout (`429`). Only the account's sessions over the classic protocol are taken into account, never its REST sessions, and a REST sign-in is never taken for such a session reconnecting, whatever address it comes from.
+
+The inactivity window of REST sessions and the session token's lifetime stay 10 minutes: the **Disconnect after inactivity** policy (`session.idle_timeout`) applies to them only where it is shorter, and its shortest value is 10 minutes.
+
+!!! warning "Behavior change for clients"
+    A platform that works for one account can be refused for another, and an established session can be refused with `403` on a later request when the policy changes. Treat that `403` as an administrator restriction: show `error.message`, do not retry, and do not report it as wrong credentials. A sign-in can be refused with `401` because the account is signed in on another device; show the message and do not retry automatically. Match the status and code, never the message, which is localizable.
 
 ### Administration and Permissions
 

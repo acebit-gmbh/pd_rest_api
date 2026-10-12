@@ -39,6 +39,11 @@ info:
     native platform switches. Android disabled answers 403 / error.code 4036
     and `The Android client is disabled on this server.` Other disabled
     platforms answer 403 / error.code 403 with a platform-specific message.
+    The server's Allowed client platforms policy (session.platforms.allowed)
+    applies on top of these switches where it is set: a platform it leaves
+    out is refused with the same answer - a value enforced at server scope
+    where the switch is checked, the account's own value once the sign-in has
+    proven the account and on every authenticated request.
     `X-PD-Client` is allowed by CORS. No User-Agent inference is performed;
     this declaration is not device attestation. Version/build are informational.
 
@@ -3736,7 +3741,8 @@ components:
         and later uses error.code 4036 when Android is disabled; other disabled
         platforms use error.code 403 with a platform-specific message. Applies
         at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated
-        requests, including existing sessions.
+        requests, including existing sessions. A platform the server's Allowed
+        client platforms policy leaves out is answered the same way.
       content:
         application/json:
           schema:
