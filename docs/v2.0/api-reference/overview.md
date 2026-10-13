@@ -47,6 +47,8 @@ The token expires after a period of inactivity, and each successful request rese
 
 From Server 20.0.0, maintained native clients must also send `X-PD-Client` on every request, for example `android; version=20.0.0; build=123`. The server checks its **Allowed client platforms** policy for that platform at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated requests; new sessions retain the login platform. An Android client the policy does not allow receives `403` with `error.code: 4036`; other platforms it does not allow receive a plain `403`. The header is allowed in CORS preflight. See [Client Identity and Supported Clients](authentication.md#client-identity-and-supported-clients) for valid platforms, the optional login-body identity and compatibility behavior.
 
+From Server 20.0.0, the server's **Allowed network addresses** policy is checked at login and again on every authenticated request, against the address the request comes from; a request from an address it does not allow answers `401`. See [Address Restrictions](authentication.md#address-restrictions).
+
 ## Request Format
 
 - All request bodies must be **JSON** with `Content-Type: application/json`

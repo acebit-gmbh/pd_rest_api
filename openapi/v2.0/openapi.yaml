@@ -309,6 +309,11 @@ paths:
             of its methods: "A second factor is required, but no method is
             allowed for this account. Contact your administrator.", after the
             credential was accepted; a `tfatoken` does not stand in for it.
+            Server 20.0.0 and later: `401` "IP is not authorized." answers a
+            login from an address the account's own IP restriction or the
+            server's Allowed network addresses policy (auth.network.allowed)
+            does not allow, after the credential was accepted; it counts
+            towards the IP lockout (429).
           content:
             application/json:
               schema:
@@ -3768,7 +3773,16 @@ components:
               message: "Malformed JSON request body."
 
     Unauthorized:
-      description: Authentication required or token invalid
+      description: |
+        Authentication required or token invalid. Server 20.0.0 and later: a
+        request with a bearer token, session or long-lived API token, is also
+        refused with 401 "Access token is invalid or expired." when it comes
+        from an address the server's Allowed network addresses policy
+        (auth.network.allowed) does not allow for the token's account. The
+        address is the connection's peer address, never a forwarded header.
+        On `/auth/webauthn/complete`, 401 "IP is not authorized." answers a
+        sign-in from an address the account's own IP restriction or that
+        policy does not allow.
       content:
         application/json:
           schema:
