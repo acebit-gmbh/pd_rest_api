@@ -21,6 +21,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
 - `importance` strings map to the levels the desktop and mobile clients show
 - a password change ends the account's REST sessions
+- the server's account password policies decide which new password `POST /me/password`, `POST /admin/users/{id}/password` and `POST /admin/users` accept: a refused one answers `400` naming the rules it breaks; a password older than the policies' maximum age reads as `must_change_pass: true` in `GET /me`
 - `POST /auth/login` can trust a device: `trust_device: true` with a verified `tfacode` returns a `tfatoken`, which later logins send instead of `tfacode`; `459` and `460` carry `error.trust_device_possible`
 - whether a second factor is asked, which one, and the trusted-device period follow the server's policies, which replace the server's two-factor settings; a login that requires a second factor for which the policies allow no method answers `401`
 - client platforms, the lock-out after failed sign-ins (super-administrators included, the built-in administrator excepted) and a second sign-in of the same user follow the server's policies
@@ -258,6 +259,33 @@ Long-lived API tokens are not affected by any password change, and neither are t
 
 !!! warning "Behavior change for clients"
     If a session that was working starts returning `401`, sign in again -- the password may have been changed elsewhere.
+
+#### New Passwords Follow the Server's Account Password Policies (Behavior Change)
+
+The server's account password policies, set in the Server Manager under *Policies* for the server, a group or the user, decide which new password an account accepts and how long a password may be used. None of them is set by default, and a policy that is not set refuses nothing, so a server that sets none answers as before. They apply on every route that sets an account's password -- `POST /me/password` once the current password is accepted, `POST /admin/users/{id}/password`, `POST /admin/users` with `new_password`, and the Server Manager and the Windows client alike --, always the policies that apply to the account whose password is set, with the groups the same request gives it: for a new user the groups in its `member_of`, for a change of a user's groups and password in one step in the Server Manager the new groups. The master-password rules of the client security policies apply beside them where they applied before: a new password must pass both.
+
+| Policy | Effect on a new password |
+|--------|--------------------------|
+| **Account password: character groups** (`account.password.classes`) | It must hold a character of every listed group: `lowercase`, `uppercase`, `digits`, `symbols`. |
+| **Account password: minimum character groups** (`account.password.min_classes`) | It must hold characters of at least this many of the four groups (1 to 4). |
+| **Account password: minimum length** (`account.password.min_length`) | It must have at least this many characters (0 to 256). |
+| **Account password: history** (`account.password.history`) | When the account changes its own password, it must differ from the account's last passwords, this many of them, the current one included (0 to 24). |
+| **Account password: minimum age** (`account.password.min_age`) | The account may change its own password again only once this time has passed since the last change (up to 365 days). |
+| **Account password: maximum age** (`account.password.max_age`) | Once this time has passed since the last change (1 to 730 days), the account must change its password. |
+
+- **Characters.** A character is one Unicode code point, so a pair of UTF-16 surrogates counts once. Its group is its Unicode category: uppercase and titlecase letters are `uppercase`, lowercase letters `lowercase`, decimal digits `digits`, punctuation and symbols `symbols` -- over ASCII the groups of the client security policies. A letter without case, a mark, a space or a control character counts towards the length and belongs to no group.
+- **History.** When an account's password is set, the server keeps the password it replaces as an Argon2id hash, never the password itself, where the history policy that applies to the account asks for it, and keeps only as many previous passwords as that policy needs: its number less one, since the number includes the current password. Where no history policy applies, it keeps none. Every route that sets a password keeps the one it replaces, the administrators' routes included. The new password is compared with them only when the account changes its own password, on the same routes as the minimum age below; an administrator setting another account's password is not compared with the history. When the policy that applies to an account comes to need fewer -- it is lowered or removed, or the account moves to other groups --, the previous passwords it no longer needs are removed at the next automatic save of the server's configuration. Passwords replaced before the history policy applied to the account are not known; the password that is current when the policy starts to apply is kept once it is replaced.
+- **Minimum age.** It binds the account's own change only: `POST /me/password`, `POST /admin/users/{id}/password` on the caller's own account, a change in the Windows client, and an administrator setting their own password in the Server Manager. An administrator setting another account's password is not held to it, and neither is a change once the maximum age has passed or while the account must change its password (`must_change_pass`). It counts from the last time the password was set, by any route; a password not set since the server was upgraded to 20.0.0 is not held to it.
+- **Maximum age.** It counts from the last change of the password by any route; for a password last set before Server 20.0.0, from the first start of Server 20.0.0. An expired password still signs in: `POST /auth/login` answers as before, and `GET /me` answers `must_change_pass: true` until the password is changed, without the stored flag being set (the `/admin/users` reads show the stored flag). This holds in a session that a password sign-in (`auth: "standard"`) opened, for an account that may change its password itself -- not with `cannot_change_pass`, and not for a super-administrator; a session opened with another `auth` method or with a passkey, and a long-lived API token, read the stored flag. The Windows client is asked to change the password at such a sign-in, as for an account that must change it; a Server Manager sign-in is not.
+
+A refused password answers `400` with `error.code` `400`, as a refusal by the client security policies does: `error.message` starts with the same first line and names each rule the password breaks on a line of its own -- the setting, the scope that set it and the rule's value, for example "The policy setting account.password.min_length, as set at the server, requires at least 12 characters; the password has 8.". The lines are separated by CR LF. Nothing is changed by a refused request; `POST /admin/users` creates no user.
+
+A session token that a sign-in with `auth: "standard"` issued carries the claim `amr: ["pwd"]`, which marks the sessions in which `GET /me` reports an expired password (see [Token Structure](api-reference/authentication.md#token-structure)).
+
+See [Password Rules](api-reference/users.md#password-rules).
+
+!!! warning "Behavior change for clients"
+    A password a server accepted before can be refused with `400`. Show `error.message` with its line breaks and let the user choose another password; do not retry automatically. Match the status and code, never the message, which is localizable. After a sign-in, read `must_change_pass` from `GET /me` and offer the password change when it is `true`.
 
 #### Client Address Recorded and Applied During Sign-In (Behavior Change)
 

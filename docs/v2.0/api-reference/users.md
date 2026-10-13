@@ -26,7 +26,7 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | `dn` | string | Yes | Distinguished Name (LDAP DN) |
 | `objectId` | string | Yes | Active Directory object ID (GUID) |
 | `disabled` | boolean | Yes | Whether the account is disabled |
-| `must_change_pass` | boolean | Yes | User must change password on next login |
+| `must_change_pass` | boolean | Yes | User must change password on next login. From Server 20.0.0, `GET /me` also answers `true` while the account's password is older than the server's **Account password: maximum age** policy, in a session that a password sign-in opened (see [Password Rules](#password-rules)); the stored flag is not changed by it. |
 | `cannot_change_pass` | boolean | Yes | User is not allowed to change their own password |
 | `roles` | array of strings | Restricted | Server roles (see values below). Only modifiable by Server Administrators. |
 | `member_of` | array of UUIDs | Restricted | Group IDs this user belongs to. Only modifiable by Server Administrators or User Administrators. |
@@ -283,9 +283,9 @@ No response body.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Missing or empty `current_password` / `new_password` field, or new password violates the server's password policy |
-| `401 Unauthorized` | Missing/invalid authentication token, or incorrect `current_password` |
-| `403 Forbidden` | User is a built-in super administrator, **or** the per-user `cannot_change_pass` flag is set. The response `error.message` distinguishes the two cases. |
+| `400 Bad Request` | Missing or empty `current_password` / `new_password` field, or the new password breaks the server's password rules (see [Password Rules](#password-rules)) |
+| `401 Unauthorized` | Missing/invalid authentication token |
+| `403 Forbidden` | Incorrect `current_password`, **or** the user is a super administrator, **or** the per-user `cannot_change_pass` flag is set. The response `error.message` distinguishes the cases. |
 | `409 Conflict` | User does not use `standard` authentication (password change is not applicable) |
 
 !!! warning "Super-administrator accounts"
@@ -296,7 +296,7 @@ No response body.
 
 !!! note
     - Only users whose `auth_modes` include `"standard"` can change their password here. Users authenticating via OIDC, SSPI, IWA, or WebAuthn manage their password through the respective identity provider.
-    - If a password policy is configured on the server, the new password must satisfy its requirements (length, complexity, history).
+    - The new password must pass the server's password rules: the master-password rules of the client security policies where they are active and, from Server 20.0.0, the account password policies that apply to the account, the minimum age since the last change included. See [Password Rules](#password-rules).
     - After a successful password change, the `must_change_pass` flag is automatically cleared.
 
 #### Example
@@ -312,6 +312,31 @@ No response body.
             "new_password": "newSecureP@ss456"
         }'
     ```
+
+---
+
+## Password Rules
+
+Every route that sets an account's password -- [Change Own Password](#change-own-password), [Create User](#create-user-admin) with `new_password` and [Change Password](#change-password-admin) -- checks the new password against two sets of rules, and it must pass both:
+
+- the master-password rules of the server's client security policies, where they are active;
+- from Server 20.0.0, the server's account password policies that apply to the account whose password is set, set in the Server Manager under *Policies* for the server, a group or the user, with the groups the same request gives it: for a new user the groups in its `member_of`, for a change of a user's groups and password in one step in the Server Manager the new groups. None of them is set by default, and a policy that is not set refuses nothing.
+
+| Policy | Effect on a new password |
+|--------|--------------------------|
+| **Account password: character groups** (`account.password.classes`) | It must hold a character of every listed group: `lowercase`, `uppercase`, `digits`, `symbols`. |
+| **Account password: minimum character groups** (`account.password.min_classes`) | It must hold characters of at least this many of the four groups (1 to 4). |
+| **Account password: minimum length** (`account.password.min_length`) | It must have at least this many characters (0 to 256). |
+| **Account password: history** (`account.password.history`) | When the account changes its own password, it must differ from the account's last passwords, this many of them, the current one included (0 to 24). |
+| **Account password: minimum age** (`account.password.min_age`) | The account may change its own password again only once this time has passed since the last change (up to 365 days). |
+| **Account password: maximum age** (`account.password.max_age`) | Once this time has passed since the last change (1 to 730 days), the account must change its password. |
+
+- **Characters.** A character is one Unicode code point, so a pair of UTF-16 surrogates counts once. Its group is its Unicode category: uppercase and titlecase letters are `uppercase`, lowercase letters `lowercase`, decimal digits `digits`, punctuation and symbols `symbols` -- over ASCII the groups of the client security policies. A letter without case, a mark, a space or a control character counts towards the length and belongs to no group.
+- **History.** When an account's password is set, the server keeps the password it replaces as an Argon2id hash, never the password itself, where the history policy that applies to the account asks for it, and keeps only as many previous passwords as that policy needs: its number less one, since the number includes the current password. Where no history policy applies, it keeps none. Every route that sets a password keeps the one it replaces, the administrators' routes included. The new password is compared with them only when the account changes its own password, on the same routes as the minimum age below; an administrator setting another account's password is not compared with the history. When the policy that applies to an account comes to need fewer -- it is lowered or removed, or the account moves to other groups --, the previous passwords it no longer needs are removed at the next automatic save of the server's configuration. Passwords replaced before the history policy applied to the account are not known; the password that is current when the policy starts to apply is kept once it is replaced.
+- **Minimum age.** It binds the account's own change only: `POST /me/password`, `POST /admin/users/{id}/password` on the caller's own account, a change in the Windows client, and an administrator setting their own password in the Server Manager. An administrator setting another account's password is not held to it, and neither is a change once the maximum age has passed or while the account must change its password (`must_change_pass`). It counts from the last time the password was set, by any route; a password not set since the server was upgraded to 20.0.0 is not held to it.
+- **Maximum age.** It counts from the last change of the password by any route; for a password last set before Server 20.0.0, from the first start of Server 20.0.0. An expired password still signs in: `POST /auth/login` answers as before, and `GET /me` answers `must_change_pass: true` until the password is changed, without the stored flag being set (the `/admin/users` reads show the stored flag). This holds in a session that a password sign-in (`auth: "standard"`) opened, for an account that may change its password itself -- not with `cannot_change_pass`, and not for a super-administrator; a session opened with another `auth` method or with a passkey, and a long-lived API token, read the stored flag. The Windows client is asked to change the password at such a sign-in, as for an account that must change it; a Server Manager sign-in is not.
+
+A refused password answers `400` with `error.code` `400`, as a refusal by the client security policies does: `error.message` starts with the same first line and names each rule the password breaks on a line of its own -- the setting, the scope that set it and the rule's value, for example "The policy setting account.password.min_length, as set at the server, requires at least 12 characters; the password has 8.". The lines are separated by CR LF. Nothing is changed by a refused request; `POST /admin/users` creates no user.
 
 ---
 
@@ -579,7 +604,7 @@ Creates a new user.
 ```
 
 !!! warning "Password transport"
-    `new_password` is sent as **plaintext** in the JSON body -- the server hashes and stores it. Always call this endpoint over HTTPS. The server applies the configured password policy (complexity, length) if one is active; otherwise it only rejects empty strings.
+    `new_password` is sent as **plaintext** in the JSON body -- the server hashes and stores it. Always call this endpoint over HTTPS. The new password must pass the server's password rules for the new user, with the groups in `member_of` (see [Password Rules](#password-rules)); where no rule is set, the server only rejects empty strings.
 
 !!! tip "Service account recipe"
     Automation / service accounts (CI pipelines, cron jobs, gMSA) usually don't have an email address. If the second factor that applies to a new user is `"email"`, the account cannot sign in (`401`, `error.code` `4013`) at first login. Opt out explicitly:
@@ -629,7 +654,7 @@ Creates a new user.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, or password that violates the configured policy. |
+| `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, or a password that breaks the server's password rules (see [Password Rules](#password-rules)); no user is created then. |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | `error.code` `403`: the session is not admin-scoped, the account has neither the `server_admin` nor the `user_admin` role, or it may not set the requested `roles` (requires `server_admin`) or `member_of`. `error.code` `4032` (`PD_ERRCODE_LICENSE_LIMIT`): the server's licensed number of users is reached. From Server 20.0.0 also `error.code` `403` when the `two_factor_mode` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values)); no user is created then |
 | `409 Conflict` | A user with this username already exists, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` was written |
@@ -858,10 +883,10 @@ POST /v2.0/admin/users/{id}/password
 Sets a new password for a user. Only users whose `auth_modes` include `"standard"` support password changes via this endpoint.
 
 !!! note "Plaintext in, hash stored"
-    `new_password` is sent as **plaintext** -- the server hashes it and only stores the hash. Always call this endpoint over HTTPS. The server applies the configured password policy if one is active.
+    `new_password` is sent as **plaintext** -- the server hashes it and only stores the hash. Always call this endpoint over HTTPS. The new password must pass the server's password rules for the user whose password is set (see [Password Rules](#password-rules)). The minimum age since the last change does not apply, unless the caller sets their own password.
 
-!!! warning "Not for self-service"
-    A regular admin cannot call this endpoint against their own account (returns `403`) -- use [`POST /v2.0/me/password`](#change-own-password) instead, which requires the current password for self-service changes.
+!!! warning "Self-service"
+    For your own password prefer [`POST /v2.0/me/password`](#change-own-password), which requires the current password. Used on your own account, this endpoint also ends your own REST sessions.
 
     The built-in **super-administrator** password cannot be changed via **any** REST endpoint (both `/admin/users/{id}/password` and `/me/password` return `403` for this account). Use the Password Depot Server Manager (native admin application) to change the super-admin password.
 
@@ -893,9 +918,9 @@ No response body.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | `new_password` field is missing, empty, or violates the active password policy |
+| `400 Bad Request` | `new_password` field is missing, empty, or breaks the server's password rules (see [Password Rules](#password-rules)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (includes self-reset attempts -- use `/me/password`), or target user is a built-in super admin account |
+| `403 Forbidden` | Insufficient permissions, or target user is a super admin account |
 | `404 Not Found` | User not found |
 | `409 Conflict` | Target user does not use standard authentication (`auth_modes` does not include `"standard"`) |
 

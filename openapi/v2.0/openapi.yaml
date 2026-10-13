@@ -1532,7 +1532,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: |
+            Invalid or missing fields, or the new password breaks the
+            server's password rules (`error.code` 400): the
+            master-password rules of the client security policies or,
+            from Server 20.0.0, the account password policies that apply
+            to the new user with the groups in `member_of` -- character
+            groups and minimum length (a new account has no history).
+            `error.message` starts with the refusal's first line and
+            names each rule broken, its setting and the scope that set
+            it, on a line of its own. Nothing is changed: no user is
+            created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2026,6 +2040,12 @@ paths:
       tags:
         - Self-Service
       summary: Get the current user's own profile (full representation)
+      description: |
+        Server 20.0.0 and later: `must_change_pass` is also `true` while the
+        account's password is older than the server's Account password:
+        maximum age policy (`account.password.max_age`), in a session that a
+        password sign-in (`auth: standard`) opened, for an account that may
+        change its password itself; the stored flag is not changed by it.
       responses:
         "200":
           description: Profile returned
@@ -2076,7 +2096,11 @@ paths:
       description: |
         Requires knowledge of the current password. Only users with
         `standard` auth mode can change their password here. The built-in
-        super-administrator account cannot use this endpoint.
+        super-administrator account cannot use this endpoint. Server 20.0.0
+        and later: the new password must also pass the server's account
+        password policies that apply to the account, including the minimum
+        age since the last change; a successful change ends an expiry that
+        `GET /me` reported as `must_change_pass`.
       requestBody:
         required: true
         content:
@@ -2087,7 +2111,20 @@ paths:
         "204":
           description: Password changed
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: |
+            Missing or empty `current_password` or `new_password`, or
+            the new password breaks the server's password rules
+            (`error.code` 400): the master-password rules of the client
+            security policies or, from Server 20.0.0, the account
+            password policies that apply to the account -- character
+            groups, minimum length, history, and the minimum age since
+            the last change. `error.message` starts with the refusal's
+            first line and names each rule broken, its setting and the
+            scope that set it, on a line of its own. Nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2661,6 +2698,10 @@ paths:
         Admin password reset. Unlike `/me/password`, this does not require
         the user's current password. Not allowed for the super-administrator
         account -- that must be changed via the Password Depot Server Manager.
+        Server 20.0.0 and later: the new password must also pass the server's
+        account password policies that apply to the user; the minimum age
+        since the last change applies only when the caller sets their own
+        password.
       requestBody:
         required: true
         content:
@@ -2677,7 +2718,20 @@ paths:
         "204":
           description: Password changed
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: |
+            `new_password` is missing or empty, or the new password
+            breaks the server's password rules (`error.code` 400): the
+            master-password rules of the client security policies or,
+            from Server 20.0.0, the account password policies that apply
+            to the user -- character groups and minimum length, and on
+            the caller's own account also history and the minimum age.
+            `error.message` starts with the refusal's first line and
+            names each rule broken, its setting and the scope that set
+            it, on a line of its own. Nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5554,6 +5608,12 @@ components:
               type: boolean
             must_change_pass:
               type: boolean
+              description: |
+                The user must change the password at the next sign-in. Server
+                20.0.0 and later: in `GET /me` also `true` while the account's
+                password is older than the server's Account password: maximum
+                age policy, in a session that a password sign-in opened; the
+                stored flag is not changed by it.
             cannot_change_pass:
               type: boolean
             roles:
@@ -6051,7 +6111,10 @@ components:
           description: The caller's current password (must match the stored hash)
         new_password:
           type: string
-          description: The new password; must satisfy the server's password policy
+          description: |
+            The new password; must pass the server's password rules (the
+            client security policies' master-password rules and, from Server
+            20.0.0, the account password policies that apply to the account)
 
     # -------------------------------------------------------------------------
     # Passkeys / WebAuthn
