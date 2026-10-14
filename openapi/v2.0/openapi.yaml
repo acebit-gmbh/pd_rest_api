@@ -25,6 +25,12 @@ info:
     days) without a request. Earlier servers use 10 minutes. Long-lived API
     tokens do not expire on inactivity.
 
+    Server 20.0.0 and later: the server's API token policies
+    (auth.api_tokens.allowed, auth.api_tokens.max_lifetime) are checked on
+    every use of a long-lived API token, against the token's creation time;
+    a token they end answers 401 "Access token is invalid or expired." like
+    a revoked one.
+
     ## Client identity
 
     Server 20.0.0 and later: maintained native clients must send `X-PD-Client` on
@@ -54,7 +60,18 @@ info:
     does not allow answer 403 / error.code 403 with a platform-specific
     message.
     `X-PD-Client` is allowed by CORS. No User-Agent inference is performed;
-    this declaration is not device attestation. Version/build are informational.
+    this declaration is not device attestation. Build is informational.
+    The version is compared with the server's Minimum client version policy
+    (session.client.min_version) at login and on every request of a session,
+    for every platform but web and never for a long-lived API token: a
+    client below it, or one that declares no version where a minimum is
+    set, answers 403 / error.code 4037. One to four numbers compared one by
+    one (a missing one is 0), a pre-release (-beta2) below its release,
+    build metadata (+77) ignored. If the header and the login body both
+    declare a version, the header's is compared; a session
+    token keeps the version of its login (claim client_version), WebAuthn
+    complete the version of its begin, a Negotiate retry the version of the
+    leg that was challenged.
 
     ## Pagination
 
@@ -102,10 +119,12 @@ info:
     (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry`, `deleteFolder` or
     `uploadDocumentContent`: the item, or something inside the folder, is
     being edited by another user; nothing was deleted or written, Server
-    20.0.0 and later) and `4036`
+    20.0.0 and later), `4036`
     (`PD_ERRCODE_ANDROID_DISABLED` -- the Android client is disabled, at login,
     on OIDC discovery or on authenticated requests, Server 20.0.0 and later)
-    with HTTP `403`;
+    and `4037` (`PD_ERRCODE_CLIENT_OUTDATED` -- the client's declared version
+    is below the server's Minimum client version policy, at login or on
+    authenticated requests, Server 20.0.0 and later) with HTTP `403`;
     `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
     `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
     that id in this database, Server 20.0.0 and later) with HTTP `404`; and
@@ -141,6 +160,8 @@ info:
       supported methods (RFC 7231 §6.5.5).
     - `403 Forbidden` -- a disabled client platform: error.code 4036 for
       Android, 403 for other platforms (Server 20.0.0 and later).
+    - `403 Forbidden` -- a client version below the server's Minimum client
+      version policy: error.code 4037 (Server 20.0.0 and later).
     - `403 Forbidden` -- on a mirror server, every request other than `GET`
       that carries a bearer token (`POST /auth/logout` included).
     - `411 Length Required` -- the request carries a `Transfer-Encoding`
@@ -3620,7 +3641,11 @@ components:
         that platform and a conflicting value answers 400, unless disabled
         platform policy refuses first. Long-lived API tokens carry no platform
         and use the header or default to web. The same web fallback applies when
-        login has no identity. Version/build are informational, not permissions.
+        login has no identity. Build is informational. Version is compared with
+        the server's Minimum client version policy for every platform but web
+        (403 / error.code 4037 below it, or where none is declared and a
+        minimum is set); a session token keeps the version of its login, and
+        a later header does not change it.
       schema:
         type: string
         maxLength: 256
@@ -3845,7 +3870,11 @@ components:
         own IP restriction or that policy does not allow gets 401
         "Authentication failed.", as every refused passkey sign-in does; a
         value of the policy enforced at server scope refuses it so on
-        `/auth/webauthn/begin` already.
+        `/auth/webauthn/begin` already. A long-lived API token that the
+        server's API token policies end (auth.api_tokens.allowed off for the
+        token's account, or the token older than auth.api_tokens.max_lifetime)
+        answers 401 "Access token is invalid or expired." as well, like a
+        revoked token.
       content:
         application/json:
           schema:
@@ -3862,7 +3891,12 @@ components:
         platforms use error.code 403 with a platform-specific message. Applies
         at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated
         requests, including existing sessions. A platform the server's Allowed
-        client platforms policy leaves out is answered the same way.
+        client platforms policy leaves out is answered the same way. A client
+        whose declared version is below the server's Minimum client version
+        policy (session.client.min_version), or that declares none where a
+        minimum applies, gets error.code 4037 with a message naming the version
+        required, at login and on authenticated requests of its session; the
+        web platform and long-lived API tokens are never refused so.
       content:
         application/json:
           schema:
@@ -3878,6 +3912,11 @@ components:
                 error:
                   code: 4036
                   message: "The Android client is disabled on this server."
+            clientOutdated:
+              value:
+                error:
+                  code: 4037
+                  message: "This version of the application can no longer sign in to the server. Version 20.1.0 or later is required. Please update the application."
 
     NotFound:
       description: Resource not found
@@ -4021,9 +4060,11 @@ components:
         POST /auth/webauthn/begin.
         If X-PD-Client is also sent, the platforms must agree. Recognized
         members cannot be duplicated. Invalid declarations answer 400.
-        Version/build are informational; platform selects the entry of the
-        Allowed client platforms policy and is retained in new session
-        tokens.
+        Build is informational; platform selects the entry of the Allowed
+        client platforms policy, and version is compared with the Minimum
+        client version policy (never for web); both are retained in new
+        session tokens. If X-PD-Client declares a version too, the header's
+        is compared.
       required: [platform]
       properties:
         platform:
@@ -4037,6 +4078,9 @@ components:
           maxLength: 64
           pattern: "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
           description: Optional client version as a nonempty HTTP token, for example 20.0.0-beta+1.
+            Compared with the server's Minimum client version policy for every
+            platform but web; a client of such a platform that sends none is
+            refused (403 / 4037) where a minimum applies.
         build:
           type: integer
           format: int64
@@ -6031,9 +6075,12 @@ components:
                 (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry`, `deleteFolder` or
                 `uploadDocumentContent`: the item, or something inside the folder, is
                 being edited by another user; nothing was deleted or written, Server
-                20.0.0 and later) and `4036` (`PD_ERRCODE_ANDROID_DISABLED` -- the
+                20.0.0 and later), `4036` (`PD_ERRCODE_ANDROID_DISABLED` -- the
                 Android client is disabled, at login, on OIDC discovery or on
-                authenticated requests, Server 20.0.0 and later) with HTTP `403`;
+                authenticated requests, Server 20.0.0 and later) and `4037`
+                (`PD_ERRCODE_CLIENT_OUTDATED` -- the client's declared version is
+                below the server's Minimum client version policy, Server 20.0.0
+                and later) with HTTP `403`;
                 `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
                 `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
                 that id in this database, Server 20.0.0 and later) with HTTP `404`; and
@@ -6296,6 +6343,14 @@ components:
         expires_at:
           type: string
           format: date-time
+          description: |
+            The expiry stored at creation. Server 20.0.0 and later: cut at
+            creation to the creation time plus the maximum lifetime the API
+            token policies gave the owning user then
+            (auth.api_tokens.max_lifetime), and to at most 730 days after it
+            where none applied. A later or lowered policy does not change the
+            stored value, but it can end the token earlier (see Token
+            Lifetime in the authentication reference).
         lastused_at:
           type: string
           format: date-time

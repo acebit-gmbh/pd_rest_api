@@ -26,6 +26,8 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - whether a second factor is asked, which one, and the trusted-device period follow the server's policies, which replace the server's two-factor settings; a login that requires a second factor for which the policies allow no method answers `401`
 - client platforms, the lock-out after failed sign-ins (super-administrators included, the built-in administrator excepted) and a second sign-in of the same user follow the server's policies
 - the server's **Allowed network addresses** policy applies to every sign-in and again to every authenticated request, long-lived API tokens included; a sign-in from an address it does not allow, or the account's own IP restriction does not allow, gets the `401` the same request gets for an account the server does not know (counted towards `429`), a later request `401` "Access token is invalid or expired."
+- the server's **Minimum client version** policy compares the version a client declares in `X-PD-Client` or the login body, at login and on every request of a session, for every platform but `web`: a client below it, or one that declares no version where a minimum is set, gets `403` / `4037`; long-lived API tokens are not checked
+- the server's **Allow API tokens** and **API tokens: maximum lifetime** policies are checked on every use of a long-lived API token: a token they end gets `401` like a revoked one, and a new token's expiry is cut to the maximum lifetime
 - REST sessions end after the inactivity period of the server's **Disconnect after inactivity** policy, 60 minutes by default, instead of a fixed 10 minutes
 - `two_factor_mode` reads and writes the user's own second-factor policy entries; a write that carries it can answer `403` or `409`
 - `open_uuid` and `approve_uuid` are optional in the secret representation
@@ -379,6 +381,38 @@ A REST session ends after the inactivity period of the server's **Disconnect aft
 
 !!! warning "Behavior change for clients"
     Do not assume a fixed inactivity period. A client that signs the user out after 10 minutes without a request ends sessions the server still accepts; one that keeps a session open longer than the server's period gets `401`. Treat a `401` on an authenticated route as the end of the session and sign in again.
+
+#### Clients Below the Server's Minimum Version Are Refused (Behavior Change)
+
+The server's **Minimum client version** policy (`session.client.min_version`), set in the Server Manager under *Policies* for the server, a group or the user, refuses clients older than the version it names, on every platform except `web`. Not set, as it is by default, it refuses nothing. A value set for the user applies before one set for a group, and a group's before the server's, unless the higher one is enforced: an enforced value is a floor that values set below it can only raise. Between several groups the highest value counts. The version compared is the one the client declares in `X-PD-Client` (`version=`) or in the login or WebAuthn-begin body (`client.version`): numbers compared one by one, a missing number counting as `0`, a pre-release (`-beta2`) below its release and build metadata (`+77`) ignored. A client that declares no version, or a version that does not read this way, is refused wherever a minimum applies. The `web` platform -- a client that declares it, or declares no platform -- and long-lived API tokens are never checked.
+
+- **Sign-in.** `POST /auth/login` with every `auth` method and `POST /auth/webauthn/complete`. A value enforced at server scope is checked before the account is looked up (on `POST /auth/webauthn/begin` too; with Negotiate once the Windows handshake has completed); the value that applies to the account once the sign-in has proven the account, right after the **Allowed client platforms** policy and before a second factor is asked. WebAuthn complete compares the version declared at begin, and a Negotiate retry the version of the leg that was challenged.
+- **Every request of a session.** A session token carries the version its sign-in declared, as the claim `client_version`, and every request made with it is compared with the policy that applies to the account at that moment, so a raised minimum refuses every request of an older client's session from its next request on, for as long as it applies. The refusal does not end or revoke the session: its token is accepted again if the minimum is lowered while the session lasts. A version in the `X-PD-Client` of a later request does not change the token's. A session token without the claim is refused wherever a minimum applies. `POST /auth/logout` is not checked.
+
+A refused client receives `403` with the new `error.code` `4037` and a message naming the version required: "This version of the application can no longer sign in to the server. Version 20.1.0 or later is required. Please update the application.". It does not count towards the IP lockout (`429`) or against the account. The server log names the policy setting, the scope, the version required and the version declared, and so does the audit record of a refused sign-in; a refused request of an established session is recorded in the server log alone. If `X-PD-Client` and the login body both declare a version, the header's is the one compared.
+
+See [Minimum Client Version](api-reference/authentication.md#minimum-client-version).
+
+!!! warning "Behavior change for clients"
+    Declare your application's real version in `X-PD-Client` or the login body. Treat `403` / `4037` as a request to update the application, at sign-in and on any later request: show the message, end the session with `POST /auth/logout`, which is not checked, do not retry, and do not report it as incorrect credentials. A pre-release build is below its release, so a beta of version 20.1.0 is refused by a minimum of 20.1.0. Match the status and code, never the message, which is localizable.
+
+#### Long-Lived API Tokens Follow the Server's API Token Policies (Behavior Change)
+
+The server's API token policies, set in the Server Manager under *Policies* for the server, a group or the user, govern the long-lived API tokens of an account, administrators' tokens included -- the values that apply to the account the token belongs to, never to the administrator who created it. Not set, as they are by default, they change nothing.
+
+| Policy | Effect |
+|--------|--------|
+| **Allow API tokens** (`auth.api_tokens.allowed`) | Off: every long-lived token of the account is refused, and no new one can be created for it. |
+| **API tokens: maximum lifetime** (`auth.api_tokens.max_lifetime`) | 1 to 730 days. A token is refused once this time has passed since it was created, and a new token's expiry is cut to its creation time plus this time. |
+
+Both are checked on every request made with a long-lived token, `POST /auth/logout` included, against the values that apply at that moment, so switching tokens off ends every existing token of the account and lowering the maximum lifetime ends the tokens older than it. A token they end receives `401` with `error.code` `401` and "Access token is invalid or expired.", as a revoked token does; it is not revoked, and is accepted again once the policies allow it, until its own expiry. The check comes after the token is known to be registered and not revoked and before the **Allowed network addresses** policy; a refused request is not recorded as the token's last use and does not count towards the IP lockout (`429`). The server log and the audit record name the policy setting and the scope.
+
+When a token is created in the Server Manager, the server refuses it where **Allow API tokens** is off for the account and cuts its expiry to the maximum lifetime that applies, which the Server Manager then shows; where none applies, the expiry is at most 730 days after the creation. The token's `exp` claim is always the expiry the server stored.
+
+See [Token Lifetime](api-reference/authentication.md#token-lifetime).
+
+!!! warning "Behavior change for clients"
+    A long-lived API token can stop working before its expiry date with `401`. An automated client cannot sign in again with it: report the `401` to the administrator and do not retry in a loop.
 
 ### Administration and Permissions
 

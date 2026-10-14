@@ -14,7 +14,7 @@ The Password Depot REST API v2.0 uses standard **Bearer token** authentication. 
 X-PD-Client: android; version=20.0.0; build=123
 ```
 
-Use your application's platform: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Version and build are optional. The server applies its **Allowed client platforms** policy for that platform at login, on OIDC discovery and on subsequent token requests. An Android client the policy does not allow receives HTTP `403` with `error.code: 4036`; another platform it does not allow receives a plain `403`. Show the policy refusal instead of retrying credentials.
+Use your application's platform: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Version and build are optional, but send your application's version: where the server's **Minimum client version** policy is set, a client of any platform but `web` that declares no version, or one below the minimum, receives HTTP `403` with `error.code: 4037`. Ask the user to update the application then. The server applies its **Allowed client platforms** policy for that platform at login, on OIDC discovery and on subsequent token requests. An Android client the policy does not allow receives HTTP `403` with `error.code: 4036`; another platform it does not allow receives a plain `403`. Show the policy refusal instead of retrying credentials.
 
 New session tokens retain the login platform. A login that declares no platform counts as `web`, and so does a request made with a long-lived API token that sends no `X-PD-Client`, so such scripts work only while the policy allows `web`. Maintained native clients must identify themselves explicitly. The Web Client declares `web` in the body of `/auth/login` or `/auth/webauthn/begin` and uses the stored identity thereafter, preserving compatibility with older servers' CORS rules. See [Client Identity and Supported Clients](../api-reference/authentication.md#client-identity-and-supported-clients) for the login-body alternative, validation rules and token behavior.
 
@@ -213,7 +213,7 @@ Predefined Azure AD / Entra ID authentication. Use `oidc` instead for new integr
 
 Access tokens expire after a period of inactivity: from Server 20.0.0 the server's **Disconnect after inactivity** policy as it applies to the user, 60 minutes by default, or about 7 days where it has no limit; on earlier servers 10 minutes. The inactivity timer resets on every authenticated API call, so active sessions stay alive indefinitely.
 
-For **automation and service accounts**, the Password Depot Server Manager can generate **long-lived tokens** that do not expire on inactivity. See the [full reference](../api-reference/authentication.md#token-lifetime) for details and security recommendations.
+For **automation and service accounts**, the Password Depot Server Manager can generate **long-lived tokens** that do not expire on inactivity; the server's API token policies can switch them off for an account or limit how long they last. See the [full reference](../api-reference/authentication.md#token-lifetime) for details and security recommendations.
 
 ## Step 2: Use the Token
 

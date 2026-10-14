@@ -12,7 +12,7 @@ API reference for authentication-related endpoints.
 X-PD-Client: android; version=20.0.0; build=123
 ```
 
-The platform is required when the header is supplied. Accepted values are `web`, `android`, `ios`, `macos`, `linux`, `windows` and `windows-corp`; input is case-insensitive. `version` and `build` are optional information about the client release.
+The platform is required when the header is supplied. Accepted values are `web`, `android`, `ios`, `macos`, `linux`, `windows` and `windows-corp`; input is case-insensitive. `version` and `build` are optional. The server compares `version` with its **Minimum client version** policy (see [Minimum Client Version](#minimum-client-version)); `build` is information about the client release.
 
 | Value | Format |
 |-------|--------|
@@ -37,7 +37,7 @@ The platform is required when the header is supplied. Accepted values are `web`,
 }
 ```
 
-`client` must be a JSON object. `client.platform` is a required string, at most 32 characters, containing one of the platform names above. `client.version` is an optional string with the same limit as the header value. `client.build` is an optional JSON integer with the same range as the header value. `null` is not accepted for `client`, `client.platform`, `client.version` or `client.build`; leave out a value you do not send. If the header and body both declare a platform, they must agree. WebAuthn complete ignores a `client` member in its body, and OIDC discovery is a `GET` without a body. A WebAuthn challenge retains the platform declared at begin through the header or body; complete may omit the header and use that platform, but a conflicting platform returns `400`. A disabled platform is refused with `403` first, whether the challenge stored it or the header of the complete request declares it. The Negotiate handshake also retains the declared platform across retries that have no JSON body.
+`client` must be a JSON object. `client.platform` is a required string, at most 32 characters, containing one of the platform names above. `client.version` is an optional string with the same limit as the header value. `client.build` is an optional JSON integer with the same range as the header value. `null` is not accepted for `client`, `client.platform`, `client.version` or `client.build`; leave out a value you do not send. If the header and body both declare a platform, they must agree; if both declare a version, the header's is the one used. WebAuthn complete ignores a `client` member in its body, and OIDC discovery is a `GET` without a body. A WebAuthn challenge retains the platform and the version declared at begin through the header or body; complete may omit the header and use that platform, but a conflicting platform returns `400`. A disabled platform is refused with `403` first, whether the challenge stored it or the header of the complete request declares it. The Negotiate handshake also retains the declared platform and version across retries that have no JSON body.
 
 Unknown platforms, malformed identity values, unknown header parameters, duplicate recognized identity members and conflicting header/body platforms return `400 Bad Request`, as does an `X-PD-Client` header that is sent more than once, is empty, or contains a comma or a character outside printable ASCII. Send the header once, with a single identity. None of these `400`s counts towards the IP lockout (`429`). Extra members of the `client` object are ignored. Do not send the build as a JSON string.
 
@@ -76,7 +76,38 @@ When Android is disabled, the response is **HTTP `403` with `error.code: 4036`**
 
 Other disabled platforms return HTTP `403` with `error.code: 403` and a platform-specific message. Treat these responses as an administrator policy restriction, not as incorrect credentials or a request to retry login. They do not count towards the IP lockout (`429`). Branch on the numeric status and code.
 
-`X-PD-Client` is permitted by the server's CORS preflight response. Client identity is supplied by the application; it is not device attestation. Version and build are informational and do not grant permissions.
+`X-PD-Client` is permitted by the server's CORS preflight response. Client identity is supplied by the application; it is not device attestation. The build is informational. The version decides only whether the **Minimum client version** policy refuses the client; it grants no permission.
+
+### Minimum Client Version
+
+*Server 20.0.0 and later.* The server's **Minimum client version** policy (`session.client.min_version`), set in the Server Manager under *Policies* for the server, a group or the user, refuses clients older than the version it names. Not set, as it is by default, it refuses nothing. A value set for the user applies before one set for a group, and a group's before the server's, unless the higher one is enforced: an enforced value is a floor that values set below it can only raise. Between several groups the highest value counts.
+
+The policy applies to every platform except `web`. A client that declares `web`, or declares no platform and therefore counts as `web`, is never compared, and neither is a request made with a long-lived API token: those tokens follow the API token policies instead (see [Token Lifetime](#token-lifetime)). The same policy applies to the Windows client and the Server Manager.
+
+**The version compared** is the one the client declares: `version=` in `X-PD-Client`, or `client.version` in the login or WebAuthn-begin body (see above). The minimum is written as one to four numbers separated by dots, and a declared version is compared with it as follows:
+
+- the numbers are compared one by one; a missing number counts as `0`, so `20.1`, `20.1.0` and `20.1.0.0` are the same version;
+- a pre-release suffix, `-` followed by letters, digits, dots or hyphens, sorts below the release it belongs to: `20.1.0-beta2` does not meet a minimum of `20.1.0`, while it meets `20.0.9`;
+- build metadata, `+` followed by letters, digits, dots or hyphens, is ignored: `20.1.0+77` meets `20.1.0`;
+- each number has one to nine digits. A client that declares no version, or a version that does not read this way, meets no minimum and is refused wherever one applies.
+
+**Where it is checked:**
+
+- **Sign-in.** `POST /auth/login` with every `auth` method, Negotiate included, and `POST /auth/webauthn/complete`. A value enforced at server scope, which no group or user value can lower, is checked before the account is looked up: before the user name, password, token or passkey is looked at -- on `POST /auth/webauthn/begin` too --, so every user name gets the same answer; with Negotiate once the Windows handshake has completed. Otherwise the value that applies to the account is checked once the sign-in has proven the account and its address is allowed, right after the **Allowed client platforms** policy and before a second factor is asked; on the passkey sign-in once the assertion was verified. `POST /auth/webauthn/complete` compares the version declared at begin, which the challenge keeps, not one in its own header; a Negotiate retry compares the version of the leg that was challenged.
+- **Every request of a session.** A session token carries the version its sign-in declared (the claim `client_version`, see [Token Structure](#token-structure)), and every request made with it is checked against the policy that applies to the account at that moment, so a raised minimum refuses every request of an older client's session from its next request on, for as long as it applies. The refusal does not end or revoke the session: its token is accepted again if the minimum is lowered while the session lasts. The token's version is the one compared; a version in the `X-PD-Client` of a later request does not change it. A session token without `client_version` -- its sign-in declared no version -- is refused wherever a minimum applies. `POST /auth/logout` is not checked.
+
+A client below the minimum receives **HTTP `403` with `error.code: 4037`** and a message that names the version required, as the policy states it:
+
+```json
+{
+    "error": {
+        "code": 4037,
+        "message": "This version of the application can no longer sign in to the server. Version 20.1.0 or later is required. Please update the application."
+    }
+}
+```
+
+Treat it as a request to update the application: show the message, do not retry, and do not report it as incorrect credentials. Refused on a request of an established session, end the session with `POST /auth/logout`, which is not checked, before you discard its token. It does not count towards the IP lockout (`429`) or against the account. The server log names the policy setting, the scope, the version required and the version declared, and so does the audit record of a refused sign-in; a refused request of an established session is recorded in the server log alone. Branch on the numeric status and code.
 
 ---
 
@@ -490,7 +521,18 @@ When the request carried `"trust_device": true` and made the device trusted (Ser
 
 Access tokens expire after a period of inactivity; the timer resets on every authenticated API call. From Server 20.0.0 the period is the server's **Disconnect after inactivity** policy (`session.idle_timeout`) as it applies to the user, the same period that ends the user's desktop connections: 60 minutes by default, set in the Server Manager under *Policies* for the server, a group or the user, from 10 minutes to 10000 minutes or *No limit*, with which a session ends after 600000 seconds (about 7 days) without a request. The period is read on every request, so a shorter one applies to an open session from its next request. Servers before 20.0.0 end a session after **10 minutes of inactivity**. Session tokens suit interactive use and short-lived scripts.
 
-For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines, monitoring scripts), a Super Administrator can generate **long-lived tokens** in the Password Depot Server Manager for any user account, in client or admin scope, with an expiry date 1 to 730 days ahead (180 by default). Long-lived tokens do not expire on inactivity. They stay valid until 00:00 on their expiry date, or until they are revoked or deleted in the Server Manager. An admin-scope token needs an account with a server role, and a Super Administrator's token must be admin scope.
+For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines, monitoring scripts), a Super Administrator can generate **long-lived tokens** in the Password Depot Server Manager for any user account, in client or admin scope, with an expiry date 1 to 730 days ahead (180 by default). Long-lived tokens do not expire on inactivity. They stay valid until their expiry -- 00:00 on the expiry date chosen, or the earlier time to which the server's API token policies cut it --, or until they are revoked or deleted in the Server Manager or the API token policies end them (below). An admin-scope token needs an account with a server role, and a Super Administrator's token must be admin scope.
+
+**API token policies.** *Server 20.0.0 and later.* The server's API token policies, set in the Server Manager under *Policies* for the server, a group or the user, govern the long-lived tokens of an account, administrators' tokens included. The values that apply are those of the account the token belongs to, never those of the administrator who created it. Not set, as they are by default, they change nothing.
+
+| Policy | Effect |
+|--------|--------|
+| **Allow API tokens** (`auth.api_tokens.allowed`) | Off: every long-lived token of the account is refused, and no new one can be created for it. |
+| **API tokens: maximum lifetime** (`auth.api_tokens.max_lifetime`) | 1 to 730 days. A token is refused once this time has passed since it was created, and a new token's expiry is cut to its creation time plus this time. |
+
+Both are checked on every request made with a long-lived token, `POST /auth/logout` included, against the values that apply to the account at that moment: switching tokens off ends every existing token of the account, and lowering the maximum lifetime ends the tokens older than it. A token the policies end receives `401` with `error.code` `401` and "Access token is invalid or expired.", as a revoked token does. It is not revoked: it is accepted again once the policies allow it, until its own expiry. The check comes after the token's signature, the account's status, the client platform, the token's expiry and whether it is still registered and not revoked, and before the **Allowed network addresses** policy; a refused request is not recorded as the token's last use and does not count towards the IP lockout (`429`). The server log and the audit record name the policy setting and the scope.
+
+When a token is created in the Server Manager, the server refuses it where **Allow API tokens** is off for the account, and cuts its expiry to the maximum lifetime that applies; the Server Manager then says which expiry the token got. An expiry that is not in the future is refused. Where no maximum lifetime applies, the expiry is at most 730 days after the creation. The token's `exp` claim is always the expiry the server stored.
 
 !!! tip "When to Use Long-Lived Tokens"
     - Scheduled tasks and cron jobs that need unattended access
@@ -537,7 +579,7 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 | `sub` | Subject | string | User ID (UUID). Primary identifier for the token's owner |
 | `aud` | Audience | string | `https://<server-host>:<rest-port>/` |
 | `iat` | Issued At | int (Unix time) | When the token was created |
-| `exp` | Expiration | int (Unix time) | For long-lived tokens, the fixed expiry chosen at creation. For session tokens, the login time plus the inactivity period that applied to the user at login (from Server 20.0.0; 600000 seconds ahead where the period has no limit): the server accepts a session token after this time for as long as the session stays active within its period, so it does not tell when the session ends |
+| `exp` | Expiration | int (Unix time) | For long-lived tokens, the fixed expiry stored at creation: the one chosen, or the earlier one to which the API token policies cut it (see [Token Lifetime](#token-lifetime)). For session tokens, the login time plus the inactivity period that applied to the user at login (from Server 20.0.0; 600000 seconds ahead where the period has no limit): the server accepts a session token after this time for as long as the session stays active within its period, so it does not tell when the session ends |
 | `admin` | -- | boolean | `true` if the token carries admin scope, `false` otherwise. This is what distinguishes an admin session from a client session -- the `scope` field in the login body is only used at token-creation time |
 | `refresh` | -- | boolean | `true` for session tokens (eligible for inactivity-based extension), `false` for long-lived tokens |
 
@@ -545,7 +587,7 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 
 | Claim | Name | Type | Description |
 |-------|------|------|-------------|
-| `jti` | JWT ID | string | UUID of the `ApiToken` record in the server store. Used server-side for revocation: presenting a token whose `jti` no longer matches an active record returns `401`. Session tokens do **not** carry `jti` -- the server uses the presence of this claim to decide which token type it is looking at (e.g., when deciding the logout behavior) |
+| `jti` | JWT ID | string | UUID of the `ApiToken` record in the server store. Used server-side for revocation: presenting a token whose `jti` no longer matches an active record returns `401`, and so does a token that the server's API token policies end (see [Token Lifetime](#token-lifetime)). Session tokens do **not** carry `jti` -- the server uses the presence of this claim to decide which token type it is looking at (e.g., when deciding the logout behavior) |
 
 **Claim only on session tokens:**
 
@@ -553,6 +595,7 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 |-------|------|------|-------------|
 | `client_platform` | -- | string | *Server 20.0.0 and later.* The client platform established at login: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Requests made with the token are checked against the server's **Allowed client platforms** policy for that platform; see [Platform Policy and Sessions](#platform-policy-and-sessions). Long-lived API tokens do not carry it |
 | `amr` | Authentication Methods References | array of strings | *Server 20.0.0 and later.* `["pwd"]` on a token that a sign-in with `auth: "standard"` issued; absent after every other sign-in method. The server reads it to decide whether `GET /me` reports an expired password; see [Expired Passwords](#expired-passwords). Long-lived API tokens do not carry it |
+| `client_version` | -- | string | *Server 20.0.0 and later.* The client version the sign-in declared, in `X-PD-Client` or the login body, as it was sent; absent where the sign-in declared none. Every request made with the token is checked against the server's **Minimum client version** policy with this version; see [Minimum Client Version](#minimum-client-version). Long-lived API tokens do not carry it |
 
 **Telling the two token types apart on the client side:**
 
@@ -571,6 +614,10 @@ Malformed or conflicting [client identity](#client-identity-and-supported-client
 **403 -- Client platform disabled**
 
 An Android client that the server's **Allowed client platforms** policy does not allow receives `403` with `error.code: 4036` and the message `The Android client is disabled on this server.` Other platforms it does not allow receive `error.code: 403`. This check also applies after login, on authenticated requests; see [Platform Policy and Sessions](#platform-policy-and-sessions).
+
+**403 -- Client version below the minimum** *(`error.code` `4037`)*
+
+A client whose declared version is below the server's **Minimum client version** policy, or that declares no version where a minimum applies, receives `403` with `error.code: 4037` and a message naming the version required, at login and on later requests of its session. The `web` platform is never refused. See [Minimum Client Version](#minimum-client-version).
 
 **401 -- Unauthorized**
 
@@ -920,7 +967,7 @@ The token remains valid. Clients can detect this case by inspecting the HTTP sta
 }
 ```
 
-Returned when the token is invalid, expired, or missing.
+Returned when the token is invalid, expired, or missing, and for a long-lived API token that the server's API token policies end (see [Token Lifetime](#token-lifetime)).
 
 ---
 
