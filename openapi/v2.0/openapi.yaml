@@ -1565,11 +1565,12 @@ paths:
         "400":
           description: |
             Invalid or missing fields, or the new password breaks the
-            server's password rules (`error.code` 400): the
-            master-password rules of the client security policies or,
-            from Server 20.0.0, the account password policies that apply
-            to the new user with the groups in `member_of` -- character
-            groups and minimum length (a new account has no history).
+            server's password rules (`error.code` 400): from Server
+            20.0.0 the account password policies that apply to the new
+            user with the groups in `member_of` -- character groups and
+            minimum length (a new account has no history); earlier
+            servers apply the master-password rules of the client
+            security policies.
             `error.message` starts with the refusal's first line and
             names each rule broken, its setting and the scope that set
             it, on a line of its own. Nothing is changed: no user is
@@ -2077,7 +2078,8 @@ paths:
         Requires an admin-scoped session; any admin-scoped session may read
         it, on a mirror too. Server 20.0.0 and later. Every setting of the
         server's registry, in the order of the setting ids, with the
-        registry's columns and whether the server applies the setting yet.
+        registry's columns and whether the server itself enforces the
+        setting.
         Ids and words only, no labels. Not paginated.
       responses:
         "200":
@@ -2450,13 +2452,14 @@ paths:
           description: |
             Missing or empty `current_password` or `new_password`, or
             the new password breaks the server's password rules
-            (`error.code` 400): the master-password rules of the client
-            security policies or, from Server 20.0.0, the account
-            password policies that apply to the account -- character
-            groups, minimum length, history, and the minimum age since
-            the last change. `error.message` starts with the refusal's
-            first line and names each rule broken, its setting and the
-            scope that set it, on a line of its own. Nothing is changed.
+            (`error.code` 400): from Server 20.0.0 the account password
+            policies that apply to the account -- character groups,
+            minimum length, history, and the minimum age since the last
+            change; earlier servers apply the master-password rules of
+            the client security policies. `error.message` starts with
+            the refusal's first line and names each rule broken, its
+            setting and the scope that set it, on a line of its own.
+            Nothing is changed.
           content:
             application/json:
               schema:
@@ -3034,7 +3037,7 @@ paths:
         Admin password reset. Unlike `/me/password`, this does not require
         the user's current password. Not allowed for the super-administrator
         account -- that must be changed via the Password Depot Server Manager.
-        Server 20.0.0 and later: the new password must also pass the server's
+        Server 20.0.0 and later: the new password must pass the server's
         account password policies that apply to the user; the minimum age
         since the last change applies only when the caller sets their own
         password.
@@ -3056,11 +3059,12 @@ paths:
         "400":
           description: |
             `new_password` is missing or empty, or the new password
-            breaks the server's password rules (`error.code` 400): the
-            master-password rules of the client security policies or,
-            from Server 20.0.0, the account password policies that apply
-            to the user -- character groups and minimum length, and on
-            the caller's own account also history and the minimum age.
+            breaks the server's password rules (`error.code` 400): from
+            Server 20.0.0 the account password policies that apply to
+            the user -- character groups and minimum length, and on the
+            caller's own account also history and the minimum age;
+            earlier servers apply the master-password rules of the
+            client security policies.
             `error.message` starts with the refusal's first line and
             names each rule broken, its setting and the scope that set
             it, on a line of its own. Nothing is changed.
@@ -6653,9 +6657,10 @@ components:
         new_password:
           type: string
           description: |
-            The new password; must pass the server's password rules (the
-            client security policies' master-password rules and, from Server
-            20.0.0, the account password policies that apply to the account)
+            The new password; must pass the server's password rules (from
+            Server 20.0.0 the account password policies that apply to the
+            account; earlier servers apply the client security policies'
+            master-password rules)
 
     # -------------------------------------------------------------------------
     # Passkeys / WebAuthn
@@ -7247,7 +7252,9 @@ components:
           description: A level above enforces the setting
         applied:
           type: boolean
-          description: Whether this server applies the setting yet
+          description: |
+            Whether this server itself enforces the setting; a client
+            may still follow a setting the server does not enforce
         lock_source:
           $ref: "#/components/schemas/PolicySource"
         bound:
@@ -7425,7 +7432,9 @@ components:
           type: string
         applied:
           type: boolean
-          description: Whether this server applies the setting yet
+          description: |
+            Whether this server itself enforces the setting; a client
+            may still follow a setting the server does not enforce
 
     PolicyRegistry:
       type: object

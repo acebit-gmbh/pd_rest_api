@@ -394,7 +394,7 @@ With `view=effective`, a read also returns `effective`: for each setting that ca
 | `value` | value | The value that applies; absent where nothing restricts (no product default and nothing set) |
 | `source` | object | Where the value comes from: a scope, `{"type": "product"}` (the product default) or `{"type": "groups"}` (the user's groups together) |
 | `locked` | boolean | A level above enforces the setting |
-| `applied` | boolean | Whether this server applies the setting yet; `false` means the setting can be set and stored, but nothing acts on it |
+| `applied` | boolean | Whether this server itself enforces the setting; `false` means the server stores the setting but does not act on it -- a client may still follow it (see [Settings Clients Follow](#settings-clients-follow)) |
 | `lock_source` | object | With `locked`: the level that enforces it |
 | `bound` | value | With `locked`: the enforced value, where the value that applies is stricter than it |
 | `trail` | array | User level only: each level's entry in order -- `source`, `state`, `value` where it has one, and `decision`: `product_default`, `applied`, `within_bound` (below an enforced value, stricter, taken), `limited` (below an enforced value, combined with it), `ignored` (below an enforced value, not stricter), `not_set`, `invalid`, `unknown_word`, `merged` (a group's entry taken into the groups' value), `conflict` (the user's groups disagree) |
@@ -402,6 +402,19 @@ With `view=effective`, a read also returns `effective`: for each setting that ca
 A setting this server cannot resolve has `state`, `locked` (always `false`) and `applied` only. At the server level the reply also carries `also_set_at`: by setting id, the groups and users that declare it too, each `{"scope": ..., "state": ..., "value": ...}`.
 
 A reply the server would have to make too large comes without `also_set_at` and the trails, or without `effective`, and with an error of the code `too_large` in `errors` that says so; the status is still `200`.
+
+---
+
+## Settings Clients Follow
+
+`applied` says whether the server itself enforces a setting. A setting with `applied` `false` can still be followed by a client: Password Depot for Windows (Corporate Edition) receives, at each connection, the client security policies the server builds for its user from the policies that apply to that user -- the server's, the user's groups' and the user's own values -- and follows these settings:
+
+- the storage locations, the file tools and the installation on a USB drive: `client.storage.allowed`, `client.file_tools.allowed`, `client.portable_install.allowed`;
+- printing, the export channels, the clipboard, revealing one-time-code secrets, assigning second passwords and offline copies: `usage.print.allowed`, `usage.export.channels`, `usage.clipboard.allowed`, `usage.totp_secret.reveal`, `secret.compartment.assign.allowed`, `offline.allowed`;
+- the master-password rules of its databases: `database.master_password.min_length`, `database.master_password.min_classes`, `database.master_password.history`, `database.master_password.min_age`;
+- the lock and clipboard options and the program options: `client.lock.*`, `client.clipboard.clear_after`, `client.view.password_column`, `client.startup.*`, `client.backup.*`, `client.remote.delete_local_copy`, `client.update.*`, `client.network.ip_version`, `client.sign_in.*` -- these only where the value that applies is `enforced`; otherwise the user's own choice stays.
+
+The client follows them where one of them is set for the user at any level -- the server, one of the user's groups or the user --, or where the server's client security policies were active when it was upgraded to Server 20.0.0. A permission, storage location, file tool, export channel or master-password rule of the list that is not set then gives its product default -- for the master-password rules at least 8 characters from 3 character groups, a history of 12 and a minimum age of one day --, while a lock, clipboard or program option that is not `enforced` leaves the user's own choice. Other Password Depot apps do not read these settings from the server.
 
 ---
 
@@ -468,7 +481,7 @@ Returns every policy setting this server knows, in the order of the setting ids.
 | `category` | string | The group the Server Manager shows the setting under |
 | `since`, `retired` | integer | The registry level that added the setting, and where present the level that retired it |
 | `status`, `migrate_to` | string | `live` or another status, and where present the setting that replaces it |
-| `applied` | boolean | Whether this server applies the setting yet |
+| `applied` | boolean | Whether this server itself enforces the setting (see [Settings Clients Follow](#settings-clients-follow)) |
 
 Members a row does not have are left out, and a later server can add members: ignore the ones you do not know. The registry carries ids and words, no labels: the names in bold on these pages are the Server Manager's.
 
