@@ -30,6 +30,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - the server's **Allow API tokens** and **API tokens: maximum lifetime** policies are checked on every use of a long-lived API token: a token they end gets `401` like a revoked one, and a new token's expiry is cut to the maximum lifetime
 - REST sessions end after the inactivity period of the server's **Disconnect after inactivity** policy, 60 minutes by default, instead of a fixed 10 minutes
 - `two_factor_mode` reads and writes the user's own second-factor policy entries; a write that carries it can answer `403` or `409`
+- the server's, a group's and a user's policies can be read and changed in the admin scope: `GET` and `PATCH` on `/admin/server/policy`, `/admin/groups/{id}/policy` and `/admin/users/{id}/policy` with `ETag` / `If-Match` and the new statuses `412`, `428` and `503`, `GET /admin/policy-registry` and `GET /admin/policy-conflicts`; an error the policies decide carries the policy reply as `error.policy`
 - `open_uuid` and `approve_uuid` are optional in the secret representation
 - `include_totp: false` on a shared secret is applied: the recipient no longer gets the entry's one-time code
 - deleted entries and folders answer `404`
@@ -480,6 +481,21 @@ The user representation's `two_factor_mode` keeps its values and is the user's o
 !!! warning "Behavior change for clients"
     Send `two_factor_mode` only when you mean to change it, and handle `403` and `409` on a user write that carries it. Do not read it as the second factor the server asks at login.
 
+#### Policies Read and Changed Over REST
+
+The server's policies -- the settings of the Server Manager's *Policies* page and of the *Policies* tabs of Group Properties and User Properties -- can be read and changed in an admin-scoped session, under the same rules as in the Server Manager:
+
+- **`GET /admin/server/policy`**, **`GET /admin/groups/{id}/policy`** and **`GET /admin/users/{id}/policy`** return the level's policy document: each declared setting with its state (`default` or `enforced`) and value, and the document's revision, also as a strong `ETag` (`"17"`). With `?view=effective` they also return what applies at that level, where it comes from and whether a higher level enforces it, and for a user the trail of every level.
+- **`PATCH`** on the same paths changes settings: the body `{"set": {<setting id>: {"state": "default" or "enforced", "value": <value>} or {"state": "not_set"}}}`, all or nothing, with the revision it was made against in `If-Match`. A change against an older revision answers `412` with the current document; a change without `If-Match` answers `428`.
+- **`GET /admin/policy-registry`** lists every setting the server knows, with its type, range, levels, product default and whether the server applies it yet; **`GET /admin/policy-conflicts`** lists the settings on which a user's groups set different values.
+- **Who may.** Server administrators every setting; security officers the `auth.*`, `session.*` and `account.*` settings and the whole server document; account administrators the groups and users they administer, never the server document; a user's document only a caller who holds every server role the user holds. A long-lived API token with the admin scope acts under its account's rules. A group or user the caller may not read answers `404`, like one that does not exist.
+- **Answers.** An answer the policies decide keeps the error envelope and carries the policy reply as `error.policy`, whose `errors` name each refused setting with a code (`invalid_value`, `forbidden`, `lockout` and others); `error.code` is the HTTP status: `400`, `403`, `409`, `412`, `413` (a body above 64 KiB), `428`, `500` or `503`. `401`, `404`, `405`, the `403` of a session without the admin scope or of a mirror server, and the server's general `411` and `413` carry the error envelope without `error.policy`.
+- **Records.** Every saved change, and every change the server examines and refuses for its content or the caller's rights, is recorded in the audit trail with the REST API as the channel; a request refused before its policy is examined (without a valid admin-scoped session, by a mirror server, or for a method the path does not take) is not; a saved change of the server's own policies raises the alert `server_policy_modified`, as one made in the Server Manager does.
+
+See [Policies](api-reference/policies.md).
+
+**Client guidance:** read before you write and send the read's `ETag` back in `If-Match`. On `412`, show the current values from `error.policy.document` and let the user decide again; never repeat the change with the new revision unseen. When the answer to a change is lost, read the document again. Match `error.policy.errors[].code` and the HTTP status, never the message, and treat a code you do not know by its status.
+
 #### `403` / `4032` When the Licensed Number of Users Is Reached (Behavior Change)
 
 When the server's licensed number of users is reached (the same limit the Server Manager applies; super-administrators do not count), an otherwise valid `POST /admin/users` creates no user and returns `403` with `error.code` = `4032` (`PD_ERRCODE_LICENSE_LIMIT`). `error.message` gives the number of users the server would have with the new account and the licensed number, in the server's language. The refusal is also written to the server log and to the request's admin audit record. Permission, validation and name-conflict errors (`403` with `error.code` `403`, `400`, `409`) are still returned first.
@@ -844,6 +860,7 @@ These correct the documentation only; the server's behavior is described as it h
 - **`410`, `413` and `501` were missing from the status tables** of the overview: `410` for `/v1.0/` paths on Server 20.0.0, `413` for oversized request bodies, `501` for unsupported operations, such as one-time codes on `encrypted_file` and `certificate` entries.
 - **Mirror servers.** The overview now says that a mirror server answers every request other than `GET` that carries a bearer token with `403`, `POST /auth/logout` included. This is not new in Server 20.0.0; it was not documented.
 - **The JSON examples** of entries and folders showed an `icon` that the server of the time would not have returned for them (it ignored `image_index`). With the change above they are now what Server 20.0.0 returns.
+- **The `roles` table of the users reference and the `User.roles` enum of the OpenAPI document lacked `audit_reader`, `security_officer` and `backup_operator`.** The server writes these roles in `roles` and accepts them on `POST /admin/users` and `PATCH /admin/users/{id}`; see [`roles` Values](api-reference/users.md#roles-values).
 
 ---
 

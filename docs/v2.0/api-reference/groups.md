@@ -180,6 +180,8 @@ Returns the compact representation of a specific group.
 
 These endpoints require an **admin-scoped session** (`"scope": "admin"` at login).
 
+A group's policies -- the settings of the *Policies* tab in the Server Manager's Group Properties -- are read and changed with `GET` and `PATCH /v2.0/admin/groups/{id}/policy` (*Server 20.0.0 and later*); see [Policies](policies.md#get-group-policy).
+
 ### List Groups (Admin)
 
 ```

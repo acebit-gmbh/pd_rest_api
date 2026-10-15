@@ -85,7 +85,9 @@ info:
     `{ "error": { "code": N, "message": "..." } }`. Some responses add
     members to `error` -- `459` and `460` from `/auth/login` carry
     `trust_device_possible` (Server 20.0.0 and later, see
-    `TwoFactorChallengeResponse`); clients must ignore members of `error`
+    `TwoFactorChallengeResponse`), and the policy routes under
+    `/admin/.../policy` carry their reply as `policy` (Server 20.0.0 and
+    later, see `PolicyReply`); clients must ignore members of `error`
     they do not know. See the
     `#/components/responses` section for reusable response definitions
     (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `MethodNotAllowed`,
@@ -142,6 +144,12 @@ info:
     plaintext secrets and must never be written to a shared or browser disk
     cache. The shared-link HTML page (`GET /shared/...`) uses the slightly
     stricter `Cache-Control: no-cache, no-store`.
+
+    Server 20.0.0 and later: the policy routes (`adminGetServerPolicy` and
+    the others under the `Admin - Policies` tag) answer the revision of a
+    policy document as a strong `ETag` (`"17"`), and a change names it in
+    `If-Match`. `If-Match` is allowed in CORS preflight requests and `ETag`
+    is exposed to browser scripts (`Access-Control-Expose-Headers`).
 
     ## Timestamps
 
@@ -266,6 +274,8 @@ tags:
     description: User management (admin scope required)
   - name: Admin - Groups
     description: Group management (admin scope required)
+  - name: Admin - Policies
+    description: The server's, groups' and users' policies, the policy registry and the group conflicts (admin scope required; Server 20.0.0 and later)
   - name: Admin - Alerts
     description: Alert management (admin scope required)
   - name: Admin - Secrets
@@ -1809,6 +1819,311 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  # --- Admin Policies (Server 20.0.0 and later) ---
+  /admin/server/policy:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    get:
+      operationId: adminGetServerPolicy
+      tags:
+        - Admin - Policies
+      summary: Get the server's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. Returns
+        the server's policy document - every setting it declares, with its
+        state and value - and its revision, also as a strong `ETag`. A
+        caller sees the settings it may change; server administrators and
+        security officers see the whole document. With `view=effective` the
+        reply also carries the effective values and `also_set_at`.
+      parameters:
+        - $ref: "#/components/parameters/PolicyView"
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyRead"
+        "400":
+          $ref: "#/components/responses/PolicyBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyForbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+    patch:
+      operationId: adminUpdateServerPolicy
+      tags:
+        - Admin - Policies
+      summary: Change settings of the server's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. Changes
+        the settings the body names, all or nothing; the others stay as they
+        are. `If-Match` names the revision the change was made against. The
+        body is read as ordinary JSON (white space and every standard escape
+        accepted, a number must be an integer within +/-2^53) and must hold
+        exactly the member `set`, at most 64 KiB. Every saved change, and
+        every change the server examines and refuses for its body,
+        `If-Match`, settings, values or the caller's rights, is recorded in
+        the audit trail with the REST API as the channel; a request refused
+        before its policy is examined (without a valid admin-scoped session,
+        by a mirror server, or for a method the path does not take), a
+        `412`, a change that changes nothing and reads are not. A
+        saved change raises the alert `server_policy_modified`. A long-lived
+        API token with the admin scope acts under its account's rules.
+      parameters:
+        - $ref: "#/components/parameters/PolicyIfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyUpdateRequest"
+            example:
+              set:
+                session.idle_timeout:
+                  state: enforced
+                  value: 3600
+                auth.second_factor.required:
+                  state: not_set
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyWritten"
+        "400":
+          $ref: "#/components/responses/PolicyBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyForbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/PolicyConflict"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "412":
+          $ref: "#/components/responses/PolicyPreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PolicyPayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PolicyPreconditionRequired"
+        "500":
+          $ref: "#/components/responses/PolicyNotSaved"
+        "503":
+          $ref: "#/components/responses/PolicyUnavailable"
+
+  /admin/groups/{id}/policy:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/GroupId"
+    get:
+      operationId: adminGetGroupPolicy
+      tags:
+        - Admin - Policies
+      summary: Get a group's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. As
+        `adminGetServerPolicy`, for the group. A group that does not exist,
+        or whose policies the caller may not read, answers `404` with the
+        message of `adminGetGroup` for a missing group.
+      parameters:
+        - $ref: "#/components/parameters/PolicyView"
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyRead"
+        "400":
+          $ref: "#/components/responses/PolicyBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+    patch:
+      operationId: adminUpdateGroupPolicy
+      tags:
+        - Admin - Policies
+      summary: Change settings of a group's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. As
+        `adminUpdateServerPolicy`, for the group; a saved change raises no
+        alert. A group that does not exist, or none of whose settings the
+        caller may change, answers `404` with the message of `adminGetGroup`
+        for a missing group.
+      parameters:
+        - $ref: "#/components/parameters/PolicyIfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyUpdateRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyWritten"
+        "400":
+          $ref: "#/components/responses/PolicyBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/PolicyConflict"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "412":
+          $ref: "#/components/responses/PolicyPreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PolicyPayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PolicyPreconditionRequired"
+        "500":
+          $ref: "#/components/responses/PolicyNotSaved"
+        "503":
+          $ref: "#/components/responses/PolicyUnavailable"
+
+  /admin/users/{id}/policy:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/UserId"
+    get:
+      operationId: adminGetUserPolicy
+      tags:
+        - Admin - Policies
+      summary: Get a user's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. As
+        `adminGetServerPolicy`, for the user; with `view=effective` each
+        effective value carries the user's trail. A user that does not
+        exist, or whose policies the caller may not read - also one who
+        holds a server role the caller does not hold -, answers `404` with
+        the message of `adminGetUser` for a missing user.
+      parameters:
+        - $ref: "#/components/parameters/PolicyView"
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyRead"
+        "400":
+          $ref: "#/components/responses/PolicyBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+    patch:
+      operationId: adminUpdateUserPolicy
+      tags:
+        - Admin - Policies
+      summary: Change settings of a user's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. As
+        `adminUpdateServerPolicy`, for the user; a saved change raises no
+        alert. A user that does not exist, or none of whose settings the
+        caller may change - also one who holds a server role the caller
+        does not hold -, answers `404` with the message of `adminGetUser`
+        for a missing user.
+      parameters:
+        - $ref: "#/components/parameters/PolicyIfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyUpdateRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyWritten"
+        "400":
+          $ref: "#/components/responses/PolicyBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/PolicyConflict"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "412":
+          $ref: "#/components/responses/PolicyPreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PolicyPayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PolicyPreconditionRequired"
+        "500":
+          $ref: "#/components/responses/PolicyNotSaved"
+        "503":
+          $ref: "#/components/responses/PolicyUnavailable"
+
+  /admin/policy-registry:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    get:
+      operationId: adminGetPolicyRegistry
+      tags:
+        - Admin - Policies
+      summary: List the policy settings the server knows (admin)
+      description: |
+        Requires an admin-scoped session; any admin-scoped session may read
+        it, on a mirror too. Server 20.0.0 and later. Every setting of the
+        server's registry, in the order of the setting ids, with the
+        registry's columns and whether the server applies the setting yet.
+        Ids and words only, no labels. Not paginated.
+      responses:
+        "200":
+          description: The policy registry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyRegistry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+  /admin/policy-conflicts:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    get:
+      operationId: adminGetPolicyConflicts
+      tags:
+        - Admin - Policies
+      summary: List the settings on which a user's groups disagree (admin)
+      description: |
+        Requires an admin-scoped session and the right to read the server's
+        policies (server administrators and security officers). Server
+        20.0.0 and later. Each setting that takes a single value and on
+        which some user's groups set different values, in the order of the
+        setting ids, with every group that takes part and the number of
+        users affected. For those users none of the group values applies.
+        Not paginated. `judged` is `false`, and `conflicts` empty, on a
+        mirror and while a directory synchronisation (Active Directory or
+        Azure AD) is running.
+      responses:
+        "200":
+          description: The group conflicts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyConflicts"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyForbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
 
   # --- Admin Alerts ---
   /admin/alerts:
@@ -3714,6 +4029,31 @@ components:
         type: string
         format: uuid
 
+    PolicyView:
+      name: view
+      in: query
+      required: false
+      description: |
+        `effective`: the reply also carries the effective values (and, for
+        the server, `also_set_at`). Any other value answers `400`.
+      schema:
+        type: string
+        enum:
+          - effective
+
+    PolicyIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: |
+        The revision the change was made against, exactly as the `ETag` of a
+        read gave it: one strong tag, the decimal revision in quotes, such as
+        `"17"`. Missing, or `*`, answers `428`; a weak tag, a list or any
+        other form answers `400`. Allowed in CORS preflight requests.
+      schema:
+        type: string
+        example: '"17"'
+
     AlertId:
       name: id
       in: path
@@ -3839,6 +4179,19 @@ components:
           - recycle
           - permanent
         default: recycle
+
+  # ---------------------------------------------------------------------------
+  # Reusable Headers
+  # ---------------------------------------------------------------------------
+  headers:
+    PolicyETag:
+      description: |
+        The revision of the policy document as a strong entity tag, the
+        decimal revision in quotes. Send it back in `If-Match` to change the
+        document. Server 20.0.0 and later.
+      schema:
+        type: string
+        example: '"17"'
 
   # ---------------------------------------------------------------------------
   # Reusable Responses
@@ -4047,6 +4400,142 @@ components:
             error:
               code: 429
               message: "Your IP address has been blocked. Please contact your PD server administrator or try again later."
+
+    # --- Policy routes (Server 20.0.0 and later) ---
+    PolicyRead:
+      description: |
+        The policy document of the level, outcome `read`. The `ETag` header
+        carries its revision.
+      headers:
+        ETag:
+          $ref: "#/components/headers/PolicyETag"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyReply"
+
+    PolicyWritten:
+      description: |
+        The change was saved (outcome `saved`, the new revision) or named
+        only what the document already holds (outcome `unchanged`, nothing
+        saved, the revision unchanged). The reply carries the document as it
+        now is, the `ETag` header its revision.
+      headers:
+        ETag:
+          $ref: "#/components/headers/PolicyETag"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyReply"
+
+    PolicyBadRequest:
+      description: |
+        The request is refused and nothing was changed: the body, `If-Match`
+        or `view` cannot be read (`invalid_request`), or a setting or value
+        is refused (`setting_not_writable`, `not_applicable`,
+        `invalid_value`, `remove_only`, `invalid_relation`).
+        `error.policy.errors` names each.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 400
+              message: "The value must be at least 600."
+              policy:
+                outcome: refused
+                revision: 0
+                errors:
+                  - setting: session.idle_timeout
+                    code: invalid_value
+                    message: "The value must be at least 600."
+
+    PolicyForbidden:
+      description: |
+        Not an admin-scoped session (no `error.policy`), or a mirror server
+        refusing a write; or the policy refuses: the caller may not read the
+        document or change a setting it names (`forbidden`), the change
+        would leave no server administrator able to sign in to the Server
+        Manager (`lockout`), or would leave an approval that nobody can give
+        (`approval_unreachable`). Nothing was changed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 403
+              message: "You may not change this setting at this scope."
+              policy:
+                outcome: refused
+                revision: 0
+                errors:
+                  - setting: shared_secret.quorum
+                    code: forbidden
+                    message: "You may not change this setting at this scope."
+
+    PolicyConflict:
+      description: |
+        The change would make the stored policies larger than the server
+        holds (`too_large`). Nothing was changed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    PolicyPreconditionFailed:
+      description: |
+        The document changed since the revision in `If-Match`; nothing was
+        changed. `error.policy` carries the outcome `stale` and the current
+        document, the `ETag` header its revision. Decide again on the
+        current values.
+      headers:
+        ETag:
+          $ref: "#/components/headers/PolicyETag"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    PolicyPayloadTooLarge:
+      description: |
+        The body is larger than 64 KiB (`invalid_request`), answered as a
+        regular JSON error. A body above 1 MB is refused earlier, see
+        `PayloadTooLarge`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    PolicyPreconditionRequired:
+      description: |
+        No `If-Match`, or `If-Match: *` (`invalid_request`). A change must
+        name the revision it was made against.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    PolicyNotSaved:
+      description: |
+        The change could not be saved (`save_failed`); nothing was changed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    PolicyUnavailable:
+      description: |
+        Nothing was changed, and the same request may succeed later: the
+        audit trail cannot record the change at the moment
+        (`audit_unavailable`), or a directory synchronisation (Active
+        Directory or Azure AD) is running and the users and groups the
+        change needs cannot be looked up (`directory_busy`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 
   # ---------------------------------------------------------------------------
   # Schemas
@@ -5672,6 +6161,9 @@ components:
                   - group_admin
                   - ad_operator
                   - log_reader
+                  - audit_reader
+                  - security_officer
+                  - backup_operator
               description: Server-level roles granted to this user
             member_of:
               type: array
@@ -6040,8 +6532,8 @@ components:
           description: |
             Some responses add members to this object, for example
             `trust_device_possible` on `459` / `460` from `/auth/login` (see
-            `TwoFactorChallengeResponse`). Clients must ignore members they do
-            not know.
+            `TwoFactorChallengeResponse`) and `policy` on the policy routes.
+            Clients must ignore members they do not know.
           properties:
             code:
               type: integer
@@ -6092,6 +6584,8 @@ components:
             message:
               type: string
               description: Human-readable error message
+            policy:
+              $ref: "#/components/schemas/PolicyReply"
 
     TwoFactorChallengeResponse:
       type: object
@@ -6526,3 +7020,459 @@ components:
           type: integer
           description: Number of names in `data`
           example: 3
+
+    # -------------------------------------------------------------------------
+    # Policies (Server 20.0.0 and later)
+    # -------------------------------------------------------------------------
+    PolicyScope:
+      type: object
+      description: |
+        The level of a policy document: `{"type": "server"}`,
+        `{"type": "group", "id": "<group id>"}` or
+        `{"type": "user", "id": "<user id>"}`.
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - server
+            - group
+            - user
+        id:
+          type: string
+          description: The group or user id; absent for the server
+
+    PolicyValue:
+      description: |
+        A policy value in the JSON form of the setting's `type` in the
+        registry: `boolean` true or false; `integer`, `duration` (seconds),
+        `size` (bytes) and `date` (milliseconds since 1970-01-01 UTC) an
+        integer; `word`, `text` and `version` a string; `set` an array of
+        words of the setting's list, each once, in ascending order of their
+        UTF-8 bytes; `address_list` an array of IPv4 and IPv6 addresses,
+        prefixes and ranges; `principal_list` an array of `u:<user id>` and
+        `g:<group id>`, each once, in ascending order.
+      oneOf:
+        - type: boolean
+        - type: integer
+          format: int64
+        - type: string
+        - type: array
+          items:
+            type: string
+
+    PolicyDeclaration:
+      type: object
+      description: One declared setting of a policy document.
+      required:
+        - state
+        - value
+      properties:
+        state:
+          type: string
+          enum:
+            - default
+            - enforced
+          description: |
+            `default`: applies at this level and below unless a lower level
+            sets its own. `enforced`: a lower level can only make it
+            stricter.
+        value:
+          $ref: "#/components/schemas/PolicyValue"
+
+    PolicyDocument:
+      type: object
+      description: |
+        The declarations of one level the caller may see. Server
+        administrators and security officers see the whole server document;
+        every other caller the settings it may change.
+      required:
+        - scope
+        - revision
+        - set
+        - opaque
+      properties:
+        scope:
+          $ref: "#/components/schemas/PolicyScope"
+        revision:
+          type: integer
+          format: int64
+          description: The document's revision; `0` while the level declares nothing
+        set:
+          type: object
+          description: By setting id, ascending
+          additionalProperties:
+            $ref: "#/components/schemas/PolicyDeclaration"
+        opaque:
+          type: array
+          description: |
+            Ids of declarations this server cannot read; kept as they are,
+            they can only be removed (`not_set`).
+          items:
+            type: string
+
+    PolicyChange:
+      type: object
+      description: |
+        The change of one setting: `{"state": "default" or "enforced",
+        "value": <value>}` declares it, `{"state": "not_set"}` removes the
+        level's declaration. No other member.
+      required:
+        - state
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum:
+            - default
+            - enforced
+            - not_set
+        value:
+          $ref: "#/components/schemas/PolicyValue"
+
+    PolicyUpdateRequest:
+      type: object
+      description: |
+        Exactly the member `set`, naming at least one setting, each once.
+      required:
+        - set
+      additionalProperties: false
+      properties:
+        set:
+          type: object
+          minProperties: 1
+          description: By setting id, its change
+          additionalProperties:
+            $ref: "#/components/schemas/PolicyChange"
+
+    PolicyError:
+      type: object
+      required:
+        - setting
+        - code
+        - message
+      properties:
+        setting:
+          type: string
+          description: The setting id, or `""` for the request as a whole
+        code:
+          type: string
+          description: |
+            The reason: `invalid_request`, `setting_not_writable`,
+            `not_applicable`, `invalid_value`, `remove_only`,
+            `invalid_relation` (400); `forbidden` (403; for the request as a
+            whole at a group or user, 404), `lockout`,
+            `approval_unreachable` (403); `too_large` (409; in a `200` read:
+            the effective view was shortened); `directory_busy`,
+            `audit_unavailable` (503); `save_failed` (500). Treat a code you
+            do not know by the HTTP status.
+        message:
+          type: string
+          description: An English sentence; match `code`, never the message
+
+    PolicySource:
+      type: object
+      description: |
+        Where a value comes from: a scope (`server`, `group` with `id`,
+        `user` with `id`), `product` (the product default) or `groups` (the
+        user's groups together).
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - server
+            - group
+            - user
+            - product
+            - groups
+        id:
+          type: string
+
+    PolicyTrailStep:
+      type: object
+      required:
+        - source
+        - state
+        - decision
+      properties:
+        source:
+          $ref: "#/components/schemas/PolicySource"
+        state:
+          type: string
+          enum:
+            - not_set
+            - default
+            - enforced
+        value:
+          $ref: "#/components/schemas/PolicyValue"
+        decision:
+          type: string
+          enum:
+            - product_default
+            - applied
+            - within_bound
+            - limited
+            - ignored
+            - not_set
+            - invalid
+            - unknown_word
+            - merged
+            - conflict
+
+    PolicyEffective:
+      type: object
+      description: |
+        What applies to one setting at the level read. A setting this server
+        cannot resolve has `state`, `locked` and `applied` only.
+      required:
+        - state
+        - locked
+        - applied
+      properties:
+        state:
+          type: string
+          enum:
+            - not_set
+            - default
+            - enforced
+        value:
+          $ref: "#/components/schemas/PolicyValue"
+        source:
+          $ref: "#/components/schemas/PolicySource"
+        locked:
+          type: boolean
+          description: A level above enforces the setting
+        applied:
+          type: boolean
+          description: Whether this server applies the setting yet
+        lock_source:
+          $ref: "#/components/schemas/PolicySource"
+        bound:
+          $ref: "#/components/schemas/PolicyValue"
+        trail:
+          type: array
+          description: User level only, every level in order
+          items:
+            $ref: "#/components/schemas/PolicyTrailStep"
+
+    PolicyAlsoSetAt:
+      type: object
+      description: A group or user document that declares the setting too.
+      required:
+        - scope
+        - state
+      properties:
+        scope:
+          $ref: "#/components/schemas/PolicyScope"
+        state:
+          type: string
+          enum:
+            - default
+            - enforced
+        value:
+          $ref: "#/components/schemas/PolicyValue"
+
+    PolicyReply:
+      type: object
+      description: |
+        The answer of the policy document routes: the body of a `200`, and
+        `error.policy` of the other answers the policies decide. `401`,
+        `404`, `405`, the `403` of a session without the admin scope or of a
+        mirror server, and a `500` without a reply carry none. Written
+        compact.
+      required:
+        - outcome
+        - revision
+        - errors
+      properties:
+        outcome:
+          type: string
+          enum:
+            - read
+            - saved
+            - unchanged
+            - stale
+            - refused
+            - failed
+        revision:
+          type: integer
+          format: int64
+          description: |
+            The document's revision: the current one, or after a saved
+            change the new one. `0` in a `refused` reply, which names no
+            revision; read the document again for its `ETag`
+        document:
+          $ref: "#/components/schemas/PolicyDocument"
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyError"
+        effective:
+          type: object
+          description: With `view=effective`, by setting id
+          additionalProperties:
+            $ref: "#/components/schemas/PolicyEffective"
+        also_set_at:
+          type: object
+          description: |
+            With `view=effective` at the server level: by setting id, the
+            group and user documents that declare it too
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/PolicyAlsoSetAt"
+      example:
+        outcome: read
+        revision: 17
+        document:
+          scope:
+            type: server
+          revision: 17
+          set:
+            auth.second_factor.required:
+              state: enforced
+              value: true
+            session.idle_timeout:
+              state: default
+              value: 1800
+          opaque: []
+        errors: []
+
+    PolicySettingRow:
+      type: object
+      description: |
+        One setting of the registry. Members a row does not have are left
+        out; a later server can add members.
+      required:
+        - id
+        - declared
+        - critical
+        - since
+        - applied
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          description: The value type, see `PolicyValue`
+        range_min:
+          type: integer
+          format: int64
+        range_max:
+          type: integer
+          format: int64
+        unlimited:
+          type: integer
+          format: int64
+          description: The number that means "no limit"
+        sides:
+          type: array
+          items:
+            type: string
+            enum:
+              - people
+              - data
+        scopes:
+          type: array
+          description: The levels at which the setting can be set
+          items:
+            type: string
+        sources:
+          type: array
+          items:
+            type: string
+        merge:
+          type: string
+        stricter:
+          type: string
+        enforced_by:
+          type: string
+        condition:
+          type: string
+        declared:
+          type: boolean
+        critical:
+          type: boolean
+        on_unknown:
+          type: string
+        exempt_roles:
+          type: array
+          items:
+            type: string
+        default:
+          type: string
+          description: |
+            The product default as the registry writes it: a number or a
+            word as it is, a set as its words separated by commas, a text as
+            a JSON string, and where the data side and the people side start
+            from different values, one value per side as
+            `data:<value>,people:<value>` (for example
+            `data:false,people:true`)
+        category:
+          type: string
+        since:
+          type: integer
+          description: The registry level that added the setting
+        retired:
+          type: integer
+          description: The registry level that retired the setting
+        status:
+          type: string
+        migrate_to:
+          type: string
+        applied:
+          type: boolean
+          description: Whether this server applies the setting yet
+
+    PolicyRegistry:
+      type: object
+      required:
+        - level
+        - settings
+      properties:
+        level:
+          type: integer
+          description: The registry level of this server
+        settings:
+          type: array
+          description: In the order of the setting ids
+          items:
+            $ref: "#/components/schemas/PolicySettingRow"
+
+    PolicyGroupConflict:
+      type: object
+      required:
+        - setting
+        - groups
+        - users
+      properties:
+        setting:
+          type: string
+        groups:
+          type: array
+          description: Every group whose value disagrees for at least one user, sorted
+          items:
+            type: string
+        users:
+          type: integer
+          description: How many users the disagreement affects
+
+    PolicyConflicts:
+      type: object
+      required:
+        - judged
+        - conflicts
+      properties:
+        judged:
+          type: boolean
+          description: |
+            `false` on a mirror and while a directory synchronisation is
+            running; `conflicts` is then empty
+        conflicts:
+          type: array
+          description: In the order of the setting ids
+          items:
+            $ref: "#/components/schemas/PolicyGroupConflict"

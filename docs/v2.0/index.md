@@ -18,7 +18,7 @@ API v2.0 introduces significant improvements over [v1.0](../v1.0/):
 | **Long-lived tokens** | Not supported | Server Manager can generate long-lived tokens for automation, with an expiry date 1 to 730 days ahead (180 by default) |
 | **URL structure** | Verb-based commands (`/login`, `/list`, `/read`, `/add`, `/modify`) | RESTful noun-based resources (`/databases`, `/entries/{id}`, `/users`) |
 | **Data types** | String-encoded values (`"1"`, `"0"`) | Native JSON types (`true`, `false`, `42`) |
-| **Administration** | Password operations only | Full server administration via `/admin/` endpoints: users, groups, permissions, alerts, secrets |
+| **Administration** | Password operations only | Full server administration via `/admin/` endpoints: users, groups, permissions, alerts, secrets; from Server 20.0.0 also policies |
 | **Session scope** | N/A | `"client"` (default) or `"admin"` -- separates normal usage from server management |
 | **Folders** | Mixed with entries via `itemclass` field | First-class resource with dedicated CRUD endpoints |
 | **Binary content** | Not supported | Download and upload document BLOBs; Server 20.0.0 also supports certificate public/private files through `/entries/{id}/content` |
@@ -32,7 +32,7 @@ API v2.0 introduces significant improvements over [v1.0](../v1.0/):
 - **Standard Bearer token authentication** -- No more custom headers. Use the widely-supported `Authorization: Bearer <token>` pattern that works out of the box with HTTP clients, API gateways, and middleware.
 - **RESTful noun-based resource URLs** -- Resources are addressable nouns (`/databases`, `/users`, `/entries/{id}`) with standard HTTP methods (GET, POST, PATCH, DELETE) instead of verb-style commands.
 - **Native JSON types** -- Boolean fields return `true`/`false`, numeric fields return integers, eliminating the need to parse string-encoded values.
-- **Full server administration** -- Manage users, groups, permissions, alerts, and secrets programmatically, not just password entries.
+- **Full server administration** -- Manage users, groups, permissions, alerts, and secrets programmatically, not just password entries. From Server 20.0.0 the server's, a group's and a user's policies as well; see [Policies](api-reference/policies.md).
 - **Folder management as a first-class resource** -- Folders have their own endpoints with full CRUD operations, separate from entries.
 - **Document and certificate content** -- Download and upload documents, and certificate public/private files from Server 20.0.0, through `/entries/{id}/content` (up to 64 MB per upload). Server 20.0.0 also exposes encrypted-file entries as passwords and native-client file references.
 - **Pagination on all list endpoints** -- Efficiently handle large datasets with `offset`/`limit` parameters and total count metadata.

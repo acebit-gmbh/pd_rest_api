@@ -59,7 +59,7 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 !!! note "Server policies (Server 20.0.0 and later)"
     `two_factor_mode` is the user's own entry in the server's second-factor policies, which the Server Manager shows on the user's *Policies* tab: `disabled` is the user's **Require a second factor** set to off, a method is the user's **Preferred second factor**, and `default` means the user has neither. Reading the field derives it from those entries; a requirement set for the user, and the values set for the server or the user's groups, do not change it, so it does not tell which second factor a login asks.
 
-    Writing the field changes those entries: a method sets the user's **Preferred second factor** and removes the user's own "not required", never a requirement set for the user; `disabled` sets the user's **Require a second factor** to off; `default` removes the user's preference and the user's own "not required". The write is recorded in the audit trail as a policy change. It answers `403` when the caller may not change the user's sign-in policies -- the caller must hold every server role the user holds -- or when it would leave no administrator able to sign in to the Server Manager, and `409` when the user's policies changed at the same time. The values set for the server and the user's groups apply beside these entries, and an enforced one wins. See [Which Second Factor Is Asked](authentication.md#which-second-factor-is-asked).
+    Writing the field changes those entries: a method sets the user's **Preferred second factor** and removes the user's own "not required", never a requirement set for the user; `disabled` sets the user's **Require a second factor** to off; `default` removes the user's preference and the user's own "not required". The write is recorded in the audit trail as a policy change. It answers `403` when the caller may not change the user's sign-in policies -- the caller must hold every server role the user holds -- or when it would leave no administrator able to sign in to the Server Manager, and `409` when the user's policies changed at the same time. The values set for the server and the user's groups apply beside these entries, and an enforced one wins. See [Which Second Factor Is Asked](authentication.md#which-second-factor-is-asked). From Server 20.0.0 the user's whole policy document, these entries included, can also be read and changed with [`GET` and `PATCH /v2.0/admin/users/{id}/policy`](policies.md#get-user-policy).
 
 !!! note "Email requirement"
     When a user's effective 2FA mode resolves to `email`, the server requires a non-empty `email` field. Setting `two_factor_mode` to `email` without an email address is permitted at the API level but the user will not be able to log in until an email is added (`401`, `error.code` `4013`).
@@ -75,6 +75,9 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | `"group_admin"` | Group administrator -- manage assigned groups |
 | `"ad_operator"` | Active Directory operator -- manage AD synchronization |
 | `"log_reader"` | Log reader -- view server logs |
+| `"audit_reader"` | Audit reader -- read and export the audit trail |
+| `"security_officer"` | Security officer -- read and export the audit trail; from Server 20.0.0 also read the server's policies and change its sign-in, session and account policies (`auth.*`, `session.*`, `account.*`) at every level (see [Policies](policies.md#who-may-read-and-change)) |
+| `"backup_operator"` | Backup operator -- Server Manager access without access to database content |
 
 !!! important "Group Membership Model"
     - `member_of` is the **source of truth** for group membership.
@@ -471,6 +474,8 @@ Returns the compact representation of a specific user.
 ## Admin Endpoints
 
 These endpoints require an **admin-scoped session** (`"scope": "admin"` at login).
+
+A user's policies -- the settings of the *Policies* tab in the Server Manager's User Properties -- are read and changed with `GET` and `PATCH /v2.0/admin/users/{id}/policy` (*Server 20.0.0 and later*); see [Policies](policies.md#get-user-policy).
 
 ### List Users (Admin)
 

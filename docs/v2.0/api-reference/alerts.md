@@ -51,7 +51,7 @@ Includes all compact fields plus:
 | `login_failed_client` | Failed client login attempt |
 | `login_admin` | Successful admin login |
 | `login_client` | Successful client login |
-| `server_policy_modified` | Server password policy was modified |
+| `server_policy_modified` | The server's policies were modified; from Server 20.0.0 also a saved change of the server's own policy document, in the Server Manager or through [`PATCH /admin/server/policy`](policies.md#update-server-policy) |
 | `server_options_modified` | Server options were modified |
 | `database_added` | A new database was added |
 | `database_deleted` | A database was deleted |

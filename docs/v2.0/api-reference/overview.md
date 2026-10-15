@@ -55,6 +55,7 @@ From Server 20.0.0, the server's **Allowed network addresses** policy is checked
 - Every request body must state its size in a `Content-Length` header. A request that carries a `Transfer-Encoding` header - whether or not it also sends a `Content-Length` - is refused with `411 Length Required` before the body is read (*Server 20.0.0 and later*); see [Length required (`411`)](#http-status-codes) below
 - Character encoding: **UTF-8**
 - Query parameters are passed in the URL
+- A change of a [policy document](policies.md) names the revision it was made against in an `If-Match` header (*Server 20.0.0 and later*)
 - The binary content upload (`PUT .../entries/{id}/content`) handles documents and, from Server 20.0.0, certificate public/private files. A [database icon](icons.md#upload-icon) is uploaded as JSON, with the image as Base64 in the `data` field - there is no multipart or binary icon upload
 
 ## Response Format
@@ -136,7 +137,7 @@ On error, the server returns a JSON object with a nested `error` object:
 | `error.code` | integer | HTTP status code, or an application sub-code (see below) |
 | `error.message` | string | Human-readable error description |
 
-Some responses add members to `error`. `459` and `460` from `POST /auth/login` carry the boolean `error.trust_device_possible` (Server 20.0.0 and later; see [Trusted Devices](authentication.md#trusted-devices)). Clients must ignore members of `error` they do not know.
+Some responses add members to `error`. `459` and `460` from `POST /auth/login` carry the boolean `error.trust_device_possible` (Server 20.0.0 and later; see [Trusted Devices](authentication.md#trusted-devices)). The [policy routes](policies.md#errors) carry their reply object as `error.policy` on the answers the policies decide (Server 20.0.0 and later). Clients must ignore members of `error` they do not know.
 
 !!! note "Difference from v1.0"
     v1.0 used a flat format: `{"code": 404, "error": "..."}`. v2.0 uses a nested structure: `{"error": {"code": 404, "message": "..."}}`.
@@ -180,11 +181,14 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification) |
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
 | `411` | Length Required | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Chunked request bodies are not accepted, and `411` is answered even where `413` would otherwise apply |
-| `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document/certificate content; `4131` for an icon upload over its own, smaller limits |
+| `412` | Precondition Failed | A [policy change](policies.md#revisions-etag-and-if-match) names in `If-Match` a revision that is no longer the current one; nothing was changed |
+| `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document/certificate content; `4131` for an icon upload over its own, smaller limits; 64 KiB for a [policy change](policies.md#update-server-policy), answered as a regular JSON error |
+| `428` | Precondition Required | A [policy change](policies.md#revisions-etag-and-if-match) without `If-Match`, or with `If-Match: *` |
 | `459` | TFA Not Activated | Two-factor authentication needs initial setup (the path of a QR code image, relative to the server's address, is returned in `error.message`) |
 | `460` | TFA Code Required | A valid 6-digit 2FA code, or a trusted-device token the server accepts, must be provided to complete login |
 | `500` | Internal Server Error | Unexpected server-side error |
 | `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0 |
+| `503` | Service Unavailable | A [policy change](policies.md#update-server-policy) cannot be made at the moment and was not made; the same request may succeed later |
 
 ## HTTP Methods
 
@@ -236,12 +240,15 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `409` | Conflict | Resource conflict |
 | `410` | Gone | REST API v1.0 path on Server 20.0.0 or later |
 | `411` | Length Required | Request body sent with a `Transfer-Encoding` header, with or without a `Content-Length` |
+| `412` | Precondition Failed | The revision in `If-Match` is not the current one (policy routes) |
 | `413` | Payload Too Large | Request body over the size limit |
+| `428` | Precondition Required | `If-Match` required (policy routes) |
 | `429` | Too Many Requests | IP lockout / rate limit; see `Retry-After` header |
 | `459` | TFA Not Activated | 2FA initial setup required |
 | `460` | TFA Code Required | 2FA code needed |
 | `500` | Internal Server Error | Server-side failure |
 | `501` | Not Implemented | Requested operation is unsupported for the entry type (for example, one-time codes on a certificate) |
+| `503` | Service Unavailable | Temporarily not possible; nothing was changed (policy routes) |
 
 !!! info "Method Not Allowed (`405`)"
     When a method is not supported for a given endpoint the server returns `405 Method Not Allowed`, and the response includes an `Allow` header listing the supported methods (per [RFC 7231 §6.5.5](https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.5)).
@@ -339,7 +346,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 The v2.0 API separates endpoints into **client** and **admin** scopes:
 
 - **Client scope** (`"scope": "client"`, the default) -- Access to databases (read-only), folders, entries, search, and the user/group directory (read-only, compact representation). Client sessions see only databases the user has permissions on.
-- **Admin scope** (`"scope": "admin"`) -- All client endpoints, plus management endpoints under `/admin/` for database CRUD, user/group CRUD, permissions, alerts, and secrets. Admin sessions see all server databases.
+- **Admin scope** (`"scope": "admin"`) -- All client endpoints, plus management endpoints under `/admin/` for database CRUD, user/group CRUD, permissions, alerts, secrets, and (from Server 20.0.0) the server's policies. Admin sessions see all server databases.
 
 The scope is set at login time via the `scope` field in the request body. See [Authentication](authentication.md#client-vs-admin-scope) for details.
 
@@ -486,6 +493,19 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `GET` | [`/admin/groups/{id}`](groups.md#get-group-admin) | Get group details | Admin |
 | `PATCH` | [`/admin/groups/{id}`](groups.md#update-group-admin) | Update a group | Admin |
 | `DELETE` | [`/admin/groups/{id}`](groups.md#delete-group-admin) | Delete a group | Admin |
+
+### Policies (Admin)
+
+| Method | Path | Description | Scope |
+|--------|------|-------------|:-----:|
+| `GET` | [`/admin/server/policy`](policies.md#get-server-policy) | Get the server's policy document | Admin |
+| `PATCH` | [`/admin/server/policy`](policies.md#update-server-policy) | Change the server's policies (`If-Match` required) | Admin |
+| `GET` | [`/admin/groups/{id}/policy`](policies.md#get-group-policy) | Get a group's policy document | Admin |
+| `PATCH` | [`/admin/groups/{id}/policy`](policies.md#update-group-policy) | Change a group's policies (`If-Match` required) | Admin |
+| `GET` | [`/admin/users/{id}/policy`](policies.md#get-user-policy) | Get a user's policy document | Admin |
+| `PATCH` | [`/admin/users/{id}/policy`](policies.md#update-user-policy) | Change a user's policies (`If-Match` required) | Admin |
+| `GET` | [`/admin/policy-registry`](policies.md#get-policy-registry) | List the policy settings the server knows | Admin |
+| `GET` | [`/admin/policy-conflicts`](policies.md#get-policy-conflicts) | List the settings on which a user's groups disagree | Admin |
 
 ### Alerts (Admin)
 
