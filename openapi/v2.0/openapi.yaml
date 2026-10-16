@@ -347,17 +347,17 @@ paths:
             of its methods: "A second factor is required, but no method is
             allowed for this account. Contact your administrator.", after the
             credential was accepted; a `tfatoken` does not stand in for it.
-            Server 20.0.0 and later: a login from an address the account's own
-            IP restriction or the server's Allowed network addresses policy
-            (auth.network.allowed) does not allow gets the `401` the same
-            request gets for an account the server does not know ("Logon
-            failure: unknown user name or bad password." for standard and
-            sspi). A value of the policy enforced at server scope is checked
-            before the account is looked up: before the credential, or with
-            negotiate once the Windows handshake has completed. Any other
-            refusal comes once the account is known: with standard and sspi
-            before the password is checked, otherwise once the token or the
-            Windows sign-in was accepted. It counts towards the IP lockout
+            Server 20.0.0 and later: a login from an address the server's
+            Allowed network addresses policy (auth.network.allowed) does not
+            allow for the account, its converted IP restriction included, gets
+            the `401` the same request gets for an account the server does not
+            know ("Logon failure: unknown user name or bad password." for
+            standard and sspi). A value of the policy enforced at server scope
+            is checked before the account is looked up: before the credential,
+            or with negotiate once the Windows handshake has completed. Any
+            other refusal comes once the account is known: with standard and
+            sspi before the password is checked, otherwise once the token or
+            the Windows sign-in was accepted. It counts towards the IP lockout
             (429), not against the account.
           content:
             application/json:
@@ -4230,15 +4230,16 @@ components:
         from an address the server's Allowed network addresses policy
         (auth.network.allowed) does not allow for the token's account. The
         address is the connection's peer address, never a forwarded header.
-        On `/auth/webauthn/complete`, a sign-in from an address the account's
-        own IP restriction or that policy does not allow gets 401
-        "Authentication failed.", as every refused passkey sign-in does; a
-        value of the policy enforced at server scope refuses it so on
-        `/auth/webauthn/begin` already. A long-lived API token that the
-        server's API token policies end (auth.api_tokens.allowed off for the
-        token's account, or the token older than auth.api_tokens.max_lifetime)
-        answers 401 "Access token is invalid or expired." as well, like a
-        revoked token.
+        An account's IP restriction from an earlier server version is the
+        user's own value of that policy, checked the same way. On
+        `/auth/webauthn/complete`, a sign-in from an address that policy does
+        not allow gets 401 "Authentication failed.", as every refused passkey
+        sign-in does; a value of the policy enforced at server scope refuses
+        it so on `/auth/webauthn/begin` already. A long-lived API token that
+        the server's API token policies end (auth.api_tokens.allowed off for
+        the token's account, or the token older than
+        auth.api_tokens.max_lifetime) answers 401 "Access token is invalid or
+        expired." as well, like a revoked token.
       content:
         application/json:
           schema:
