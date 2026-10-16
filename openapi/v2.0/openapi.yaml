@@ -5017,10 +5017,12 @@ components:
         policies), `{"scope": "group", "id": "g:<group id>", "name": ...}`
         for one of the user's groups, or `{"scope": "groups", "ids": [...],
         "names": [...]}` for several of them together, ascending by id,
-        `names` in the order of `ids`. Under `and`, `or`, `intersection`,
-        `union` and `priority` every group whose entry was combined; under
-        `min`, `max` and `strict` the groups whose entry is the value. A
-        lock names the groups that enforce.
+        `names` in the order of `ids`. Under `and`, `or`, `min`, `max` and
+        `strict` the groups whose entry is the value (under `and` a `false`
+        names the groups that said `false` and a `true` every group, under
+        `or` the reverse); under `intersection`, `union` and `priority`
+        every group whose entry was combined. A lock names the groups that
+        enforce.
       required:
         - scope
       properties:

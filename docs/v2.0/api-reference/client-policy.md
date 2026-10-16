@@ -179,7 +179,7 @@ A value that is enforced and that no default below it tightened carries neither 
 | `{"scope": "groups", "ids": ["g:<group id>", ...], "names": ["<group name>", ...]}` | Several of the user's groups together; `names` in the order of `ids`, ascending by id |
 | `{"scope": "user"}` | The user's own policies |
 
-Where the groups decide, `src` names the groups that gave the value: under `and`, `or`, `intersection`, `union` and `priority` every group whose entry was combined; under `min`, `max` and `strict` the group whose entry is the value, or each of them where several set that same value. A `lock` names the groups that enforce. Only groups the user belongs to are named.
+Where the groups decide, `src` names the groups that decided the value: under `and`, `or`, `min`, `max` and `strict` the groups whose entry is the value -- under `and` a `false` names the groups that said `false` and a `true` every group, under `or` the reverse, and under `min`, `max` and `strict` the group whose entry is the value, or each of them where several set that same value; under `intersection`, `union` and `priority` every group whose entry was combined. A `lock` names the groups that enforce. Only groups the user belongs to are named.
 
 ---
 
