@@ -99,6 +99,8 @@ GET /v2.0/me
 
 Returns the full profile of the currently authenticated user. This endpoint does not require admin scope -- any authenticated user can retrieve their own profile. The response includes all fields from the [User Object](#user-object), including roles and group memberships.
 
+The policies that apply to the user are not part of the profile: from Server 20.0.0 they are read with [`GET /me/policy`](client-policy.md#get-own-policy-bundle).
+
 ### Response
 
 `200 OK`

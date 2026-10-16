@@ -247,7 +247,7 @@ tags:
   - name: Authentication
     description: Login, logout, OIDC provider discovery, WebAuthn challenge flow
   - name: Self-Service
-    description: Endpoints the current user can call on their own account (profile, password, passkeys)
+    description: Endpoints the current user can call on their own account (profile, password, passkeys, and from Server 20.0.0 the policies that apply to the user)
   - name: Databases
     description: Client database access, including the database's own category list
   - name: Folders
@@ -2489,6 +2489,64 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /me/policy:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    get:
+      operationId: getMyPolicyBundle
+      tags:
+        - Self-Service
+      summary: Get the policies that apply to the current user (client policy bundle)
+      description: |
+        Server 20.0.0 and later. The client policy bundle of the account
+        the request is made for, issued for this request's session: the
+        people-side settings an app applies (those of users, not of
+        databases and folders) and the account password rules, as far as
+        the server, one of the user's groups or the user sets them, each
+        with its value, its source and whether it is enforced. Any
+        authenticated session, client or admin scope, long-lived API tokens
+        included, and always the session's own account; answered on a
+        mirror server too. The body is the bundle as the server writes it,
+        compact; the `policy` member of a client-scope sign-in answer is
+        written the same way, each answer an issue of its own with its own
+        `issued`, `not_after` and `session`. An API capability: no Password
+        Depot app applies the bundle yet, and its shape can still gain
+        members. A further path segment answers `404`, as does a server
+        that issues no bundle; a `500` never means that no policy applies.
+      responses:
+        "200":
+          description: The client policy bundle; no `ETag`
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `no-store`
+              example: "no-store"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyBundle"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          description: |
+            The server issues bundles but cannot issue this one at that
+            moment -- a mirror server before its main server's configuration
+            and policies have arrived is one such case; it never means that
+            no policy applies. Ask again later and keep the last bundle held
+            while it is within its `not_after`. The message is the generic
+            one with a reference; the server log names the reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /me/passkeys:
     parameters:
       - $ref: "#/components/parameters/ClientIdentityHeader"
@@ -2687,7 +2745,9 @@ paths:
         success returns the same `access_token` shape as `/auth/login`. A
         passkey sign-in involves no second factor: this response never
         carries `tfatoken` or `tfatoken_expires_at`, and a `tfatoken` in the
-        request is not read.
+        request is not read. Server 20.0.0 and later: with the client scope
+        the response also carries `policy`, the user's client policy bundle,
+        as `/auth/login` does.
       requestBody:
         required: true
         content:
@@ -4667,7 +4727,7 @@ components:
             Server 20.0.0 and later. The trusted-device token an earlier login
             returned, sent instead of `tfacode`; the password (or `id_token`)
             is still required. When the server accepts it, the login completes
-            with `200` and `access_token` only -- no new token is issued. When
+            with `200` and without `tfatoken` -- no new token is issued. When
             it does not (unknown, expired, revoked, or a second factor it
             cannot stand in for), the login continues as if no token had been
             sent: `460` asks for the code, or `459` for the authenticator app
@@ -4703,7 +4763,9 @@ components:
         Returned by `POST /auth/login` and `POST /auth/webauthn/complete`.
         `tfatoken` and `tfatoken_expires_at` appear only from
         `POST /auth/login`, and only when that request made the device
-        trusted; `/auth/webauthn/complete` never returns them.
+        trusted; `/auth/webauthn/complete` never returns them. `policy`
+        appears only with the client scope (Server 20.0.0 and later).
+        Ignore members you do not know.
       properties:
         access_token:
           type: string
@@ -4735,6 +4797,256 @@ components:
             administrator resets the user's two-factor options; if the period
             is raised, it accepts the token for longer. The lifetime runs from
             issue and is not extended by use.
+        policy:
+          description: |
+            Server 20.0.0 and later, a client-scope sign-in only: the client
+            policy bundle of the signed-in user for the session the sign-in
+            opened, written the same way as the body of `GET /me/policy` (each
+            answer is an issue of its own, with its own `issued`, `not_after`
+            and `session`), after the members above. Absent from an
+            admin-scope sign-in, and where the server cannot issue the
+            bundle at that moment -- a mirror server before its main
+            server's configuration and policies have arrived is one such
+            case, and `GET /me/policy` then answers `500`; the sign-in
+            succeeds either way.
+          allOf:
+            - $ref: "#/components/schemas/PolicyBundle"
+
+    # --- The client policy bundle (Server 20.0.0 and later) ---
+    PolicyBundle:
+      type: object
+      description: |
+        The client policy bundle: the policies that apply to one user, as
+        the server resolves them, for one session. The server writes it
+        compactly, the members in the order listed, the settings of
+        `people` in ascending order of their ids; do not depend on the
+        order. A member that is absent is not set; a setting absent from
+        `people` resolves to its product default (see `people`). Its shape
+        can still gain members until a Password Depot app applies it:
+        ignore members you do not know.
+      required:
+        - type
+        - v
+        - server
+        - incarnation
+        - serial
+        - user
+        - session
+        - issued
+        - not_after
+        - people
+        - critical
+      properties:
+        type:
+          type: string
+          enum:
+            - pd-policy-bundle
+        v:
+          type: integer
+          description: The version of the bundle's shape, `1`
+        server:
+          type: string
+          pattern: "^srv:[0-9a-f]{32}$"
+          description: |
+            The server's id. It never changes for a server, and a mirror
+            server names its main server's. Always present: where the server
+            has no id, it issues no bundle.
+          example: "srv:e1aa5c3f90b24d7c8a1e6f0b3d2c9a47"
+        incarnation:
+          type: string
+          description: |
+            The id of the server's policy store whose changes `serial`
+            counts, 22 characters of base64url. A mirror server names its
+            main server's. Always present: where the store has none, the
+            server issues no bundle.
+          example: "AQIDBAUGBwgJCgsMDQ4PEA"
+        serial:
+          type: integer
+          format: int64
+          description: |
+            The count of policy changes as the server's policy store holds
+            it: it moves with every change of a policy and with every change
+            of the users and groups that can alter what applies to a user (a
+            membership added or removed, a user or a group disabled, enabled
+            or deleted). Compare it, and `incarnation`, only for equality: a
+            pair that differs means that something changed on the server, not
+            necessarily for this user. An equal pair does not promise an
+            equal bundle (a group's new name reaches `src` without moving
+            it), so a client applies the newest bundle it holds as a whole.
+        user:
+          type: string
+          description: "`u:` followed by the user's id"
+          example: "u:3D52A0C4-1B6E-4F7A-9C2D-5E8F10B2A7C1"
+        session:
+          $ref: "#/components/schemas/PolicyBundleSession"
+        issued:
+          type: integer
+          format: int64
+          description: When the server issued the bundle, in milliseconds since 1970-01-01 UTC
+        not_after:
+          type: integer
+          format: int64
+          description: |
+            Until when the bundle may be relied on, in milliseconds since
+            1970-01-01 UTC: `issued` plus the user's Offline copies: access
+            limit policy (`offline.max_age`), seven days where nothing sets
+            it. Fetch a new bundle before it passes.
+        people:
+          type: object
+          description: |
+            By setting id, ascending: the live people-side settings an app
+            applies (registry `sides` includes `people`, `enforced_by`
+            `client` or `server+client`) and the account password rules
+            (`account.password.*`), only those that the server, one of the
+            user's groups or the user sets. A setting of that set that
+            nothing sets is absent and resolves to its product default,
+            which the bundle does not carry; absent does not mean that
+            nothing restricts it. Settings that only the server applies and
+            the settings of databases and folders (registry `sides` `data`
+            alone) are never present, even where an app applies them.
+          additionalProperties:
+            $ref: "#/components/schemas/PolicyBundleSetting"
+        critical:
+          type: array
+          description: |
+            Ids of the settings a client that does not know them must not
+            ignore when they are enforced; always empty on this server
+            version.
+          items:
+            type: string
+
+    PolicyBundleSession:
+      type: object
+      description: The session a client policy bundle was issued for.
+      required:
+        - platform
+        - declared
+      properties:
+        platform:
+          type: string
+          enum:
+            - web
+            - android
+            - ios
+            - macos
+            - linux
+            - windows
+            - windows-corp
+          description: |
+            The platform the session counts as; `web` where nothing named a
+            platform.
+        declared:
+          type: boolean
+          description: |
+            `true` where the client named its platform: for a session token
+            at its sign-in (`X-PD-Client` or the `client` object; the
+            token's `client_declared` claim), for a long-lived API token in
+            the `X-PD-Client` of the request.
+        client:
+          type: string
+          description: |
+            The numeric core of the client version the session declared:
+            the one to four dot-separated integers it declared, each without
+            a leading zero, and no pre-release or build suffix
+            (`20.0.3-beta.1+7` is `20.0.3`). Absent where the declared
+            version does not read as a version under the Minimum client
+            version policy, and where `declared` is `false`.
+          example: "20.0.3"
+
+    PolicyBundleSetting:
+      type: object
+      description: |
+        One setting of the client policy bundle. `bound` and `lock` are
+        present together, only where the setting is locked and a default
+        below the lock made the value stricter than the enforced value.
+      required:
+        - v
+        - merge
+        - locked
+        - src
+        - by
+        - on_unknown
+      properties:
+        v:
+          $ref: "#/components/schemas/PolicyValue"
+        merge:
+          type: string
+          description: How the values of several groups combine
+          enum:
+            - and
+            - or
+            - min
+            - max
+            - intersection
+            - union
+            - strict
+            - priority
+        locked:
+          type: boolean
+          description: |
+            `true` where a level enforces the setting for the user: the
+            server, a group, or the user's own entry.
+        src:
+          $ref: "#/components/schemas/PolicyBundleSource"
+        by:
+          type: string
+          description: |
+            Who acts on the setting by its kind (the registry's
+            `enforced_by`); not whether this server enforces it, which is
+            `applied` in the registry.
+          enum:
+            - client
+            - server+client
+            - server
+        on_unknown:
+          type: string
+          description: |
+            What a client that does not know the setting does when it is
+            enforced (the registry's `on_unknown`).
+          example: "ignore"
+        bound:
+          $ref: "#/components/schemas/PolicyValue"
+        lock:
+          $ref: "#/components/schemas/PolicyBundleSource"
+
+    PolicyBundleSource:
+      type: object
+      description: |
+        Where a value or a lock of the client policy bundle comes from:
+        `{"scope": "server"}`, `{"scope": "user"}` (the user's own
+        policies), `{"scope": "group", "id": "g:<group id>", "name": ...}`
+        for one of the user's groups, or `{"scope": "groups", "ids": [...],
+        "names": [...]}` for several of them together, ascending by id,
+        `names` in the order of `ids`. Under `and`, `or`, `intersection`,
+        `union` and `priority` every group whose entry was combined; under
+        `min`, `max` and `strict` the groups whose entry is the value. A
+        lock names the groups that enforce.
+      required:
+        - scope
+      properties:
+        scope:
+          type: string
+          enum:
+            - server
+            - group
+            - groups
+            - user
+        id:
+          type: string
+          description: With `group`, `g:` followed by the group's id
+        name:
+          type: string
+          description: With `group`, the group's name
+        ids:
+          type: array
+          description: With `groups`, each `g:` followed by a group's id, ascending
+          items:
+            type: string
+        names:
+          type: array
+          description: With `groups`, the groups' names in the order of `ids`
+          items:
+            type: string
 
     OidcProvider:
       type: object

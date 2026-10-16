@@ -75,6 +75,7 @@ nav:
       - Groups: api-reference/groups.md
       - Permissions: api-reference/permissions.md
       - Policies: api-reference/policies.md
+      - Policies for Clients: api-reference/client-policy.md
       - Alerts: api-reference/alerts.md
       - Secrets: api-reference/secrets.md
   - Changelog: changelog.md

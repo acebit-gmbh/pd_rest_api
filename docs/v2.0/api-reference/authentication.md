@@ -251,7 +251,7 @@ On success, the server returns a JWT access token (same format as all other logi
 }
 ```
 
-A passkey sign-in involves no second factor, so this response never carries a `tfatoken`, and the WebAuthn endpoints do not read one (see [Trusted Devices](#trusted-devices)).
+With the client scope the answer also carries the user's [client policy bundle](client-policy.md) as `policy`, after `access_token`, as `/auth/login` does (*Server 20.0.0 and later*). A passkey sign-in involves no second factor, so this response never carries a `tfatoken`, and the WebAuthn endpoints do not read one (see [Trusted Devices](#trusted-devices)).
 
 **Required fields (Step 1):** `user`
 
@@ -513,9 +513,10 @@ When the request carried `"trust_device": true` and made the device trusted (Ser
 | `access_token` | string | Bearer token for authenticating subsequent requests. Use it via the `Authorization: Bearer <token>` header. |
 | `tfatoken` | string | Only when this request made the device trusted. Send it as `tfatoken` on later logins instead of `tfacode`. Opaque, not a JWT, and never a Bearer credential. Returned only this once. |
 | `tfatoken_expires_at` | string (UTC, ISO 8601) | Present with `tfatoken`: when the server stops accepting the token under the trusted-device period in force at issue. Advisory: the server can stop accepting it earlier, and accepts it for longer if the period is raised. |
+| `policy` | object | *Server 20.0.0 and later.* Only with the client scope: the [client policy bundle](client-policy.md) of the signed-in user for the session the login opened, after the members above. Absent from an admin-scope login; such a session reads its account's bundle with [`GET /me/policy`](client-policy.md#get-own-policy-bundle). Also absent where the server cannot issue the bundle at that moment (a mirror server before its main server's configuration and policies have arrived is one such case); the sign-in still succeeds, and `GET /me/policy` answers `500` for as long as the server cannot issue it. See [In the Sign-In Answer](client-policy.md#in-the-sign-in-answer). |
 
 !!! info "Simplified Response"
-    Unlike v1.0, the login response has no `client_id` -- the Bearer token alone identifies the session. Besides `access_token` it carries only the trusted-device fields above, and those only when the login asked for them with `trust_device`.
+    Unlike v1.0, the login response has no `client_id` -- the Bearer token alone identifies the session. Besides `access_token` it carries the trusted-device fields above, only when the login asked for them with `trust_device`, and with the client scope the user's `policy`. Ignore members you do not know.
 
 ### Token Lifetime
 
@@ -595,6 +596,7 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 | `client_platform` | -- | string | *Server 20.0.0 and later.* The client platform established at login: `web`, `android`, `ios`, `macos`, `linux`, `windows` or `windows-corp`. Requests made with the token are checked against the server's **Allowed client platforms** policy for that platform; see [Platform Policy and Sessions](#platform-policy-and-sessions). Long-lived API tokens do not carry it |
 | `amr` | Authentication Methods References | array of strings | *Server 20.0.0 and later.* `["pwd"]` on a token that a sign-in with `auth: "standard"` issued; absent after every other sign-in method. The server reads it to decide whether `GET /me` reports an expired password; see [Expired Passwords](#expired-passwords). Long-lived API tokens do not carry it |
 | `client_version` | -- | string | *Server 20.0.0 and later.* The client version the sign-in declared, in `X-PD-Client` or the login body, as it was sent; absent where the sign-in declared none. Every request made with the token is checked against the server's **Minimum client version** policy with this version; see [Minimum Client Version](#minimum-client-version). Long-lived API tokens do not carry it |
+| `client_declared` | -- | boolean | *Server 20.0.0 and later.* `true` where the sign-in named its platform, in `X-PD-Client` or the `client` object of the login or WebAuthn-begin body, so that `client_platform` is the client's own declaration; absent where it named none and `client_platform` is the `web` the server gave it. The server reads it for `session.declared` of the [client policy bundle](client-policy.md#session). Long-lived API tokens do not carry it |
 
 **Telling the two token types apart on the client side:**
 
@@ -820,7 +822,7 @@ Servers before 20.0.0 decide by the server's two-factor settings (Server Manager
     }
     ```
 
-    When the server accepts the token, the login completes with `200` and `access_token` only. No new token is issued: the token is not renewed by use, and its lifetime runs from when the code was entered.
+    When the server accepts the token, the login completes with `200` and without `tfatoken`. No new token is issued: the token is not renewed by use, and its lifetime runs from when the code was entered.
 
 **The token:**
 

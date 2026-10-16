@@ -375,6 +375,7 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `POST` | [`/me/passkeys/complete`](users.md#register-passkey-complete) | Complete passkey registration | Any |
 | `PATCH` | [`/me/passkeys/{id}`](users.md#rename-passkey) | Rename own passkey | Any |
 | `DELETE` | [`/me/passkeys/{id}`](users.md#delete-own-passkey) | Delete own passkey | Any |
+| `GET` | [`/me/policy`](client-policy.md#get-own-policy-bundle) | Get the policies that apply to the current user, as the client policy bundle (*Server 20.0.0 and later*) | Any |
 
 ### Databases (Client)
 
