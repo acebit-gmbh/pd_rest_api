@@ -55,7 +55,7 @@ From Server 20.0.0, the server's **Allowed network addresses** policy is checked
 - Every request body must state its size in a `Content-Length` header. A request that carries a `Transfer-Encoding` header - whether or not it also sends a `Content-Length` - is refused with `411 Length Required` before the body is read (*Server 20.0.0 and later*); see [Length required (`411`)](#http-status-codes) below
 - Character encoding: **UTF-8**
 - Query parameters are passed in the URL
-- A change of a [policy document](policies.md) names the revision it was made against in an `If-Match` header (*Server 20.0.0 and later*)
+- A change of a [policy document](policies.md), and its [preview](policies.md#preview-a-change), names the revision it is made against in an `If-Match` header (*Server 20.0.0 and later*)
 - The binary content upload (`PUT .../entries/{id}/content`) handles documents and, from Server 20.0.0, certificate public/private files. A [database icon](icons.md#upload-icon) is uploaded as JSON, with the image as Base64 in the `data` field - there is no multipart or binary icon upload
 
 ## Response Format
@@ -181,14 +181,14 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification) |
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
 | `411` | Length Required | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Chunked request bodies are not accepted, and `411` is answered even where `413` would otherwise apply |
-| `412` | Precondition Failed | A [policy change](policies.md#revisions-etag-and-if-match) names in `If-Match` a revision that is no longer the current one; nothing was changed |
-| `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document/certificate content; `4131` for an icon upload over its own, smaller limits; 64 KiB for a [policy change](policies.md#update-server-policy), answered as a regular JSON error |
-| `428` | Precondition Required | A [policy change](policies.md#revisions-etag-and-if-match) without `If-Match`, or with `If-Match: *` |
+| `412` | Precondition Failed | A [policy change](policies.md#revisions-etag-and-if-match), or its preview, names in `If-Match` a revision that is no longer the current one; nothing was changed |
+| `413` | Payload Too Large | Request body over the limit: 1 MB for JSON bodies, 64 MB for document/certificate content; `4131` for an icon upload over its own, smaller limits; 64 KiB for a [policy change](policies.md#update-server-policy) or its preview, answered as a regular JSON error |
+| `428` | Precondition Required | A [policy change](policies.md#revisions-etag-and-if-match), or its preview, without `If-Match`, or with `If-Match: *` |
 | `459` | TFA Not Activated | Two-factor authentication needs initial setup (the path of a QR code image, relative to the server's address, is returned in `error.message`) |
 | `460` | TFA Code Required | A valid 6-digit 2FA code, or a trusted-device token the server accepts, must be provided to complete login |
 | `500` | Internal Server Error | Unexpected server-side error |
 | `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0 |
-| `503` | Service Unavailable | A [policy change](policies.md#update-server-policy) cannot be made at the moment and was not made; the same request may succeed later |
+| `503` | Service Unavailable | A [policy change](policies.md#update-server-policy) cannot be made at the moment and was not made, or cannot be previewed at the moment; the same request may succeed later |
 
 ## HTTP Methods
 
@@ -505,6 +505,9 @@ All paths below are relative to the base URL (`/v2.0/`).
 | `PATCH` | [`/admin/groups/{id}/policy`](policies.md#update-group-policy) | Change a group's policies (`If-Match` required) | Admin |
 | `GET` | [`/admin/users/{id}/policy`](policies.md#get-user-policy) | Get a user's policy document | Admin |
 | `PATCH` | [`/admin/users/{id}/policy`](policies.md#update-user-policy) | Change a user's policies (`If-Match` required) | Admin |
+| `POST` | [`/admin/server/policy/preview`](policies.md#preview-a-change) | Preview a change of the server's policies: who it affects, and its warnings (`If-Match` required) | Admin |
+| `POST` | [`/admin/groups/{id}/policy/preview`](policies.md#preview-a-change) | Preview a change of a group's policies (`If-Match` required) | Admin |
+| `POST` | [`/admin/users/{id}/policy/preview`](policies.md#preview-a-change) | Preview a change of a user's policies (`If-Match` required) | Admin |
 | `GET` | [`/admin/policy-registry`](policies.md#get-policy-registry) | List the policy settings the server knows | Admin |
 | `GET` | [`/admin/policy-conflicts`](policies.md#get-policy-conflicts) | List the settings on which a user's groups disagree | Admin |
 

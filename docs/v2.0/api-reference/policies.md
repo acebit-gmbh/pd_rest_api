@@ -2,7 +2,7 @@
 
 *Server 20.0.0 and later.*
 
-The server's policies are the settings the Server Manager shows on its *Policies* page and on the *Policies* tabs of Group Properties and User Properties: the sign-in methods, the second factor, the inactivity period, the network addresses, the account password rules, the API token rules and the others. The endpoints on this page read and change them in an **admin-scoped session** (`"scope": "admin"` at login), under the same rules as the Server Manager: whoever may change a setting there may change it here, a change is checked and recorded in the audit trail the same way, and a change made here shows in the Server Manager and the other way round.
+The server's policies are the settings the Server Manager shows on its *Policies* page and on the *Policies* tabs of Group Properties and User Properties: the sign-in methods, the second factor, the inactivity period, the network addresses, the account password rules, the API token rules and the others. The endpoints on this page read and change them, and show what a change would do before it is made, in an **admin-scoped session** (`"scope": "admin"` at login), under the same rules as the Server Manager: whoever may change a setting there may change it here, a change is checked and recorded in the audit trail the same way, and a change made here shows in the Server Manager and the other way round.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -12,10 +12,13 @@ The server's policies are the settings the Server Manager shows on its *Policies
 | `PATCH` | [`/v2.0/admin/groups/{id}/policy`](#update-group-policy) | Change settings of a group's policy document |
 | `GET` | [`/v2.0/admin/users/{id}/policy`](#get-user-policy) | A user's policy document, optionally with the effective values |
 | `PATCH` | [`/v2.0/admin/users/{id}/policy`](#update-user-policy) | Change settings of a user's policy document |
+| `POST` | [`/v2.0/admin/server/policy/preview`](#preview-a-change) | What a change of the server's policy document would do, without making it |
+| `POST` | [`/v2.0/admin/groups/{id}/policy/preview`](#preview-a-change) | What a change of a group's policy document would do, without making it |
+| `POST` | [`/v2.0/admin/users/{id}/policy/preview`](#preview-a-change) | What a change of a user's policy document would do, without making it |
 | `GET` | [`/v2.0/admin/policy-registry`](#get-policy-registry) | Every setting this server knows, with its type, range, scopes and default |
 | `GET` | [`/v2.0/admin/policy-conflicts`](#get-policy-conflicts) | The settings on which a user's groups set different values |
 
-Any other method on these paths answers `405` with an `Allow` header (`GET, PATCH` on the policy documents, `GET` on the registry and the conflicts), and a further path segment answers `404`. Long-lived API tokens issued with the admin scope reach these endpoints under the same rules as the account they belong to.
+Any other method on these paths answers `405` with an `Allow` header (`GET, PATCH` on the policy documents, `POST` on their previews, `GET` on the registry and the conflicts). After `policy`, only `preview` is a further path segment; any other answers `404`. Long-lived API tokens issued with the admin scope reach these endpoints under the same rules as the account they belong to.
 
 ---
 
@@ -364,6 +367,226 @@ The user representation's `two_factor_mode` (see [Users](users.md#two_factor_mod
 
 ---
 
+## Preview a Change
+
+```
+POST /v2.0/admin/server/policy/preview
+POST /v2.0/admin/groups/{id}/policy/preview
+POST /v2.0/admin/users/{id}/policy/preview
+```
+
+Shows what a change of the level's policy document would do, without making it: which users would get a different value, or a different lock, for which setting, and the warnings the Server Manager shows before it saves a policy -- the users who would be left without a way to sign in first. The Server Manager asks for this preview before every policy save and shows it wherever a user is affected or a warning is found.
+
+A preview takes the request of the matching `PATCH` -- the same `If-Match` header and the same body (see [Update Server Policy](#update-server-policy)) -- and is checked as that change would be: the same rights, the same settings and values and the same refusals, each answered with the status the change would get (see [Preview Refusals](#preview-refusals)). Nothing is changed and nothing is recorded. The answer describes the policies and the users as they are at that moment; it reserves nothing, and the change itself is checked again when it is sent.
+
+Each user's value is resolved before and after the change from the server's document, the documents of the user's groups and the user's own document, as the [effective view](#effective-view) resolves it for a user.
+
+### Path Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| `id` | string (UUID) | Yes | On the group and user paths: the group's or the user's unique identifier |
+
+### Request Headers
+
+| Header | Required | Description |
+|--------|:--------:|-------------|
+| `If-Match` | Yes | The revision the change would be made against, as for the change, such as `"17"` |
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| `offset` | integer | No | The number of rows to skip; `0` by default |
+| `limit` | integer | No | The most rows to return, at least `1`; `100` by default, and a value above `1000` is taken as `1000` |
+| `filter` | string | No | `flagged`: the rows of the warnings instead of the rows of the changed values |
+| `stamp` | string | No | From the second page on: the `stamp` of the page before (see [Pages and the Stamp](#pages-and-the-stamp)) |
+
+`offset` and `limit` are written in digits alone. Any other value of these parameters, and one of them named twice, answers `400`. Other query parameters are not read.
+
+### Request Body
+
+The body of the change, read in the same way: exactly the member `set`, naming at least one setting (see [Update Server Policy](#update-server-policy)).
+
+### Response
+
+`200 OK`, without an `ETag` header. The body is the preview reply:
+
+```json
+{
+    "outcome": "previewed",
+    "revision": 4,
+    "errors": [],
+    "stamp": "4.57.12",
+    "preview": {
+        "unchanged": false,
+        "settings": [
+            {
+                "setting": "session.idle_timeout",
+                "reach": "users",
+                "applied": true,
+                "resolved": true,
+                "source_only": 0,
+                "transitions": [
+                    {
+                        "before": {"state": "default", "value": 3600, "source": {"type": "server"}, "locked": false},
+                        "after": {"state": "enforced", "value": 900, "source": {"type": "group", "id": "FEAE7AC9-58D1-4A76-82A6-2C7DB135CFDD"}, "locked": true},
+                        "users": 2
+                    }
+                ]
+            }
+        ],
+        "warnings": {
+            "sign_in_lost": 0,
+            "methods_empty": 0,
+            "network_empty": 0,
+            "platforms_empty": 0,
+            "second_factor_empty": 0,
+            "ages_crossed_new": 0,
+            "ages_crossed_already": 0,
+            "conflict_created": 0,
+            "conflict_removed": 0
+        },
+        "conflicts": [],
+        "users": 2,
+        "disabled": 1,
+        "hidden": 0,
+        "filter": "changes",
+        "offset": 0,
+        "limit": 100,
+        "total": 2,
+        "rows": [
+            {"user": "3D1C91F6-754D-427E-9D76-8CC20E8C326E", "disabled": false, "setting": "session.idle_timeout", "transition": 0, "warnings": []},
+            {"user": "8B0E5A21-1F3C-4D7E-9A6B-2C4D6E8F0A1B", "disabled": true, "setting": "session.idle_timeout", "transition": 0, "warnings": []}
+        ]
+    }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `outcome` | string | `previewed` in a `200`; `refused` or `restart` in `error.policy` (see [Preview Refusals](#preview-refusals)) |
+| `revision` | integer | The document's current revision; `0` where the preview was refused before the document was read |
+| `errors` | array | As in the [reply object](#reply-object): the reasons of a refusal. In a `200` empty, or one `too_large` error where the page was shortened (see [Pages and the Stamp](#pages-and-the-stamp)) |
+| `stamp` | string | With `previewed` and `restart`: the state the preview describes |
+| `preview` | object | With `previewed`: the summary and one page of rows |
+| `preview.unchanged` | boolean | `true` where the change names only what the document already holds, so that the change would save nothing; every list is then empty and every count `0` |
+| `preview.settings` | array | Each setting the change would change, in the order of the setting ids (see [Changed Settings](#changed-settings)). A setting the body names with what the document already holds -- the same state and value, or `not_set` where nothing is declared -- is left out |
+| `preview.warnings` | object | By warning (see [Warnings](#warnings)), the number of its rows |
+| `preview.conflicts` | array | Each setting on which the change makes the groups of some users disagree, or stop disagreeing, in the order of the setting ids: `setting`; `groups`, the groups whose values disagree -- after the change, or before it where the change ends the disagreement; `created` and `removed`, for how many users the disagreement starts and ends (see [Get Policy Conflicts](#get-policy-conflicts)) |
+| `preview.users` | integer | The users the caller may read who get a different value or lock, or a warning |
+| `preview.disabled` | integer | How many of `users` are disabled |
+| `preview.hidden` | integer | The users the caller may not read who get a different value or lock, or a warning |
+| `preview.filter` | string | `changes`, or `flagged` for `filter=flagged` |
+| `preview.offset`, `preview.limit` | integer | The page as applied |
+| `preview.total` | integer | The rows of the filter, on all pages together |
+| `preview.rows` | array | The rows of this page (see [Rows](#rows)) |
+
+**Users the caller may not read.** A preview names only the users whose policies the caller may read (see [Who May Read and Change](#who-may-read-and-change)). The others are counted in `hidden`, never named, and no other count, transition, warning, conflict or row includes them -- so that, for example, the built-in administrator is only counted for every other caller, and super-administrators for a caller who is not one. The preview still judges them: a change that would leave no server administrator able to sign in is refused (`lockout`).
+
+### Changed Settings
+
+Each entry of `settings`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `setting` | string | The setting id |
+| `reach` | string | `users`: the value as it applies to each user the change reaches -- the user at a user level, the members of the group and of the groups within it at a group level, every user at the server level. `databases`: a setting whose registry `sides` include `data`, changed in the server's document -- one line for every database. `server`: a setting that is set for the server as a whole -- one line. A setting of both sides changed at the server level has a `users` entry and a `databases` entry |
+| `applied` | boolean | Whether this server itself enforces the setting, as in the [effective view](#effective-view) |
+| `resolved` | boolean | `false` for a setting this server cannot resolve, such as a declaration it cannot read being removed; it then has no transitions |
+| `source_only` | integer | The users whose value and lock stay as they are while the level the value comes from, or its state, changes: counted, not listed |
+| `transitions` | array | Each change of a value or a lock: `before` and `after`, and `users`, how many users meet it. Empty where nobody's value or lock changes. A `databases` or `server` line has at most one, with `users` `0` |
+
+`before` and `after`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | string | `not_set`, `default` or `enforced`: the state of the value that applies |
+| `value` | value | The value that applies; absent where nothing restricts |
+| `source` | object | Where it comes from, as in the effective view: a level, `{"type": "product"}` or `{"type": "groups"}`. `{"type": "user"}` without an `id` is the user's own document, whichever user it is, so that users alike share one transition |
+| `locked` | boolean | A level of the user's chain enforces the setting -- unlike `locked` in the effective view, the user's own level counts as well |
+
+### Warnings
+
+| Warning | `setting` of its rows | Meaning |
+|---------|-----------------------|---------|
+| `sign_in_lost` | `""` | An administrator who can sign in to the Server Manager could not after the change, while another still could. The row's `clause` names the first rule the account fails: `disabled`, `method`, `second_factor`, `network` or `version` |
+| `methods_empty` | `auth.methods.allowed` | The user's allowed sign-in methods become an empty set |
+| `network_empty` | `auth.network.allowed` | The user's allowed network addresses become an empty list |
+| `platforms_empty` | `session.platforms.allowed` | The user's allowed client platforms become an empty set |
+| `second_factor_empty` | `auth.second_factor.required` | After the change a second factor is required of the user while no second-factor method (`auth.second_factor.methods`) is allowed, which was not so before -- whether the change brings the requirement or the empty set |
+| `ages_crossed_new` | `account.password.min_age` or `database.master_password.min_age` | The user's minimum age of that password becomes larger than its maximum age |
+| `ages_crossed_already` | as above | The minimum age was larger than the maximum before the change and stays so |
+| `conflict_created` | the setting | The user's groups come to set different values for a setting that takes one value |
+| `conflict_removed` | the setting | The user's groups no longer disagree on the setting |
+
+- The users left without a way to sign in come first: `sign_in_lost`, then the empty sets. Only `sign_in_lost` judges the accounts themselves, as the Server Manager's sign-in does; the other warnings judge the policy values alone.
+- A warning is looked for only where the change changes a setting it concerns: `sign_in_lost` where it changes a setting the Server Manager's sign-in checks (`auth.methods.allowed`, `auth.second_factor.required`, `auth.second_factor.methods`, `auth.second_factor.preferred`, `auth.network.allowed` or `session.client.min_version`); `methods_empty`, `network_empty` and `platforms_empty` where it changes that set (`auth.methods.allowed`, `auth.network.allowed`, `session.platforms.allowed`); `second_factor_empty` where it changes `auth.second_factor.required` or `auth.second_factor.methods`; the ages where it changes either age of a pair; a conflict where it changes the setting the groups disagree on. A setting the body names with what the document already holds is not changed.
+- For `methods_empty`, `network_empty` and `platforms_empty`, "becomes empty" is the step from any other value, or from none, to an empty set the user's chain declares; a set that was already empty before raises none of them. `second_factor_empty` is raised also over a method set that was empty before, where the change makes the second factor required.
+- The ages compare the values of the policy documents. A value that reaches a user's computer from another source (see `sources` in the [registry](#get-policy-registry)) is not part of the preview.
+- No warning refuses the change. Only a change that would leave no server administrator able to sign in to the Server Manager is refused (`lockout`), as without a preview.
+
+### Rows
+
+With the default filter, a row for each setting and user whose value or lock changes, in the order of the setting ids and then of the user ids:
+
+```json
+{"user": "3D1C91F6-754D-427E-9D76-8CC20E8C326E", "disabled": false, "setting": "session.idle_timeout", "transition": 0, "warnings": []}
+```
+
+`transition` is the index of the user's transition in the `transitions` of the setting's `users` entry; `warnings` lists every warning the user meets, in the order of the table above.
+
+With `filter=flagged`, a row for each warning and user, in the order of the warnings in the table above, then of the setting ids, then of the user ids:
+
+```json
+{"user": "3D1C91F6-754D-427E-9D76-8CC20E8C326E", "disabled": false, "setting": "auth.methods.allowed", "warning": "methods_empty", "warnings": ["methods_empty"]}
+```
+
+A `sign_in_lost` row also has `clause`. Disabled users are listed and marked with `disabled`: an account that is enabled again meets the policies at once. Rows carry user ids only; [`GET /admin/users/{id}`](users.md#get-user-admin) gives a user's name.
+
+### Pages and the Stamp
+
+The rows come in pages, like the lists of the API (see [Pagination](overview.md#pagination)). Every page carries the whole summary -- `settings`, `warnings`, `conflicts` and the counts --, so the first page tells everything but the ids of the users beyond it.
+
+The preview is worked out anew for every page. `stamp` names the state of the policies and of the users and groups that the page describes; treat it as an opaque string and send it back as `stamp` when you ask for a further page, with the `If-Match` and the body of the first page. A further page is checked as the change would be first: a change that would now be refused gets that refusal, with its status, as on the first page; and where this document changed since the revision in `If-Match`, the answer is `412` with the code `stale` -- read the document again. Otherwise, where other policies, or the users and groups, changed since the page whose `stamp` was sent, the answer is `409` with the outcome `restart`, the new `stamp` and no rows. In every case, ask again from the first page. A page asked without `stamp` describes the current state.
+
+A page that would be larger than the server answers holds fewer rows than asked, and `errors` carries a `too_large` error that says where the next page starts; the status is still `200`. A preview whose summary alone would be too large is refused with `409` and `too_large`.
+
+### Preview Refusals
+
+A refused preview uses the standard [error envelope](overview.md#error-format), with the preview reply under `error.policy` -- the outcome `refused` and its `errors`, or `restart` and the new `stamp`:
+
+| Status | Description |
+|--------|-------------|
+| `400 Bad Request` | The body, `If-Match` or a query parameter is refused, or the change would be refused for a setting or a value; `error.policy.errors` names each |
+| `401 Unauthorized` | Missing or invalid authentication token |
+| `403 Forbidden` | Not an admin-scoped session; the caller may not change a setting the body names; the change would leave no server administrator able to sign in (`lockout`), or would need an approval nobody can give (`approval_unreachable`); or the server is a mirror |
+| `404 Not Found` | A group or user that does not exist, or that the caller may not change any setting of, as for the change |
+| `405 Method Not Allowed` | Another method than `POST`, with `Allow: POST` |
+| `409 Conflict` | `restart`: other policies, or the users and groups, changed since the page whose `stamp` was sent (a change of this document answers `412`). Or `too_large`: the change would make the stored policies larger than the server holds, or the preview would be larger than the server answers |
+| `412 Precondition Failed` | The document changed since the revision in `If-Match`: `error.policy.errors` carries the code `stale`, `error.policy.revision` the current revision and the response its `ETag`. It carries no document: read the document again |
+| `413 Payload Too Large` | The body is larger than 64 KiB |
+| `428 Precondition Required` | No `If-Match`, or `If-Match: *` |
+| `503 Service Unavailable` | A directory synchronisation (Active Directory or Azure AD) is running, so the users and groups the preview needs cannot be looked up now; try again when it has finished |
+
+A preview is not recorded in the audit trail, whether it is answered or refused, and raises no alert: it changes nothing.
+
+**Client guidance:** preview a change with the `If-Match` and the body you are about to send, show the warnings before the changed values, and send the `PATCH` only when the user confirms. The preview reserves nothing: the change can still answer `412`, or be refused, when the policies or the users changed in between.
+
+### Example
+
+=== "curl"
+
+    ```bash
+    curl -i -X POST "https://<server>:8714/v2.0/admin/groups/FEAE7AC9-58D1-4A76-82A6-2C7DB135CFDD/policy/preview?limit=100" \
+        -H "Authorization: Bearer <token>" \
+        -H "Content-Type: application/json" \
+        -H 'If-Match: "4"' \
+        -d '{"set": {"session.idle_timeout": {"state": "enforced", "value": 900}}}'
+    ```
+
+---
+
 ## Effective View
 
 With `view=effective`, a read also returns `effective`: for each setting that can be set at the level and that the caller may change there (every one at the server level, for server administrators and security officers), what applies at that level and why.
@@ -544,7 +767,7 @@ Readable by server administrators and security officers. Not paginated: each con
 
 ## Reply Object
 
-Every answer of the document routes that the policies decide carries one reply object: the body of a `200`, and `error.policy` of the others (see [Errors](#errors)). A `404` and the answers given before the policies are asked carry none. The server writes it compact; the examples on this page are indented for reading.
+Every answer of the document routes that the policies decide carries one reply object: the body of a `200`, and `error.policy` of the others (see [Errors](#errors)). A preview carries the preview reply instead (see [Preview a Change](#preview-a-change)). A `404` and the answers given before the policies are asked carry none. The server writes it compact; the examples on this page are indented for reading.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -569,7 +792,8 @@ Every answer of the document routes that the policies decide carries one reply o
 | `forbidden` | `403` | The caller may not change this setting at this level; for the request as a whole (`"setting": ""`), may not read or change this document -- `404` for a group or a user |
 | `lockout` | `403` | No server administrator could sign in to the Server Manager after the change |
 | `approval_unreachable` | `403` | The change would leave an approval that nobody can give |
-| `too_large` | `409` | The stored policies would be larger than the server holds. In a `200` read: the effective view was shortened |
+| `too_large` | `409` | The stored policies would be larger than the server holds, or a preview larger than the server answers. In a `200` read: the effective view was shortened; in a `200` preview: the page was shortened |
+| `stale` | `412` | A preview only: the document changed since the revision in `If-Match` |
 | `directory_busy` | `503` | A directory synchronisation is running; try again when it has finished |
 | `audit_unavailable` | `503` | The audit trail cannot record the change; nothing was saved |
 | `save_failed` | `500` | The change could not be saved; nothing was changed |
@@ -599,10 +823,11 @@ The answers the policies decide -- `400`, a `403` for a policy refusal, `409`, `
 ```
 
 - `error.code` is the HTTP status; these endpoints use no sub-code. `error.message` is the message of the first error.
-- `412 Precondition Failed` carries the current document in `error.policy.document` and its revision in the `ETag` header.
-- These answers use the standard error envelope without `error.policy`: `401`; the `403` for a session without the admin scope, and a mirror server's `403` for a `PATCH`; `404`, whose body is the one the group and user routes answer for an id that does not exist; `405`; `411`; the `413` for a request above the server's general size limit (see [HTTP status codes](overview.md#http-status-codes)); and a `500` when the server could not produce a reply. Branch on the HTTP status, and read `error.policy` only where it is present.
+- `412 Precondition Failed` carries the current document in `error.policy.document` and its revision in the `ETag` header -- except for a preview, whose `412` carries the current revision alone (see [Preview Refusals](#preview-refusals)).
+- For a preview, `error.policy` is the preview reply; its `409` can also be the outcome `restart`, whose `errors` is empty and whose `error.message` asks for the preview again from the first page.
+- These answers use the standard error envelope without `error.policy`: `401`; the `403` for a session without the admin scope, and a mirror server's `403` for a `PATCH` or a preview; `404`, whose body is the one the group and user routes answer for an id that does not exist; `405`; `411`; the `413` for a request above the server's general size limit (see [HTTP status codes](overview.md#http-status-codes)); and a `500` when the server could not produce a reply. Branch on the HTTP status, and read `error.policy` only where it is present.
 - The messages in `error.policy` are in English; match `code`, never the message.
-- A mirror server answers every `PATCH` that carries a bearer token with `403` before the token is examined, as it does for every write (see [Mirror servers are read-only](overview.md#http-status-codes)).
+- A mirror server answers every `PATCH`, and every preview, that carries a bearer token with `403` before the token is examined, as it does for every write (see [Mirror servers are read-only](overview.md#http-status-codes)).
 
 !!! note "What is recorded"
-    Every saved change is recorded in the audit trail as a policy change, with the values before and after, the account that made it -- for a long-lived API token, the token's account -- and the REST API as the channel. So is every change the server examines and refuses -- for its body, a body that could not be read included, its `If-Match`, its settings and values, or the caller's rights, a group or user that does not exist included -- and a change that could not be saved. A request refused before its policy is examined -- without a valid admin-scoped session, by a mirror server, or for a method the path does not take -- is not recorded as a policy change; neither is a change answered `412`, one that changes nothing, or a read.
+    Every saved change is recorded in the audit trail as a policy change, with the values before and after, the account that made it -- for a long-lived API token, the token's account -- and the REST API as the channel. So is every change the server examines and refuses -- for its body, a body that could not be read included, its `If-Match`, its settings and values, or the caller's rights, a group or user that does not exist included -- and a change that could not be saved. A request refused before its policy is examined -- without a valid admin-scoped session, by a mirror server, or for a method the path does not take -- is not recorded as a policy change; neither is a change answered `412`, one that changes nothing, or a read. A preview is never recorded, whether it is answered or refused: it changes nothing.

@@ -275,7 +275,7 @@ tags:
   - name: Admin - Groups
     description: Group management (admin scope required)
   - name: Admin - Policies
-    description: The server's, groups' and users' policies, the policy registry and the group conflicts (admin scope required; Server 20.0.0 and later)
+    description: The server's, groups' and users' policies, the preview of a change, the policy registry and the group conflicts (admin scope required; Server 20.0.0 and later)
   - name: Admin - Alerts
     description: Alert management (admin scope required)
   - name: Admin - Secrets
@@ -2072,6 +2072,183 @@ paths:
           $ref: "#/components/responses/PolicyNotSaved"
         "503":
           $ref: "#/components/responses/PolicyUnavailable"
+
+  /admin/server/policy/preview:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    post:
+      operationId: adminPreviewServerPolicy
+      tags:
+        - Admin - Policies
+      summary: Preview a change of the server's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. What the
+        change `adminUpdateServerPolicy` would do with the same `If-Match`
+        and body, without making it: for each setting the change would
+        change, which users would get a different value or lock (the
+        transitions, with how many users meet each), the warnings the Server
+        Manager shows before it saves a policy - the users left without a
+        way to sign in first - and one page of rows that name the users by
+        id. It is checked as the change would be - the same rights,
+        settings, values and refusals, each with the status the change would
+        get - and it is never recorded in the audit trail, whether it is
+        answered or refused. Users the caller may not read are counted in
+        `hidden`, never named. Every page carries the whole summary and a
+        `stamp`; send the stamp back with the next page and the same
+        `If-Match`. That page is checked as the change would be first, so it
+        answers `412` with the code `stale` where this document changed in
+        between, and `409` with the outcome `restart` where other policies
+        or the users and groups changed in between. A mirror server refuses
+        it with `403`, as every write. A preview reserves nothing: the
+        change is checked again when it is sent.
+      parameters:
+        - $ref: "#/components/parameters/PolicyIfMatch"
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+        - $ref: "#/components/parameters/PolicyPreviewFilter"
+        - $ref: "#/components/parameters/PolicyPreviewStamp"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyUpdateRequest"
+            example:
+              set:
+                session.idle_timeout:
+                  state: enforced
+                  value: 900
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyPreviewed"
+        "400":
+          $ref: "#/components/responses/PolicyPreviewBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyPreviewForbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/PolicyPreviewConflict"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "412":
+          $ref: "#/components/responses/PolicyPreviewPreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PolicyPreviewPayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PolicyPreviewPreconditionRequired"
+        "503":
+          $ref: "#/components/responses/PolicyPreviewUnavailable"
+
+  /admin/groups/{id}/policy/preview:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/GroupId"
+    post:
+      operationId: adminPreviewGroupPolicy
+      tags:
+        - Admin - Policies
+      summary: Preview a change of a group's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. As
+        `adminPreviewServerPolicy`, for the group: what
+        `adminUpdateGroupPolicy` would do, for the members of the group and
+        of the groups within it. A group that does not exist, or none of
+        whose settings the caller may change, answers `404` with the
+        message of `adminGetGroup` for a missing group.
+      parameters:
+        - $ref: "#/components/parameters/PolicyIfMatch"
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+        - $ref: "#/components/parameters/PolicyPreviewFilter"
+        - $ref: "#/components/parameters/PolicyPreviewStamp"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyUpdateRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyPreviewed"
+        "400":
+          $ref: "#/components/responses/PolicyPreviewBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyPreviewForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/PolicyPreviewConflict"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "412":
+          $ref: "#/components/responses/PolicyPreviewPreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PolicyPreviewPayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PolicyPreviewPreconditionRequired"
+        "503":
+          $ref: "#/components/responses/PolicyPreviewUnavailable"
+
+  /admin/users/{id}/policy/preview:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/UserId"
+    post:
+      operationId: adminPreviewUserPolicy
+      tags:
+        - Admin - Policies
+      summary: Preview a change of a user's policy document (admin)
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later. As
+        `adminPreviewServerPolicy`, for the user: what
+        `adminUpdateUserPolicy` would do for that user. A user that does not
+        exist, or none of whose settings the caller may change - also one
+        who holds a server role the caller does not hold -, answers `404`
+        with the message of `adminGetUser` for a missing user.
+      parameters:
+        - $ref: "#/components/parameters/PolicyIfMatch"
+        - $ref: "#/components/parameters/PaginationOffset"
+        - $ref: "#/components/parameters/PaginationLimit"
+        - $ref: "#/components/parameters/PolicyPreviewFilter"
+        - $ref: "#/components/parameters/PolicyPreviewStamp"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyUpdateRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/PolicyPreviewed"
+        "400":
+          $ref: "#/components/responses/PolicyPreviewBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/PolicyPreviewForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/PolicyPreviewConflict"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "412":
+          $ref: "#/components/responses/PolicyPreviewPreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PolicyPreviewPayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PolicyPreviewPreconditionRequired"
+        "503":
+          $ref: "#/components/responses/PolicyPreviewUnavailable"
 
   /admin/policy-registry:
     parameters:
@@ -4125,6 +4302,35 @@ components:
         type: string
         example: '"17"'
 
+    PolicyPreviewFilter:
+      name: filter
+      in: query
+      required: false
+      description: |
+        `flagged`: the rows of the warnings, one for each warning and user,
+        instead of the rows of the changed values. Any other value answers
+        `400`.
+      schema:
+        type: string
+        enum:
+          - flagged
+
+    PolicyPreviewStamp:
+      name: stamp
+      in: query
+      required: false
+      description: |
+        From the second page of a preview on: the `stamp` of the page
+        before, exactly as the preview gave it; treat it as an opaque
+        string. A page asked after other policies or the users and
+        groups changed answers `409` with the outcome `restart`; a page
+        asked after this document changed answers `412` with `stale`, as
+        the `If-Match` decides first. A value of another form answers
+        `400`.
+      schema:
+        type: string
+        example: "4.57.12"
+
     AlertId:
       name: id
       in: path
@@ -4608,6 +4814,123 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+
+    # --- Policy previews (Server 20.0.0 and later) ---
+    PolicyPreviewed:
+      description: |
+        The preview (outcome `previewed`): what the change would do, and
+        one page of rows. No `ETag` header. A page shortened to the size
+        the server answers carries a `too_large` error in `errors` that
+        says where the next page starts.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyPreviewReply"
+
+    PolicyPreviewBadRequest:
+      description: |
+        The body, `If-Match` or a query parameter is refused
+        (`invalid_request`), or the change would be refused for a setting
+        or a value (`setting_not_writable`, `not_applicable`,
+        `invalid_value`, `remove_only`, `invalid_relation`).
+        `error.policy` is the preview reply with the outcome `refused`, its
+        `errors` naming each.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyPreviewErrorResponse"
+          example:
+            error:
+              code: 400
+              message: "The value must be at least 600."
+              policy:
+                outcome: refused
+                revision: 4
+                errors:
+                  - setting: session.idle_timeout
+                    code: invalid_value
+                    message: "The value must be at least 600."
+
+    PolicyPreviewForbidden:
+      description: |
+        Not an admin-scoped session, or a mirror server (no
+        `error.policy`); or the change would be refused: the caller may not
+        change a setting it names (`forbidden`), it would leave no server
+        administrator able to sign in to the Server Manager (`lockout`), or
+        it would leave an approval that nobody can give
+        (`approval_unreachable`). `error.policy` is the preview reply with
+        the outcome `refused`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyPreviewErrorResponse"
+
+    PolicyPreviewConflict:
+      description: |
+        The outcome `restart`: other policies, or the users and groups,
+        changed since the page whose `stamp` was sent (a change of this
+        document answers `412`); `error.policy` carries the new `stamp` and
+        no errors. Ask again from the first page. Or the outcome `refused`
+        with `too_large`: the change would make the stored policies larger
+        than the server holds, or the preview would be larger than the
+        server answers.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyPreviewErrorResponse"
+          example:
+            error:
+              code: 409
+              message: "The policies or the directory changed since the first page of this preview: ask for it again from the first page."
+              policy:
+                outcome: restart
+                revision: 4
+                errors: []
+                stamp: "4.58.12"
+
+    PolicyPreviewPreconditionFailed:
+      description: |
+        The document changed since the revision in `If-Match`:
+        `error.policy` is the preview reply with the outcome `refused`, the
+        code `stale` and the current revision, and the `ETag` header carries
+        that revision. Unlike the change's `412` it carries no document:
+        read the document again.
+      headers:
+        ETag:
+          $ref: "#/components/headers/PolicyETag"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyPreviewErrorResponse"
+
+    PolicyPreviewPayloadTooLarge:
+      description: |
+        The body is larger than 64 KiB (`invalid_request`), answered as a
+        regular JSON error. A body above 1 MB is refused earlier, see
+        `PayloadTooLarge`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyPreviewErrorResponse"
+
+    PolicyPreviewPreconditionRequired:
+      description: |
+        No `If-Match`, or `If-Match: *` (`invalid_request`). A preview names
+        the revision the change would be made against, as the change does.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyPreviewErrorResponse"
+
+    PolicyPreviewUnavailable:
+      description: |
+        A directory synchronisation (Active Directory or Azure AD) is
+        running, so the users and groups the preview needs cannot be looked
+        up now (`directory_busy`). The same request may succeed later.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyPreviewErrorResponse"
 
   # ---------------------------------------------------------------------------
   # Schemas
@@ -7491,7 +7814,8 @@ components:
             `invalid_relation` (400); `forbidden` (403; for the request as a
             whole at a group or user, 404), `lockout`,
             `approval_unreachable` (403); `too_large` (409; in a `200` read:
-            the effective view was shortened); `directory_busy`,
+            the effective view was shortened, in a `200` preview the page);
+            `stale` (412, a preview only); `directory_busy`,
             `audit_unavailable` (503); `save_failed` (500). Treat a code you
             do not know by the HTTP status.
         message:
@@ -7669,6 +7993,403 @@ components:
               value: 1800
           opaque: []
         errors: []
+
+    PolicyPreviewErrorResponse:
+      type: object
+      description: |
+        The standard error envelope of a refused preview (Server 20.0.0 and
+        later): `error.policy` is the preview reply. `401`, `404`, `405`,
+        `411`, the `403` of a session without the admin scope or of a mirror
+        server, and the server's general `413` carry the envelope without
+        it.
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              description: The HTTP status
+            message:
+              type: string
+              description: |
+                The message of the first error, or for the outcome `restart`
+                a sentence of its own; match `policy.outcome` and
+                `policy.errors[].code`, never the message
+            policy:
+              $ref: "#/components/schemas/PolicyPreviewReply"
+
+    PolicyPreviewWarning:
+      type: string
+      description: |
+        A warning of a preview, in the order a preview lists them - the
+        users left without a way to sign in first. `sign_in_lost`: an
+        administrator who can sign in to the Server Manager could not after
+        the change, while another still could. `methods_empty`,
+        `network_empty`, `platforms_empty`: the user's
+        `auth.methods.allowed`, `auth.network.allowed` or
+        `session.platforms.allowed` becomes an empty set; a set that was
+        already empty raises none of them. `second_factor_empty`: after the
+        change a second factor is required of the user while
+        `auth.second_factor.methods` is an empty set, which was not so
+        before - whether the change brings the requirement or the empty set.
+        `ages_crossed_new`, `ages_crossed_already`: the user's minimum age
+        of the account password or of the database master password is above
+        its maximum age, newly or as before (the values of the policy
+        documents only). `conflict_created`, `conflict_removed`: the user's
+        groups come to disagree on a setting that takes one value, or stop
+        to. A warning is looked for only where the change changes a setting
+        it concerns - `sign_in_lost` where it changes a setting the Server
+        Manager's sign-in checks -, and none refuses the change.
+      enum:
+        - sign_in_lost
+        - methods_empty
+        - network_empty
+        - platforms_empty
+        - second_factor_empty
+        - ages_crossed_new
+        - ages_crossed_already
+        - conflict_created
+        - conflict_removed
+
+    PolicyPreviewSide:
+      type: object
+      description: |
+        A user's value of one setting before or after the change, resolved
+        over the user's whole chain.
+      required:
+        - state
+        - source
+        - locked
+      properties:
+        state:
+          type: string
+          enum:
+            - not_set
+            - default
+            - enforced
+          description: The state of the value that applies
+        value:
+          $ref: "#/components/schemas/PolicyValue"
+        source:
+          $ref: "#/components/schemas/PolicySource"
+        locked:
+          type: boolean
+          description: |
+            A level of the user's chain enforces the setting - the user's
+            own level included, unlike `locked` in the effective view
+      example:
+        state: default
+        value: 3600
+        source:
+          type: server
+        locked: false
+
+    PolicyPreviewTransition:
+      type: object
+      description: |
+        One change of a value or a lock, and how many users the caller may
+        read meet it (`0` on a `databases` or `server` line). A side's
+        `source` `{"type": "user"}` without an `id` is the user's own
+        document, whichever user it is.
+      required:
+        - before
+        - after
+        - users
+      properties:
+        before:
+          $ref: "#/components/schemas/PolicyPreviewSide"
+        after:
+          $ref: "#/components/schemas/PolicyPreviewSide"
+        users:
+          type: integer
+
+    PolicyPreviewSetting:
+      type: object
+      description: |
+        A setting the change would change - one the body names with what the
+        document already holds is left out -, and what it reaches: `users`,
+        resolved for each user the change reaches; `databases`, a setting of
+        the data side changed in the server's document, one line for every
+        database; `server`, a setting set for the server as a whole, one
+        line.
+      required:
+        - setting
+        - reach
+        - applied
+        - resolved
+        - source_only
+        - transitions
+      properties:
+        setting:
+          type: string
+        reach:
+          type: string
+          enum:
+            - users
+            - databases
+            - server
+        applied:
+          type: boolean
+          description: Whether this server itself enforces the setting
+        resolved:
+          type: boolean
+          description: |
+            `false` for a setting this server cannot resolve; it then has
+            no transitions
+        source_only:
+          type: integer
+          description: |
+            The users whose value and lock stay while the level the value
+            comes from, or its state, changes: counted, not listed
+        transitions:
+          type: array
+          description: Empty where nobody's value or lock changes
+          items:
+            $ref: "#/components/schemas/PolicyPreviewTransition"
+
+    PolicyPreviewConflict:
+      type: object
+      description: |
+        A setting on which the change makes the groups of some users
+        disagree, or stop disagreeing.
+      required:
+        - setting
+        - groups
+        - created
+        - removed
+      properties:
+        setting:
+          type: string
+        groups:
+          type: array
+          description: |
+            The groups whose values disagree - after the change, or before it
+            where the change ends the disagreement - in ascending order
+          items:
+            type: string
+        created:
+          type: integer
+          description: For how many users the disagreement starts
+        removed:
+          type: integer
+          description: For how many users it ends
+
+    PolicyPreviewRow:
+      type: object
+      description: |
+        One row of a page. With the default filter: a setting and a user
+        whose value or lock changes, `transition` the index into the
+        `transitions` of the setting's `users` entry. With `filter=flagged`:
+        a warning and a user, `setting` the setting concerned (`""` for
+        `sign_in_lost`, whose row also has `clause`).
+      required:
+        - user
+        - disabled
+        - setting
+        - warnings
+      properties:
+        user:
+          type: string
+          description: The user's id
+        disabled:
+          type: boolean
+          description: The account is disabled
+        setting:
+          type: string
+        transition:
+          type: integer
+        warning:
+          $ref: "#/components/schemas/PolicyPreviewWarning"
+        clause:
+          type: string
+          enum:
+            - disabled
+            - method
+            - second_factor
+            - network
+            - version
+          description: |
+            `sign_in_lost` only: the first rule of the Server Manager's
+            sign-in the administrator fails after the change
+        warnings:
+          type: array
+          description: Every warning the user meets, in the order of the warnings
+          items:
+            $ref: "#/components/schemas/PolicyPreviewWarning"
+
+    PolicyPreview:
+      type: object
+      description: |
+        The summary of a preview, the same on every page of one `stamp`, and
+        one page of rows. Users the caller may not read are counted in
+        `hidden` alone: no other count, transition, warning, conflict or
+        row includes them.
+      required:
+        - unchanged
+        - settings
+        - warnings
+        - conflicts
+        - users
+        - disabled
+        - hidden
+        - filter
+        - offset
+        - limit
+        - total
+        - rows
+      properties:
+        unchanged:
+          type: boolean
+          description: |
+            The change names only what the document already holds; every
+            list is then empty and every count `0`
+        settings:
+          type: array
+          description: |
+            Each setting the change would change, in the order of the
+            setting ids
+          items:
+            $ref: "#/components/schemas/PolicyPreviewSetting"
+        warnings:
+          type: object
+          description: By warning, the number of its rows
+          additionalProperties:
+            type: integer
+        conflicts:
+          type: array
+          description: In the order of the setting ids
+          items:
+            $ref: "#/components/schemas/PolicyPreviewConflict"
+        users:
+          type: integer
+          description: |
+            The users the caller may read who get a different value or
+            lock, or a warning
+        disabled:
+          type: integer
+          description: How many of `users` are disabled
+        hidden:
+          type: integer
+          description: |
+            The users the caller may not read who get a different value or
+            lock, or a warning: counted, never named
+        filter:
+          type: string
+          enum:
+            - changes
+            - flagged
+        offset:
+          type: integer
+          description: The offset as applied
+        limit:
+          type: integer
+          description: The limit as applied
+        total:
+          type: integer
+          description: The rows of the filter, on all pages together
+        rows:
+          type: array
+          description: |
+            With the default filter in the order of the setting ids and then
+            of the user ids; with `filter=flagged` in the order of the
+            warnings, then of the setting ids, then of the user ids
+          items:
+            $ref: "#/components/schemas/PolicyPreviewRow"
+
+    PolicyPreviewReply:
+      type: object
+      description: |
+        The answer of a preview: the body of a `200` (outcome `previewed`),
+        and `error.policy` of a refused preview (`refused`, or `restart`
+        with a `409`). Written compact.
+      required:
+        - outcome
+        - revision
+        - errors
+      properties:
+        outcome:
+          type: string
+          enum:
+            - previewed
+            - refused
+            - restart
+        revision:
+          type: integer
+          format: int64
+          description: |
+            The document's current revision; `0` where the preview was
+            refused before the document was read
+        errors:
+          type: array
+          description: |
+            The reasons of a refusal; in a `200` empty, or one `too_large`
+            error where the page was shortened
+          items:
+            $ref: "#/components/schemas/PolicyError"
+        stamp:
+          type: string
+          description: |
+            With `previewed` and `restart`: the state the preview describes;
+            send it back as the query parameter `stamp` for a further page
+        preview:
+          $ref: "#/components/schemas/PolicyPreview"
+      example:
+        outcome: previewed
+        revision: 4
+        errors: []
+        stamp: "4.57.12"
+        preview:
+          unchanged: false
+          settings:
+            - setting: session.idle_timeout
+              reach: users
+              applied: true
+              resolved: true
+              source_only: 0
+              transitions:
+                - before:
+                    state: default
+                    value: 3600
+                    source:
+                      type: server
+                    locked: false
+                  after:
+                    state: enforced
+                    value: 900
+                    source:
+                      type: group
+                      id: FEAE7AC9-58D1-4A76-82A6-2C7DB135CFDD
+                    locked: true
+                  users: 2
+          warnings:
+            sign_in_lost: 0
+            methods_empty: 0
+            network_empty: 0
+            platforms_empty: 0
+            second_factor_empty: 0
+            ages_crossed_new: 0
+            ages_crossed_already: 0
+            conflict_created: 0
+            conflict_removed: 0
+          conflicts: []
+          users: 2
+          disabled: 1
+          hidden: 0
+          filter: changes
+          offset: 0
+          limit: 100
+          total: 2
+          rows:
+            - user: 3D1C91F6-754D-427E-9D76-8CC20E8C326E
+              disabled: false
+              setting: session.idle_timeout
+              transition: 0
+              warnings: []
+            - user: 8B0E5A21-1F3C-4D7E-9A6B-2C4D6E8F0A1B
+              disabled: true
+              setting: session.idle_timeout
+              transition: 0
+              warnings: []
 
     PolicySettingRow:
       type: object

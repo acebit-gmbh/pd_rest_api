@@ -31,7 +31,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - the server's **Allow API tokens** and **API tokens: maximum lifetime** policies are checked on every use of a long-lived API token: a token they end gets `401` like a revoked one, and a new token's expiry is cut to the maximum lifetime
 - REST sessions end after the inactivity period of the server's **Disconnect after inactivity** policy, 60 minutes by default, instead of a fixed 10 minutes
 - `two_factor_mode` reads and writes the user's own second-factor policy entries; a write that carries it can answer `403` or `409`
-- the server's, a group's and a user's policies can be read and changed in the admin scope: `GET` and `PATCH` on `/admin/server/policy`, `/admin/groups/{id}/policy` and `/admin/users/{id}/policy` with `ETag` / `If-Match` and the new statuses `412`, `428` and `503`, `GET /admin/policy-registry` and `GET /admin/policy-conflicts`; an error the policies decide carries the policy reply as `error.policy`
+- the server's, a group's and a user's policies can be read and changed in the admin scope: `GET` and `PATCH` on `/admin/server/policy`, `/admin/groups/{id}/policy` and `/admin/users/{id}/policy` with `ETag` / `If-Match` and the new statuses `412`, `428` and `503`, `GET /admin/policy-registry` and `GET /admin/policy-conflicts`; an error the policies decide carries the policy reply as `error.policy`; a change can be previewed with `POST` on `/admin/server/policy/preview`, `/admin/groups/{id}/policy/preview` and `/admin/users/{id}/policy/preview`, which changes nothing and is not recorded
 - a successful client-scope sign-in (`POST /auth/login`, `POST /auth/webauthn/complete`) also carries `policy`, the signed-in user's client policy bundle, after its other members; `GET /me/policy` returns the user's bundle in every session
 - `open_uuid` and `approve_uuid` are optional in the secret representation
 - `include_totp: false` on a shared secret is applied: the recipient no longer gets the entry's one-time code
@@ -511,6 +511,19 @@ The server's policies -- the settings of the Server Manager's *Policies* page an
 See [Policies](api-reference/policies.md).
 
 **Client guidance:** read before you write and send the read's `ETag` back in `If-Match`. On `412`, show the current values from `error.policy.document` and let the user decide again; never repeat the change with the new revision unseen. When the answer to a change is lost, read the document again. Match `error.policy.errors[].code` and the HTTP status, never the message, and treat a code you do not know by its status.
+
+#### Preview of a Policy Change
+
+**`POST /admin/server/policy/preview`**, **`POST /admin/groups/{id}/policy/preview`** and **`POST /admin/users/{id}/policy/preview`** show what a change of the level's policy document would do, without making it -- what the Server Manager shows before it saves a policy:
+
+- **Request.** The `If-Match` header and the body of the matching `PATCH`; in the query `offset`, `limit` (`100` by default, at most `1000`), `filter=flagged` and, from the second page on, the `stamp` of the page before.
+- **Answer.** `200` with the outcome `previewed`: for each setting the change would change, its transitions -- the state, value, source and lock before and after, with how many users meet each --; the warnings: an administrator who would lose the Server Manager sign-in, users whose allowed sign-in methods, network addresses or client platforms become empty or whose required second factor is left without a method, a minimum password age above the maximum, groups that come to disagree or stop disagreeing; and a page of rows that name the users by id, disabled users marked. Users the caller may not read are counted in `hidden`, never named. Every page carries the whole summary and a `stamp`.
+- **Refusals.** Everything the change would be refused for, with the status the change would get; a stale `If-Match` answers `412` with the code `stale` and the current revision, without the document; a further page asked after this document changed answers `412` `stale` as well, and one asked after other policies or the users and groups changed answers `409` with the outcome `restart`.
+- **Records.** A preview changes nothing and is not recorded in the audit trail, whether it is answered or refused.
+
+See [Preview a Change](api-reference/policies.md#preview-a-change).
+
+**Client guidance:** preview with the `If-Match` and the body you are about to send, show the warnings before the changed values, and send the `PATCH` once the user confirms. The preview reserves nothing: the change can still answer `412`, or be refused.
 
 #### `403` / `4032` When the Licensed Number of Users Is Reached (Behavior Change)
 
