@@ -2091,9 +2091,13 @@ paths:
         way to sign in first - and one page of rows that name the users by
         id. It is checked as the change would be - the same rights,
         settings, values and refusals, each with the status the change would
-        get - and it is never recorded in the audit trail, whether it is
-        answered or refused. Users the caller may not read are counted in
-        `hidden`, never named. Every page carries the whole summary and a
+        get. Users the caller may not read are counted in `hidden`, never
+        named. A preview whose `hidden` is above 0 is recorded in the
+        audit trail - the account, the level, the change with the values
+        before and after, the count and the page - and is refused with
+        `503` and `audit_unavailable` where the audit trail cannot record
+        it; every other preview, answered or refused, is not recorded.
+        Every page carries the whole summary and a
         `stamp`; send the stamp back with the next page and the same
         `If-Match`. That page is checked as the change would be first, so it
         answers `412` with the code `stale` where this document changed in
@@ -4924,9 +4928,13 @@ components:
 
     PolicyPreviewUnavailable:
       description: |
-        A directory synchronisation (Active Directory or Azure AD) is
+        Nothing was changed, and the same request may succeed later: a
+        directory synchronisation (Active Directory or Azure AD) is
         running, so the users and groups the preview needs cannot be looked
-        up now (`directory_busy`). The same request may succeed later.
+        up now (`directory_busy`), or the audit trail cannot record the
+        preview at the moment (`audit_unavailable`): a preview that counts
+        users the caller may not read is recorded, and while the audit
+        trail cannot record at all, every preview is refused so.
       content:
         application/json:
           schema:
@@ -8272,7 +8280,8 @@ components:
           type: integer
           description: |
             The users the caller may not read who get a different value or
-            lock, or a warning: counted, never named
+            lock, or a warning: counted, never named. A preview whose
+            `hidden` is above 0 is recorded in the audit trail
         filter:
           type: string
           enum:

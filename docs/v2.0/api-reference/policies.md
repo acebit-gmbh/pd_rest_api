@@ -377,7 +377,7 @@ POST /v2.0/admin/users/{id}/policy/preview
 
 Shows what a change of the level's policy document would do, without making it: which users would get a different value, or a different lock, for which setting, and the warnings the Server Manager shows before it saves a policy -- the users who would be left without a way to sign in first. The Server Manager asks for this preview before every policy save and shows it wherever a user is affected or a warning is found.
 
-A preview takes the request of the matching `PATCH` -- the same `If-Match` header and the same body (see [Update Server Policy](#update-server-policy)) -- and is checked as that change would be: the same rights, the same settings and values and the same refusals, each answered with the status the change would get (see [Preview Refusals](#preview-refusals)). Nothing is changed and nothing is recorded. The answer describes the policies and the users as they are at that moment; it reserves nothing, and the change itself is checked again when it is sent.
+A preview takes the request of the matching `PATCH` -- the same `If-Match` header and the same body (see [Update Server Policy](#update-server-policy)) -- and is checked as that change would be: the same rights, the same settings and values and the same refusals, each answered with the status the change would get (see [Preview Refusals](#preview-refusals)). Nothing is changed. The answer describes the policies and the users as they are at that moment; it reserves nothing, and the change itself is checked again when it is sent.
 
 Each user's value is resolved before and after the change from the server's document, the documents of the user's groups and the user's own document, as the [effective view](#effective-view) resolves it for a user.
 
@@ -482,7 +482,7 @@ The body of the change, read in the same way: exactly the member `set`, naming a
 | `preview.total` | integer | The rows of the filter, on all pages together |
 | `preview.rows` | array | The rows of this page (see [Rows](#rows)) |
 
-**Users the caller may not read.** A preview names only the users whose policies the caller may read (see [Who May Read and Change](#who-may-read-and-change)). The others are counted in `hidden`, never named, and no other count, transition, warning, conflict or row includes them -- so that, for example, the built-in administrator is only counted for every other caller, and super-administrators for a caller who is not one. The preview still judges them: a change that would leave no server administrator able to sign in is refused (`lockout`).
+**Users the caller may not read.** A preview names only the users whose policies the caller may read (see [Who May Read and Change](#who-may-read-and-change)). The others are counted in `hidden`, never named, and no other count, transition, warning, conflict or row includes them -- so that, for example, the built-in administrator is only counted for every other caller, and super-administrators for a caller who is not one. The preview still judges them: a change that would leave no server administrator able to sign in is refused (`lockout`). A preview that counts any of them is recorded in the audit trail (see [Preview Refusals](#preview-refusals)).
 
 ### Changed Settings
 
@@ -567,9 +567,9 @@ A refused preview uses the standard [error envelope](overview.md#error-format), 
 | `412 Precondition Failed` | The document changed since the revision in `If-Match`: `error.policy.errors` carries the code `stale`, `error.policy.revision` the current revision and the response its `ETag`. It carries no document: read the document again |
 | `413 Payload Too Large` | The body is larger than 64 KiB |
 | `428 Precondition Required` | No `If-Match`, or `If-Match: *` |
-| `503 Service Unavailable` | A directory synchronisation (Active Directory or Azure AD) is running, so the users and groups the preview needs cannot be looked up now; try again when it has finished |
+| `503 Service Unavailable` | Nothing was changed, and the same request may succeed later: a directory synchronisation (Active Directory or Azure AD) is running, so the users and groups the preview needs cannot be looked up now (`directory_busy`; try again when it has finished), or the audit trail cannot record the preview at the moment (`audit_unavailable`, below) |
 
-A preview is not recorded in the audit trail, whether it is answered or refused, and raises no alert: it changes nothing.
+A preview that counts users the caller may not read (`hidden` above `0`) is recorded in the audit trail as a policy change preview, each page asked: with the account that asked for it -- for a long-lived API token, the token's account --, the REST API as the channel, the level, the change with the values before and after, `hidden` and the page (`stamp`, `offset` and `filter`). Where the audit trail cannot record such a preview, it is refused with `503` and the code `audit_unavailable`, without the count; while the audit trail cannot record at all, every preview is refused that way. Every other preview, answered or refused, is not recorded, and no preview raises an alert: it changes nothing.
 
 **Client guidance:** preview a change with the `If-Match` and the body you are about to send, show the warnings before the changed values, and send the `PATCH` only when the user confirms. The preview reserves nothing: the change can still answer `412`, or be refused, when the policies or the users changed in between.
 
@@ -795,7 +795,7 @@ Every answer of the document routes that the policies decide carries one reply o
 | `too_large` | `409` | The stored policies would be larger than the server holds, or a preview larger than the server answers. In a `200` read: the effective view was shortened; in a `200` preview: the page was shortened |
 | `stale` | `412` | A preview only: the document changed since the revision in `If-Match` |
 | `directory_busy` | `503` | A directory synchronisation is running; try again when it has finished |
-| `audit_unavailable` | `503` | The audit trail cannot record the change; nothing was saved |
+| `audit_unavailable` | `503` | The audit trail cannot record the change, or the preview; nothing was saved |
 | `save_failed` | `500` | The change could not be saved; nothing was changed |
 
 A refusal names every error at once. When its errors have different statuses, the answer is `403` if any is, else `400`, else the others in the order `409`, `503`, `500`. Treat a code you do not know by its status.
@@ -830,4 +830,4 @@ The answers the policies decide -- `400`, a `403` for a policy refusal, `409`, `
 - A mirror server answers every `PATCH`, and every preview, that carries a bearer token with `403` before the token is examined, as it does for every write (see [Mirror servers are read-only](overview.md#http-status-codes)).
 
 !!! note "What is recorded"
-    Every saved change is recorded in the audit trail as a policy change, with the values before and after, the account that made it -- for a long-lived API token, the token's account -- and the REST API as the channel. So is every change the server examines and refuses -- for its body, a body that could not be read included, its `If-Match`, its settings and values, or the caller's rights, a group or user that does not exist included -- and a change that could not be saved. A request refused before its policy is examined -- without a valid admin-scoped session, by a mirror server, or for a method the path does not take -- is not recorded as a policy change; neither is a change answered `412`, one that changes nothing, or a read. A preview is never recorded, whether it is answered or refused: it changes nothing.
+    Every saved change is recorded in the audit trail as a policy change, with the values before and after, the account that made it -- for a long-lived API token, the token's account -- and the REST API as the channel. So is every change the server examines and refuses -- for its body, a body that could not be read included, its `If-Match`, its settings and values, or the caller's rights, a group or user that does not exist included -- and a change that could not be saved. A request refused before its policy is examined -- without a valid admin-scoped session, by a mirror server, or for a method the path does not take -- is not recorded as a policy change; neither is a change answered `412`, one that changes nothing, or a read. A preview is recorded, as a policy change preview, only where it counts users the caller may not read (see [Preview Refusals](#preview-refusals)); every other preview, answered or refused, is not: it changes nothing.
