@@ -170,7 +170,7 @@ The HTTP client library handles the Negotiate handshake automatically:
 
 !!! warning "Prerequisites"
     - The server must allow **Integrated Windows Authentication**: from Server 20.0.0 the **Allowed sign-in methods** policy must include it (`iwa`) for the user; earlier servers enable it in the server options
-    - The PD user must have the **IWA** auth method enabled with SAM or UPN populated
+    - The PD user account must have `iwa` among the methods it may use (its [`auth_modes`](../api-reference/users.md#auth_modes-values)), as an Active Directory account has wherever the policies allow it, with SAM or UPN populated
     - The client must be in the same or a trusted Active Directory domain
     - No additional SPN registration is needed -- the standard `HOST` SPNs on the server's computer account cover HTTP Negotiate
     - See the [full reference](../api-reference/authentication.md#negotiate) for details

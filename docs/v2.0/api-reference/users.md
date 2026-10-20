@@ -15,7 +15,8 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 |-------|------|:--------:|-------------|
 | `id` | string (UUID) | No | Unique identifier (server-generated, ignored on input) |
 | `name` | string | Yes | Username |
-| `auth_modes` | array of strings | Yes | Allowed authentication methods (see values below) |
+| `auth_modes` | array of strings | Yes | The sign-in methods the user may use (see values below). From Server 20.0.0 the methods the server's policies allow the user; writing it sets the account type and the user's own policy entry (see [`account_type` Values](#account_type-values)). |
+| `account_type` | string | No | *Server 20.0.0 and later.* The account type: `password_depot`, `ad`, `azure_ad` or `oidc` (see values below). A value sent is ignored; writing `auth_modes` sets the type. |
 | `display_name` | string | Yes | Display name |
 | `department` | string | Yes | Department |
 | `email` | string | Yes | Email address. **Required** when the user's effective 2FA mode is `email` (see `two_factor_mode` below). |
@@ -42,6 +43,24 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | `"azure"` | Azure AD (deprecated -- use `oidc` instead) |
 | `"oidc"` | OpenID Connect |
 | `"webauthn"` | WebAuthn / FIDO2 passkeys |
+
+### `account_type` Values
+
+*Server 20.0.0 and later.* The directory the account belongs to. Each type has its usual sign-in methods:
+
+| Value | Account | Usual methods |
+|-------|---------|---------------|
+| `"password_depot"` | Password Depot account | `standard`, `webauthn` |
+| `"ad"` | Active Directory account | `sspi`, `iwa`, `webauthn` |
+| `"azure_ad"` | Azure AD account | `azure`, `webauthn` |
+| `"oidc"` | OpenID Connect account | `oidc`, `webauthn` |
+
+!!! note "Server policies (Server 20.0.0 and later)"
+    The sign-in methods are the server's **Allowed sign-in methods** policy (`auth.methods.allowed`), which the Server Manager shows on the user's *Policies* tab. A user without an entry of their own in it may use the usual methods of their account type, as far as the values set for the server and the user's groups allow; a user with an entry of their own may use the methods it names, as far as a value enforced for the server or a group allows. A server upgraded from an earlier version gave each user whose `auth_modes` were not the usual methods of their account type an entry of their own with exactly those methods.
+
+    Reading `auth_modes` answers the methods the user may use to sign in to a client (`POST /auth/login` and the passkey sign-in) under those values, the account type included, so it can name fewer methods than the user's own entry. `GET /me` answers the same for the caller.
+
+    Writing `auth_modes` sets the account type from the directory methods it names -- `sspi` makes an `ad` account, otherwise `azure` an `azure_ad` account, otherwise `oidc` an `oidc` account, otherwise it is a `password_depot` account (`iwa` and `webauthn` name no type) -- and sets the user's own entry to exactly the methods named where they differ from the usual methods of that type; where they are the usual methods, it removes the user's own entry. The write is recorded in the audit trail as a policy change. It answers `403` when the caller may not change the user's sign-in policies -- the caller must hold every server role the user holds -- or when it would leave no administrator able to sign in to the Server Manager, and `409` when the user's policies changed at the same time. On `PATCH` it is made after the whole request has been checked and before the account is changed, together with a `two_factor_mode` of the same request, so a refused write leaves the account and the user's policies as they were; on `POST` a refused write creates no user. The user's whole policy document, this entry included, can also be read and changed with [`GET` and `PATCH /v2.0/admin/users/{id}/policy`](policies.md#get-user-policy).
 
 ### `two_factor_mode` Values
 
@@ -110,6 +129,7 @@ The policies that apply to the user are not part of the profile: from Server 20.
     "id": "3D1C91F6-754D-427E-9D76-8CC20E8C326E",
     "name": "jdoe",
     "auth_modes": ["sspi", "iwa"],
+    "account_type": "ad",
     "display_name": "John Doe",
     "department": "Engineering",
     "email": "jdoe@example.com",
@@ -179,7 +199,7 @@ Updates a restricted set of profile fields on the caller's own account. Availabl
     - `department`
     - `phone`
 
-    Any other field in the request body (including `name`, `email`, `roles`, `member_of`, `auth_modes`, `two_factor_mode`, `disabled`, `sam`, `upn`, `dn`, etc.) causes `400 Bad Request`.
+    Any other field in the request body (including `name`, `email`, `roles`, `member_of`, `auth_modes`, `account_type`, `two_factor_mode`, `disabled`, `sam`, `upn`, `dn`, etc.) causes `400 Bad Request`.
 
     For password changes use [`POST /v2.0/me/password`](#change-own-password). For passkey management use the [`/me/passkeys/...`](#passkeys-webauthn) endpoints. Changes to username, email, roles, groups, AD binding, or 2FA settings remain admin-only via [`PATCH /v2.0/admin/users/{id}`](#update-user).
 
@@ -346,7 +366,7 @@ A refused password answers `400` with `error.code` `400`: `error.message` starts
 
 ## Client Endpoints
 
-These endpoints are available in both `client` and `admin` sessions. They return a compact representation suitable for user lookups (e.g., when assigning permissions or sharing secrets). No admin-specific fields (roles, auth_modes, AD attributes, group memberships) are included.
+These endpoints are available in both `client` and `admin` sessions. They return a compact representation suitable for user lookups (e.g., when assigning permissions or sharing secrets). No admin-specific fields (roles, auth_modes, account_type, AD attributes, group memberships) are included.
 
 ### Client User Object (Compact)
 
@@ -504,6 +524,7 @@ Returns a paginated list of all users on the server.
             "id": "9A6DBC50-B8FF-487F-964A-96858296B8F5",
             "name": "admin",
             "auth_modes": ["standard"],
+            "account_type": "password_depot",
             "display_name": "Administrator (built-in account)",
             "department": "R&D",
             "email": "admin@example.com",
@@ -523,6 +544,7 @@ Returns a paginated list of all users on the server.
             "id": "3D1C91F6-754D-427E-9D76-8CC20E8C326E",
             "name": "jdoe",
             "auth_modes": ["sspi", "iwa", "webauthn"],
+            "account_type": "ad",
             "display_name": "John Doe",
             "department": "Engineering",
             "email": "jdoe@example.com",
@@ -578,8 +600,8 @@ Creates a new user.
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
 | `name` | string | Yes | Username |
-| `new_password` | string | Conditional | Initial password (plaintext). **Required** when `auth_modes` contains `"standard"` (the default). Optional for users that will only authenticate via OIDC, SSPI, IWA, or WebAuthn. |
-| `auth_modes` | array of strings | No | Allowed authentication methods (default: `["standard"]`) |
+| `new_password` | string | Conditional | Initial password (plaintext). **Required** when the methods of `auth_modes` contain `"standard"`, as the usual methods of a `password_depot` account do when `auth_modes` is omitted. Optional for users that will only authenticate via OIDC, SSPI, IWA, or WebAuthn. |
+| `auth_modes` | array of strings | No | The sign-in methods (see [`account_type` Values](#account_type-values)). Omitted, the user is a `password_depot` account without an entry of its own (Server 20.0.0 and later; earlier servers default to `["standard"]`). |
 | `display_name` | string | No | Display name |
 | `department` | string | No | Department |
 | `email` | string | Conditional | Email address. **Required** if the effective 2FA mode for this user is `email` (see `two_factor_mode`). |
@@ -637,6 +659,7 @@ Creates a new user.
     "id": "56E4205C-0D50-47E9-90B8-B751EF19A165",
     "name": "jsmith",
     "auth_modes": ["standard"],
+    "account_type": "password_depot",
     "display_name": "Jane Smith",
     "department": "Engineering",
     "email": "jsmith@example.com",
@@ -662,8 +685,8 @@ Creates a new user.
 |--------|-------------|
 | `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, or a password that breaks the server's password rules (see [Password Rules](#password-rules)); no user is created then. |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | `error.code` `403`: the session is not admin-scoped, the account has neither the `server_admin` nor the `user_admin` role, or it may not set the requested `roles` (requires `server_admin`) or `member_of`. `error.code` `4032` (`PD_ERRCODE_LICENSE_LIMIT`): the server's licensed number of users is reached. From Server 20.0.0 also `error.code` `403` when the `two_factor_mode` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values)); no user is created then |
-| `409 Conflict` | A user with this username already exists, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` was written |
+| `403 Forbidden` | `error.code` `403`: the session is not admin-scoped, the account has neither the `server_admin` nor the `user_admin` role, or it may not set the requested `roles` (requires `server_admin`) or `member_of`. `error.code` `4032` (`PD_ERRCODE_LICENSE_LIMIT`): the server's licensed number of users is reached. From Server 20.0.0 also `error.code` `403` when the `two_factor_mode` or `auth_modes` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values) and [`account_type` Values](#account_type-values)); no user is created then |
+| `409 Conflict` | A user with this username already exists, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` or `auth_modes` was written |
 
 #### Example
 
@@ -709,6 +732,7 @@ Returns details of a specific user.
     "id": "3D1C91F6-754D-427E-9D76-8CC20E8C326E",
     "name": "jdoe",
     "auth_modes": ["sspi", "iwa", "webauthn"],
+    "account_type": "ad",
     "display_name": "John Doe",
     "department": "Engineering",
     "email": "jdoe@example.com",
@@ -791,6 +815,7 @@ Include only the fields you want to update.
     "id": "3D1C91F6-754D-427E-9D76-8CC20E8C326E",
     "name": "jdoe",
     "auth_modes": ["sspi", "iwa", "webauthn"],
+    "account_type": "ad",
     "display_name": "John A. Doe",
     "department": "R&D",
     "email": "jdoe@example.com",
@@ -817,9 +842,9 @@ Include only the fields you want to update.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions, or attempted to modify `roles` without `server_admin` role, or (Server 20.0.0 and later) the `two_factor_mode` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values)) |
+| `403 Forbidden` | Insufficient permissions, or attempted to modify `roles` without `server_admin` role, or (Server 20.0.0 and later) the `two_factor_mode` or `auth_modes` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values) and [`account_type` Values](#account_type-values)) |
 | `404 Not Found` | User or referenced group not found |
-| `409 Conflict` | Username conflict, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` was written |
+| `409 Conflict` | Username conflict, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` or `auth_modes` was written |
 
 #### Example
 
@@ -949,7 +974,7 @@ No response body.
 
 Endpoints to manage WebAuthn / FIDO2 passkeys for the current user (`/me/passkeys/...`) and -- for administrators -- to view and revoke any user's passkeys (`/admin/users/{id}/passkeys/...`).
 
-Passkeys can be used as a passwordless login method via the [`webauthn`](authentication.md#webauthn) auth flow. From Server 20.0.0 the server's **Allowed sign-in methods** policy must include *Passkeys (WebAuthn)* (`webauthn`) for the user (earlier servers: WebAuthn enabled in the server options), and the user must have the `webauthn` auth mode in their `auth_modes`.
+Passkeys can be used as a passwordless login method via the [`webauthn`](authentication.md#webauthn) auth flow. From Server 20.0.0 the server's **Allowed sign-in methods** policy must allow *Passkeys (WebAuthn)* (`webauthn`) for the user, so that `webauthn` is among the user's `auth_modes`, as it is for every account type wherever the policies allow it; earlier servers need WebAuthn enabled in the server options and the `webauthn` mode in the user's `auth_modes`.
 
 !!! note
     The public key material (`pk`) and signature counter internals are never exposed via the REST API -- the server uses them only for assertion verification.

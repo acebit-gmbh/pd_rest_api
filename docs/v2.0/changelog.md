@@ -31,6 +31,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - the server's **Allow API tokens** and **API tokens: maximum lifetime** policies are checked on every use of a long-lived API token: a token they end gets `401` like a revoked one, and a new token's expiry is cut to the maximum lifetime
 - REST sessions end after the inactivity period of the server's **Disconnect after inactivity** policy, 60 minutes by default, instead of a fixed 10 minutes
 - `two_factor_mode` reads and writes the user's own second-factor policy entries; a write that carries it can answer `403` or `409`
+- `auth_modes` answers the sign-in methods the server's policies allow the user; a write sets the account type and the user's own **Allowed sign-in methods** entry and can answer `403` or `409`; the new read-only `account_type` names the account type
 - the server's, a group's and a user's policies can be read and changed in the admin scope: `GET` and `PATCH` on `/admin/server/policy`, `/admin/groups/{id}/policy` and `/admin/users/{id}/policy` with `ETag` / `If-Match` and the new statuses `412`, `428` and `503`, `GET /admin/policy-registry` and `GET /admin/policy-conflicts`; an error the policies decide carries the policy reply as `error.policy`; a change can be previewed with `POST` on `/admin/server/policy/preview`, `/admin/groups/{id}/policy/preview` and `/admin/users/{id}/policy/preview`, which changes nothing and is recorded in the audit trail only where it counts users the caller may not read
 - a successful client-scope sign-in (`POST /auth/login`, `POST /auth/webauthn/complete`) also carries `policy`, the signed-in user's client policy bundle, after its other members; `GET /me/policy` returns the user's bundle in every session
 - `open_uuid` and `approve_uuid` are optional in the secret representation
@@ -183,16 +184,16 @@ Disabling an account does not revoke any of its tokens. They are refused while t
 
 #### Sign-In Methods Follow the Server and Account Settings (Behavior Change)
 
-`POST /v2.0/auth/login` honours the server's **Allowed sign-in methods** policy (`auth.methods.allowed`, set in the Server Manager under *Policies* for the server, a group or the user), in both `client` and `admin` scope, and checks that the account's `auth_modes` include the method (for `standard` that check is not new; its answer is). On a server upgraded from an earlier version the policy starts, enforced at server scope, with the methods its sign-in switches enabled.
+`POST /v2.0/auth/login` honours the server's **Allowed sign-in methods** policy (`auth.methods.allowed`, set in the Server Manager under *Policies* for the server, a group or the user), in both `client` and `admin` scope. A user without an entry of their own in it may use only the usual methods of their account type (see **`auth_modes` Is the User's Sign-In Method Policy** below); the methods the policy allows a user are that user's `auth_modes`. On a server upgraded from an earlier version the policy starts, enforced at server scope, with the methods its sign-in switches enabled, and each user whose `auth_modes` were not the usual methods of their account type gets an entry of their own with exactly those methods, so that every account keeps the methods it had.
 
-| `auth` | Policy entry | Answer when the value enforced at server scope leaves the method out | Answer when the account lacks the mode |
+| `auth` | Policy entry | Answer when the value enforced at server scope leaves the method out | Answer when the policy does not allow the method for the account |
 |--------|--------------|-----------------------------------------------------------------------|----------------------------------------|
 | omitted / `standard` | Standard sign-in (`standard`) | `401` "This method of authentication is not supported..." | `401` "Logon failure: unknown user name or bad password." |
 | `sspi` | Windows domain credentials (`sspi`) | `401` "This method of authentication is not supported..." | `401` "Logon failure: unknown user name or bad password." |
 | `azure` | Azure AD (`azure`) | `401` "This method of authentication is not supported..." | `401` "The server cannot find the user account specified." |
 | `oidc` | OpenID Connect (`oidc`) | `401` "This method of authentication is not supported..." | `401` "The server cannot find the user account specified." |
 
-The value enforced at server scope is checked first, before the user name, token or identity provider is looked at. These responses carry `error.code` `401`. `auth: "negotiate"` requires *Integrated Windows Authentication (SSO)* (`iwa`) in the policy and the `iwa` mode on the account. An account that lacks the mode, or that the policy does not allow the method, is answered as an account the server does not know; see **A Sign-In Method the Account May Not Use Is Answered Like an Unknown Account** below.
+The value enforced at server scope is checked first, before the user name, token or identity provider is looked at. These responses carry `error.code` `401`. `auth: "negotiate"` requires *Integrated Windows Authentication (SSO)* (`iwa`) among the methods the policy allows the account. An account the policy does not allow the method is answered as an account the server does not know; see **A Sign-In Method the Account May Not Use Is Answered Like an Unknown Account** below.
 
 Registering a passkey (`POST /me/passkeys/begin`) needs *Passkeys (WebAuthn)* (`webauthn`) in the policy that applies to the calling user; otherwise it answers `400` "This method of authentication is not supported...".
 
@@ -201,10 +202,7 @@ Registering a passkey (`POST /me/passkeys/begin`) needs *Passkeys (WebAuthn)* (`
 
 #### A Sign-In Method the Account May Not Use Is Answered Like an Unknown Account (Behavior Change)
 
-A sign-in with a method the account may not use is answered exactly as the same request is answered for an account the server does not know. This holds for `POST /v2.0/auth/login` and the passkey sign-in (`/auth/webauthn/begin` and `/auth/webauthn/complete`), in `client` and `admin` scope alike. An account may not use a method when:
-
-- the method is not among the account's `auth_modes`, or
-- the server's **Allowed sign-in methods** policy (`auth.methods.allowed`, set in the Server Manager under *Policies* for the server, a group or the user) does not allow the method for the account.
+A sign-in with a method the account may not use is answered exactly as the same request is answered for an account the server does not know. This holds for `POST /v2.0/auth/login` and the passkey sign-in (`/auth/webauthn/begin` and `/auth/webauthn/complete`), in `client` and `admin` scope alike. An account may not use a method when the server's **Allowed sign-in methods** policy (`auth.methods.allowed`, set in the Server Manager under *Policies* for the server, a group or the user) does not allow the method for the account, the usual methods of its account type included; the method is then not among the account's `auth_modes`.
 
 | Sign-in | Answer |
 |---------|--------|
@@ -214,12 +212,16 @@ A sign-in with a method the account may not use is answered exactly as the same 
 | `negotiate` | `401` "Windows authentication succeeded but no matching Password Depot user found for "DOMAIN\user"." -- the answer to a Windows identity no account carries; the name is the Windows account name |
 | passkey (`/auth/webauthn/begin`, `/auth/webauthn/complete`) | `401` "Authentication failed." -- the one answer to every refused passkey sign-in |
 
-Each answer carries `error.code` `401` and no sub-code. For `standard` and `sspi` the method is checked before the password is verified, and for a passkey before its signature is, so the refusal is never counted as a failed attempt of the account; like a wrong password, it counts towards the address's failed-login limit (`429`). The actual reason is recorded for administrators: the server log names the method the account's `auth_modes` leave out, or the policy setting and the scope that declares it, and so does the sign-in's audit record for `standard`, `sspi`, `azure` and `oidc`.
+Each answer carries `error.code` `401` and no sub-code. For `standard` and `sspi` the method is checked before the password is verified, and for a passkey before its signature is, so the refusal is never counted as a failed attempt of the account; like a wrong password, it counts towards the address's failed-login limit (`429`). The actual reason is recorded for administrators: the server log names the policy setting and the scope that declares it, or the account type whose usual methods leave the method out, and so does the sign-in's audit record, with every `auth` method and with a passkey.
 
-On `POST /v2.0/auth/login`, a method that the **Allowed sign-in methods** value enforced at server scope does not include is answered `401` "This method of authentication is not supported..." for every user name, `auth: "negotiate"` included (see the table in **Sign-In Methods Follow the Server and Account Settings**); such a value refuses the method to every account. When that value does not include passkey sign-in (`webauthn`), `/auth/webauthn/begin` answers `400` with the same message for every user name, before the user name is looked at, and this answer does not count towards the failed-login limit.
+On `POST /v2.0/auth/login`, a method that the **Allowed sign-in methods** value enforced at server scope does not include is answered `401` "This method of authentication is not supported..." for every user name, `auth: "negotiate"` included (see the table in **Sign-In Methods Follow the Server and Account Settings**); such a value refuses the method to every account. When that value does not include passkey sign-in (`webauthn`), `/auth/webauthn/begin` answers `400` with the same message for every user name, before the user name is looked at; this answer counts towards the failed-login limit (`429`), as the passkey sign-in's other refusals do.
 
 !!! warning "Behavior change for clients"
     A refused method and a wrong user name or password receive the same `401`. Show `error.message`, offer the user the other sign-in methods your client supports, and advise contacting the administrator when a method that should work keeps being refused. Do not retry automatically, and match the numeric code, never the message, which is localizable.
+
+#### Every Sign-In Recorded in the Audit Trail
+
+Every sign-in through the REST API is recorded in the server's audit trail, with every `auth` method, `negotiate` included, and with a passkey: a sign-in that the credential and the policies admit, before a second factor is asked, which is recorded on its own, and a refused one with the actual reason, which the answer does not name -- also where a value enforced at server scope refuses it before the account is looked up, and where `/auth/webauthn/begin` refuses the passkey sign-in with `401`, or with `400` while the value of **Allowed sign-in methods** enforced at server scope leaves out passkeys: that refusal comes before the request body is read, so it is recorded without an account and as a sign-in in `client` scope, and it counts towards the failed-login limit like the passkey sign-in's other refusals. A sign-in in `admin` scope is recorded as an administrator sign-in with every method, and a sign-in refused because the account may not use the `admin` scope is one refused sign-in. Not recorded as a sign-in: the `401` that asks for the next leg of the Negotiate handshake, a login request the server cannot use (`400`) -- a body that is not valid JSON, an invalid `client`, `trust_device` or `tfatoken` member, or a client platform other than the one `X-PD-Client` names -- and every other `400` of the passkey sign-in, a request it cannot use. The records are read with `GET /admin/audit`.
 
 #### OIDC Identities Matched Within Their Provider (Behavior Change)
 
@@ -296,7 +298,7 @@ See [Password Rules](api-reference/users.md#password-rules).
 
 The server takes the client's address from the connection at the start of every REST request, before authentication. Requests that carry no access token are therefore attributed to the address they come from:
 
-- **Audit:** in `GET /admin/audit`, these records carry the client address in `actor.ip`: the sign-in, two-factor and lockout records written while handling `POST /auth/login`, the alert records fired by a passkey sign-in (`POST /auth/webauthn/complete`), and the records for the anonymous `/shared/` page.
+- **Audit:** in `GET /admin/audit`, these records carry the client address in `actor.ip`: the sign-in, two-factor and lockout records written while handling `POST /auth/login`, the sign-in records of the passkey sign-in (`POST /auth/webauthn/begin` and `/auth/webauthn/complete`) and the alert records it fires, and the records for the anonymous `/shared/` page.
 - **IP lockout:** a wrong two-factor code on `POST /auth/login` (answered with `460`) counts towards the IP lockout for the client's address; a `tfatoken` the server does not accept does not. Once the limit is reached, further requests from that address are answered with `429` and a `Retry-After` header.
 - **Super-administrator cooldown:** when failed sign-ins to the built-in administrator account reach the number the server's lock-out policy (`auth.lockout.threshold`) sets, `standard` and `sspi` sign-ins to super-administrator accounts from that address are refused for an hour, also with the right password, with the `401` "Logon failure: unknown user name or bad password." that a wrong user name or password gets, and the account's count starts again; the built-in administrator account itself is never disabled. Other super-administrator accounts are disabled at that number like any other account; see **Client Platforms, Account Lock-Out and a Second Sign-In Follow the Server's Policies** below.
 - **Concurrent sessions:** the server's **Second sign-in of the same user** policy can refuse a second session. Then a REST sign-in is refused with `401` while the account has a client session over the classic protocol (for example the Windows client), also when it comes from that session's address: a REST sign-in is another client, never that session reconnecting. See **Client Platforms, Account Lock-Out and a Second Sign-In Follow the Server's Policies** below.
@@ -475,7 +477,7 @@ The server checks the whole request body before applying any of it. If one field
 
 - `400` for an unknown authentication mode, two-factor mode or role, or a value of the wrong JSON type
 - `403` from the `member_of` or `roles` permission checks
-- `403` and `409` from a `two_factor_mode` write (see **`two_factor_mode` Is the User's Second-Factor Policy** below)
+- `403` and `409` from a `two_factor_mode` or `auth_modes` write (see **`two_factor_mode` Is the User's Second-Factor Policy** and **`auth_modes` Is the User's Sign-In Method Policy** below); a request that carries both writes them together, so a refusal of either writes neither
 
 Like `POST /admin/users`, `PATCH` also answers `400` when the resulting `name` is empty, and `409` when another account already has that name. Both checks use the name the account would have after the request, even when the body does not contain `name`. Names are compared without regard to case, so a name held only by this account, in any letter case, is not a conflict. For all of these refusals `error.code` equals the HTTP status. Do not rely on the `error.message` text, which can be localized.
 
@@ -490,12 +492,31 @@ The user representation's `two_factor_mode` keeps its values and is the user's o
 | `totp`, `email`, `fido2` | **Preferred second factor** set to that method |
 
 - **Reading.** Every user representation that carries `two_factor_mode` derives it from those entries: `disabled` where the user's own **Require a second factor** is off, otherwise the user's own preferred method, otherwise `default`. A requirement set for the user, and the values set for the server or the user's groups, do not change the value read: it is the user's own setting, not the second factor a login asks.
-- **Writing.** In `POST /admin/users` and `PATCH /admin/users/{id}`, a method sets the user's **Preferred second factor** and removes the user's own "not required", never a requirement set for the user; `disabled` sets the user's **Require a second factor** to off; `default` removes the user's preference and the user's own "not required". A write is recorded in the audit trail as a policy change. On `PATCH` it is made after the whole request has been checked and before the account is changed, so a refused write leaves the account as it was; on `POST`, `default` writes nothing, and a refused write creates no user.
+- **Writing.** In `POST /admin/users` and `PATCH /admin/users/{id}`, a method sets the user's **Preferred second factor** and removes the user's own "not required", never a requirement set for the user; `disabled` sets the user's **Require a second factor** to off; `default` removes the user's preference and the user's own "not required". A write is recorded in the audit trail as a policy change. On `PATCH` it is made after the whole request has been checked and before the account is changed, together with an `auth_modes` of the same request, so a refused write leaves the account and the user's policies as they were; on `POST`, `default` writes nothing, and a refused write creates no user.
 - **New answers.** `403` when the caller may not change the user's sign-in policies -- the caller must hold every server role the user holds -- or when the change would leave no administrator able to sign in to the Server Manager; `409` when the user's policies changed at the same time.
 - **What applies.** The values set for the server and the user's groups apply beside the user's own entries, and an enforced one wins: `disabled` does not lift a second factor enforced for the user, and the user's preferred method gives way to an enforced one.
 
 !!! warning "Behavior change for clients"
     Send `two_factor_mode` only when you mean to change it, and handle `403` and `409` on a user write that carries it. Do not read it as the second factor the server asks at login.
+
+#### `auth_modes` Is the User's Sign-In Method Policy (Behavior Change)
+
+The user representation's `auth_modes` keeps its values and answers the sign-in methods the server's **Allowed sign-in methods** policy (`auth.methods.allowed`) allows the user, which the Server Manager shows on the user's *Policies* tab (see **Sign-In Methods Follow the Server and Account Settings** above). Beside it the new read-only `account_type` names the account type:
+
+| `account_type` | Account | Usual methods |
+|----------------|---------|---------------|
+| `password_depot` | Password Depot account | `standard`, `webauthn` |
+| `ad` | Active Directory account | `sspi`, `iwa`, `webauthn` |
+| `azure_ad` | Azure AD account | `azure`, `webauthn` |
+| `oidc` | OpenID Connect account | `oidc`, `webauthn` |
+
+- **What applies.** A user without an entry of their own in the policy may use the usual methods of their account type, as far as the values set for the server and the user's groups allow. A user with an entry of their own may use the methods it names, as far as a value enforced for the server or a group allows. A server upgraded from an earlier version gives each user whose `auth_modes` were not the usual methods of their account type such an entry with exactly those methods.
+- **Reading.** Every user representation that carries `auth_modes` answers the methods the user may use to sign in to a client under those values, the account type included; `GET /me` answers the same for the caller. It can name fewer methods than the user's own entry.
+- **Writing.** In `POST /admin/users` and `PATCH /admin/users/{id}`, `auth_modes` sets the account type from the directory methods it names -- `sspi` an `ad` account, otherwise `azure` an `azure_ad` account, otherwise `oidc` an `oidc` account, otherwise a `password_depot` account -- and sets the user's own entry to exactly the methods named where they differ from the usual methods of that type, else removes it. A write is recorded in the audit trail as a policy change. On `PATCH` it is made after the whole request has been checked and before the account is changed, together with a `two_factor_mode` of the same request, so a refused write leaves the account and the user's policies as they were; on `POST` a refused write creates no user, and a user created without `auth_modes` is a `password_depot` account without an entry of its own. `account_type` in a request body is ignored.
+- **New answers.** `403` when the caller may not change the user's sign-in policies -- the caller must hold every server role the user holds -- or when the change would leave no administrator able to sign in to the Server Manager; `409` when the user's policies changed at the same time.
+
+!!! warning "Behavior change for clients"
+    Send `auth_modes` only when you mean to change the user's sign-in methods, and handle `403` and `409` on a user write that carries it. Read `account_type`, not `auth_modes`, to tell which directory an account belongs to.
 
 #### Policies Read and Changed Over REST
 
