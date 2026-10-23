@@ -52,8 +52,8 @@ The value that applies to a user is resolved from the server's document, the doc
 |-------|------|-------------|
 | `scope` | object | The level: `{"type": "server"}`, `{"type": "group", "id": "<group id>"}` or `{"type": "user", "id": "<user id>"}` |
 | `revision` | integer | The document's revision; `0` while the level declares nothing |
-| `set` | object | The declarations this server can read, by setting id, ascending: each `{"state": "default" or "enforced", "value": <value>}` |
-| `opaque` | array of strings | Ids of declarations this server cannot read (a setting it does not know, or a value of a form it does not know). They are kept as they are and can only be removed (`not_set`) |
+| `set` | object | The declarations this server can read, by setting id, ascending: each `{"state": "default" or "enforced", "value": <value>}`, the value as stored (see [Values](#values)) |
+| `opaque` | array of strings | Ids of declarations this server cannot read: a setting it does not know or cannot set, or a declaration of a form it does not know. They are kept as they are and can only be removed (`not_set`) |
 
 The document shows only what the caller may change (see [Who May Read and Change](#who-may-read-and-change)); server administrators and security officers see the whole server document.
 
@@ -76,6 +76,8 @@ A value has the JSON form of the setting's `type` in the registry:
 | `principal_list` | array of strings, each `"u:<user id>"` or `"g:<group id>"`, each once, in ascending order |
 
 A number row has a range (`range_min`, `range_max`); where the row also has `unlimited`, that number means "no limit". Settings of the other types in the registry cannot be set through these endpoints (`setting_not_writable`).
+
+A declaration in `set` shows its value as stored, also a value that does not fit the setting, which another version or a manual edit of the policy file can leave: a value of another type, including `null` or an object, a number outside the range, an address list with an element that is no address, or a `set` or `principal_list` whose members are not each once in ascending order. Such a value has no effect -- the [effective view](#effective-view) lists it with the decision `invalid` -- and it can be replaced by a valid value or removed (`not_set`).
 
 ---
 
@@ -196,7 +198,7 @@ The body is a JSON object with exactly one member, `set`, which names at least o
 }
 ```
 
-The body is ordinary JSON: white space and every standard escape are accepted, and the settings may come in any order. A number must be an integer within plus or minus 2^53 (`1e3` reads as `1000`, `1.5` is refused). A member name given twice in one object, any member besides `set`, a change with a member besides `state` and `value`, a `set` value whose words are not each once in ascending order, and a body above 64 KiB are refused. The value of each setting is checked against the registry: its type, its range, its words and the levels at which it can be set.
+The body is ordinary JSON: white space and every standard escape are accepted, and the settings may come in any order. A number must be an integer within plus or minus 2^53 (`1e3` reads as `1000`, `1.5` is refused). A member name given twice in one object, any member besides `set`, a change with a member besides `state` and `value`, a value that is `null`, an object or an array of anything but strings, and a body above 64 KiB are refused. The value of each setting is checked against the registry: its type, its range, its words, the order of a `set` or `principal_list` (each member once, in ascending order of their UTF-8 bytes; the refusal names the member) and the levels at which it can be set.
 
 Some changes are refused for what they would cause, as in the Server Manager:
 
@@ -786,7 +788,7 @@ Every answer of the document routes that the policies decide carries one reply o
 | `invalid_request` | `400` | The request itself: the body, `If-Match`, the query parameter `view`. With `428` and `413` as well, for a missing `If-Match` and a body above 64 KiB |
 | `setting_not_writable` | `400` | The setting cannot be set by this server (not complete, retired, or of a type it cannot check) |
 | `not_applicable` | `400` | The setting cannot be set at this level |
-| `invalid_value` | `400` | The value does not fit the setting: its type, range or words, or a principal list that names a user or group that does not exist |
+| `invalid_value` | `400` | The value does not fit the setting: its type, range, words or order, or a principal list that names a user or group that does not exist |
 | `remove_only` | `400` | The setting is unknown to this server, or its stored declaration cannot be read; it can only be removed |
 | `invalid_relation` | `400` | The minimum age of an account password would be above its maximum age at the same level |
 | `forbidden` | `403` | The caller may not change this setting at this level; for the request as a whole (`"setting": ""`), may not read or change this document -- `404` for a group or a user |

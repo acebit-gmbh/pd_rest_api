@@ -7753,6 +7753,16 @@ components:
           items:
             type: string
 
+    PolicyStoredValue:
+      nullable: true
+      description: |
+        A value as a policy document stores it: the form of `PolicyValue`
+        where it fits the setting. A stored value that does not fit - another
+        type, `null`, an object, a number outside the range, a `set` or
+        `principal_list` whose members are not each once in ascending order
+        - is shown as stored; it has no effect (the effective view lists it
+        as `invalid`) and can be replaced or removed (`not_set`).
+
     PolicyDeclaration:
       type: object
       description: One declared setting of a policy document.
@@ -7770,7 +7780,7 @@ components:
             sets its own. `enforced`: a lower level can only make it
             stricter.
         value:
-          $ref: "#/components/schemas/PolicyValue"
+          $ref: "#/components/schemas/PolicyStoredValue"
 
     PolicyDocument:
       type: object
@@ -7899,7 +7909,7 @@ components:
             - default
             - enforced
         value:
-          $ref: "#/components/schemas/PolicyValue"
+          $ref: "#/components/schemas/PolicyStoredValue"
         decision:
           type: string
           enum:
@@ -7967,7 +7977,7 @@ components:
             - default
             - enforced
         value:
-          $ref: "#/components/schemas/PolicyValue"
+          $ref: "#/components/schemas/PolicyStoredValue"
 
     PolicyReply:
       type: object
