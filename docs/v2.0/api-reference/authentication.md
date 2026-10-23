@@ -719,7 +719,7 @@ Returned when the second factor asked of the user is FIDO2 (security key / passk
 - Log in via the native client first to register / use the security key, then continue working there. REST sessions for this user are not available.
 - Ask an administrator to switch the user's `two_factor_mode` to `totp` (authenticator app) or `email`, both supported via REST, or, where a value set for a group or the server chooses the security key, to change the **Preferred second factor** or **Allowed second-factor methods** policy.
 
-For automation accounts, prefer **long-lived API tokens** (issued in the Server Manager) or **Negotiate / gMSA** authentication -- neither requires a second factor.
+For automation accounts, prefer **long-lived API tokens** (issued in the Server Manager), which need no second factor. A **Negotiate / gMSA** sign-in is asked for the second factor the policies require, like every sign-in, with `tfacode` in the body of the request that completes the handshake; where an automation account signs in that way, set its policies so that no second factor is required for it.
 
 ---
 
