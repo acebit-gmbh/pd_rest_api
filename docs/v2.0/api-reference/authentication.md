@@ -269,6 +269,8 @@ Predefined Azure AD / Entra ID authentication. Use `oidc` instead for new integr
 
 **Required fields:** `id_token`
 
+The account is the Azure AD account whose [`idp_user_id`](users.md#directory-binding) is the token's `oid`, the user's Entra Object ID, compared in any letter case.
+
 #### `oidc`
 
 Authentication via one of the OIDC identity providers registered on the server. Use `GET /v2.0/auth/oidc` to discover available providers.
@@ -276,6 +278,8 @@ Authentication via one of the OIDC identity providers registered on the server. 
 **Required fields:** `idp`, `id_token`
 
 The `id_token` field must carry **either** (a) a signed OIDC `id_token` (JWT) **or** (b) an opaque OAuth access token usable as a Bearer credential at the provider's `userinfo_endpoint`. It **must not** carry a bare authorization `code`. The REST server performs **no** authorization-code exchange -- it validates the supplied value directly (JWT signature / `aud` / `exp` via JWKS, falling back to a Bearer call to the `userinfo_endpoint`) and never posts to the provider's `token_endpoint`. A provider configured for authorization-code flow only (`response_type=code` with no `id_token`, e.g. a Google-style preset) is therefore supported only if the relying party performs the code-to-token exchange itself before calling REST login; the recommended client configuration is to request `response_type=id_token`. An invalid, expired, or forged token, a bare authorization code, or no matching local user returns `401`.
+
+The account is found by the user ID in the validated token, the value of the provider's user-ID claim. The claim is set per provider in the Server Manager, as **User ID** under **Attributes mapping** on the provider's *Advanced* tab: `oid`, the user's Entra Object ID, for an Entra ID provider created there, and `sub` for the other provider classes. The server uses the account whose [`idp`](users.md#directory-binding) is the provider named in `idp` and whose `idp_user_id` is that user ID, compared case-sensitively; the account must also be allowed to sign in with `oidc`. Administrators bind an account with [`POST /admin/users`](users.md#create-user-admin) or [`PATCH /admin/users/{id}`](users.md#update-user-admin), or with the provider's user import in the Server Manager. The Server Manager's user dialog sets only the account's User ID, not its provider: an account created there signs in once such an import or a `PATCH` has set its `idp`.
 
 ### Request Examples
 

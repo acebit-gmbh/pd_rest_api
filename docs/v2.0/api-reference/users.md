@@ -26,6 +26,8 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | `upn` | string | Yes | User Principal Name (e.g., `"user@domain.local"`) |
 | `dn` | string | Yes | Distinguished Name (LDAP DN) |
 | `objectId` | string | Yes | Active Directory object ID (GUID) |
+| `idp_user_id` | string | Yes | *Server 20.0.0 and later.* The user's ID at the identity provider of an `oidc` or `azure_ad` account -- the value of the provider's user-ID claim, or the user's Entra Object ID for Azure AD and for an Entra ID provider that uses `oid`. `""` when unset. See [Directory Binding](#directory-binding). |
+| `idp` | string | Yes | *Server 20.0.0 and later.* Where `idp_user_id` belongs: the `id` of the OpenID Connect provider (`oidc`), or the Entra tenant ID of a tenant registered on the server (`azure_ad`, optional). `""` when unset. See [Directory Binding](#directory-binding). |
 | `disabled` | boolean | Yes | Whether the account is disabled |
 | `must_change_pass` | boolean | Yes | User must change password on next login. From Server 20.0.0, `GET /me` also answers `true` while the account's password is older than the server's **Account password: maximum age** policy, in a session that a password sign-in opened (see [Password Rules](#password-rules)); the stored flag is not changed by it. |
 | `cannot_change_pass` | boolean | Yes | User is not allowed to change their own password |
@@ -55,12 +57,35 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | `"azure_ad"` | Azure AD account | `azure`, `webauthn` |
 | `"oidc"` | OpenID Connect account | `oidc`, `webauthn` |
 
+An `oidc` or `azure_ad` account is bound to the identity that signs in to it by `idp` and `idp_user_id`, which do not change the account type; see [Directory Binding](#directory-binding).
+
 !!! note "Server policies (Server 20.0.0 and later)"
     The sign-in methods are the server's **Allowed sign-in methods** policy (`auth.methods.allowed`), which the Server Manager shows on the user's *Policies* tab. A user without an entry of their own in it may use the usual methods of their account type, as far as the values set for the server and the user's groups allow; a user with an entry of their own may use the methods it names, as far as a value enforced for the server or a group allows. A server upgraded from an earlier version gave each user whose `auth_modes` were not the usual methods of their account type an entry of their own with exactly those methods.
 
     Reading `auth_modes` answers the methods the user may use to sign in to a client (`POST /auth/login` and the passkey sign-in) under those values, the account type included, so it can name fewer methods than the user's own entry. `GET /me` answers the same for the caller.
 
     Writing `auth_modes` sets the account type from the directory methods it names -- `sspi` makes an `ad` account, otherwise `azure` an `azure_ad` account, otherwise `oidc` an `oidc` account, otherwise it is a `password_depot` account (`iwa` and `webauthn` name no type) -- and sets the user's own entry to exactly the methods named where they differ from the usual methods of that type; where they are the usual methods, it removes the user's own entry. The write is recorded in the audit trail as a policy change. It answers `403` when the caller may not change the user's sign-in policies -- the caller must hold every server role the user holds -- or when it would leave no administrator able to sign in to the Server Manager, and `409` when the user's policies changed at the same time. On `PATCH` it is made after the whole request has been checked and before the account is changed, together with a `two_factor_mode` of the same request, so a refused write leaves the account and the user's policies as they were; on `POST` a refused write creates no user. The user's whole policy document, this entry included, can also be read and changed with [`GET` and `PATCH /v2.0/admin/users/{id}/policy`](policies.md#get-user-policy).
+
+### Directory Binding
+
+*Server 20.0.0 and later.* `idp` and `idp_user_id` bind an OpenID Connect or Azure AD account to the identity that signs in to it. They are written with `POST /admin/users` and `PATCH /admin/users/{id}`, and read in the full representation: `GET /admin/users/{id}`, the `201` response of `POST /admin/users` and `GET /me`, where every account carries both, `""` when unset. The list, the compact form and the `PATCH` response do not carry them, and `PATCH /me` refuses them.
+
+| `account_type` | `idp` | `idp_user_id` |
+|----------------|-------|---------------|
+| `oidc` | The provider's `id` from [`GET /auth/oidc`](authentication.md#oidc-providers), the value a sign-in sends as `idp`. Required together with `idp_user_id`. | The value of the provider's user-ID claim in the user's token (see [`oidc`](authentication.md#oidc)): for an Entra ID provider that uses `oid`, the user's Entra Object ID. Required together with `idp`. |
+| `azure_ad` | Optional: the Entra tenant ID of a tenant registered on the server. | The user's Entra Object ID. Required where `idp` is set. |
+
+- **Sign-in.** An `oidc` sign-in uses the account whose `idp` is the provider named at sign-in and whose `idp_user_id` is the user ID in the token, compared case-sensitively. An `azure` sign-in uses the Azure AD account whose `idp_user_id` is the token's `oid`, in any letter case; `idp` is not compared. The account must also be allowed the sign-in method (see [`account_type` Values](#account_type-values)).
+- **Type.** A non-empty value needs an account whose type is `oidc` or `azure_ad`. `idp` and `idp_user_id` never set the type: where the account does not have it yet, send the type's usual methods in `auth_modes` in the same request, `["oidc", "webauthn"]` or `["azure", "webauthn"]` (see [`account_type` Values](#account_type-values)); any other set gives the user an entry of their own in **Allowed sign-in methods**. An empty string or `null` removes a value, on every account type. A member that is not sent keeps its value.
+- **Form.** A value must not begin or end with white space, must not contain control characters, and must be at most 255 characters long. An Entra Object ID -- `idp_user_id` of an `azure_ad` account, or of an `oidc` account whose provider is an Entra ID provider that uses `oid` -- must be a GUID (`8-4-4-4-12` hexadecimal digits, without braces); it is accepted in any letter case and stored in lower case. Every other user ID is stored exactly as sent. `idp` is stored in the provider's or the tenant's own spelling.
+- **One account per identity.** Another account that already holds the identity answers `409` with `error.code` `4091` (`PD_ERRCODE_IDENTITY_LINKED`): for `oidc`, an account of any type with the same `idp` and the same `idp_user_id`; for `azure_ad`, another account that can sign in with `azure` (an Azure AD account) with the same `idp_user_id` in any letter case, whatever its `idp`. The message names no account. The same Entra Object ID can be bound to one `oidc` and one `azure_ad` account.
+- **`azure` on another type.** An `azure` sign-in looks for the Object ID among the Azure AD accounts. A `PATCH` whose `auth_modes` hold `"azure"` but give the account another type than `azure_ad` -- `["sspi", "azure"]` makes an `ad` account -- therefore answers `400` while the account keeps a GUID in `idp_user_id`, and nothing in the request is applied. Make the account an `azure_ad` one, leave `"azure"` out, or send `idp_user_id` empty in the same request. An Active Directory account that the server's Azure AD synchronization also maintains is not affected.
+- **Checked first.** The binding is checked when the request carries `idp` or `idp_user_id`, and when a `PATCH` changes the type of an account that keeps a binding -- then the identity it keeps is checked under the new type, for one account per identity only -- always before anything is written: a refused request creates no user and changes nothing. Whoever may make the request may set the binding; no further role is needed.
+- **Sessions.** A `PATCH` that changes or removes a binding the account had ends the account's sessions: its REST session tokens stop working (`401`), and its connections from the Windows client and the Server Manager are closed. Setting a binding on an account that had none ends nothing, and neither does sending the stored Entra Object ID in another letter case. Long-lived API tokens and trusted devices are kept.
+- **Audit trail.** A change of the binding is recorded with the user's update, naming the new or the removed `idp` and `idp_user_id`.
+
+!!! tip "Take the IDs from the directory"
+    Copy `idp_user_id` from the directory, never from display data: for Entra ID the user's Object ID (the Microsoft Graph `id`, the token's `oid`), for another provider the value of the claim the provider uses as the user ID, normally `sub`. The claim is set per provider in the Server Manager (see [`oidc`](authentication.md#oidc)); a claim that never changes, such as `oid` or `sub`, keeps the binding stable, an e-mail address or a UPN does not. A value that belongs to another person binds the account to that person, and under an Entra ID provider with directory synchronization an account whose `idp_user_id` is not a user's Object ID in that directory is treated like a user removed from it.
 
 ### `two_factor_mode` Values
 
@@ -138,6 +163,8 @@ The policies that apply to the user are not part of the profile: from Server 20.
     "upn": "jdoe@domain.local",
     "dn": "CN=John Doe,CN=Users,DC=domain,DC=local",
     "objectId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "idp_user_id": "",
+    "idp": "",
     "disabled": false,
     "must_change_pass": false,
     "cannot_change_pass": false,
@@ -199,9 +226,9 @@ Updates a restricted set of profile fields on the caller's own account. Availabl
     - `department`
     - `phone`
 
-    Any other field in the request body (including `name`, `email`, `roles`, `member_of`, `auth_modes`, `account_type`, `two_factor_mode`, `disabled`, `sam`, `upn`, `dn`, etc.) causes `400 Bad Request`.
+    Any other field in the request body (including `name`, `email`, `roles`, `member_of`, `auth_modes`, `account_type`, `two_factor_mode`, `disabled`, `sam`, `upn`, `dn`, `idp`, `idp_user_id`, etc.) causes `400 Bad Request`.
 
-    For password changes use [`POST /v2.0/me/password`](#change-own-password). For passkey management use the [`/me/passkeys/...`](#passkeys-webauthn) endpoints. Changes to username, email, roles, groups, AD binding, or 2FA settings remain admin-only via [`PATCH /v2.0/admin/users/{id}`](#update-user).
+    For password changes use [`POST /v2.0/me/password`](#change-own-password). For passkey management use the [`/me/passkeys/...`](#passkeys-webauthn) endpoints. Changes to username, email, roles, groups, directory binding, or 2FA settings remain admin-only via [`PATCH /v2.0/admin/users/{id}`](#update-user).
 
 The request body is a partial JSON document -- fields omitted keep their current values. An empty body (`{}`) is accepted and returns the current profile unchanged.
 
@@ -366,7 +393,7 @@ A refused password answers `400` with `error.code` `400`: `error.message` starts
 
 ## Client Endpoints
 
-These endpoints are available in both `client` and `admin` sessions. They return a compact representation suitable for user lookups (e.g., when assigning permissions or sharing secrets). No admin-specific fields (roles, auth_modes, account_type, AD attributes, group memberships) are included.
+These endpoints are available in both `client` and `admin` sessions. They return a compact representation suitable for user lookups (e.g., when assigning permissions or sharing secrets). No admin-specific fields (roles, auth_modes, account_type, AD attributes, directory binding, group memberships) are included.
 
 ### Client User Object (Compact)
 
@@ -611,6 +638,8 @@ Creates a new user.
 | `upn` | string | No | User Principal Name |
 | `dn` | string | No | Distinguished Name |
 | `objectId` | string | No | Active Directory object ID (GUID) |
+| `idp_user_id` | string | No | *Server 20.0.0 and later.* The user's ID at the identity provider of an `oidc` or `azure_ad` account; needs `auth_modes` with `"oidc"` or `"azure"`. See [Directory Binding](#directory-binding). |
+| `idp` | string | Conditional | *Server 20.0.0 and later.* The OpenID Connect provider's `id`, **required** with `idp_user_id` on an `oidc` account; or the Entra tenant ID of a registered tenant, optional on an `azure_ad` account. See [Directory Binding](#directory-binding). |
 | `disabled` | boolean | No | Whether the account is disabled (default: `false`) |
 | `must_change_pass` | boolean | No | User must change password on next login (default: `false`) |
 | `cannot_change_pass` | boolean | No | User is not allowed to change their own password (default: `false`) |
@@ -647,6 +676,22 @@ Creates a new user.
     }
     ```
 
+!!! tip "Entra ID / OpenID Connect account recipe"
+    *Server 20.0.0 and later.* An account that signs in through an OpenID Connect provider needs no password. Send the usual methods of its type in `auth_modes`, the provider's `id` from [`GET /auth/oidc`](authentication.md#oidc-providers) as `idp`, and the user's ID at the provider as `idp_user_id` -- for an Entra ID provider the user's Object ID:
+
+    ```json
+    {
+        "name": "jdoe",
+        "auth_modes": ["oidc", "webauthn"],
+        "idp": "B5A1E2C4-3F6D-4E8A-9C0B-1D2E3F4A5B6C",
+        "idp_user_id": "4f1c2d3e-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+        "display_name": "John Doe",
+        "email": "jdoe@example.com"
+    }
+    ```
+
+    The user can then sign in with `auth: "oidc"` and this `idp`. Read the binding back with [`GET /admin/users/{id}`](#get-user-admin); see [Directory Binding](#directory-binding) for the rules and for an Azure AD account.
+
 !!! note "Response never includes the password"
     The response object for `POST /admin/users` never echoes the `new_password` field back. The password is hashed immediately and only the hash is retained server-side.
 
@@ -668,6 +713,8 @@ Creates a new user.
     "upn": null,
     "dn": null,
     "objectId": null,
+    "idp_user_id": "",
+    "idp": "",
     "disabled": false,
     "must_change_pass": false,
     "cannot_change_pass": false,
@@ -683,10 +730,10 @@ Creates a new user.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, or a password that breaks the server's password rules (see [Password Rules](#password-rules)); no user is created then. |
+| `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, or a password that breaks the server's password rules (see [Password Rules](#password-rules)); from Server 20.0.0 also a refused `idp` or `idp_user_id` -- a value of the wrong form, a binding on an account whose type is neither `oidc` nor `azure_ad`, an incomplete pair, or a provider or tenant the server does not have (see [Directory Binding](#directory-binding)); no user is created then. |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | `error.code` `403`: the session is not admin-scoped, the account has neither the `server_admin` nor the `user_admin` role, or it may not set the requested `roles` (requires `server_admin`) or `member_of`. `error.code` `4032` (`PD_ERRCODE_LICENSE_LIMIT`): the server's licensed number of users is reached. From Server 20.0.0 also `error.code` `403` when the `two_factor_mode` or `auth_modes` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values) and [`account_type` Values](#account_type-values)); no user is created then |
-| `409 Conflict` | A user with this username already exists, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` or `auth_modes` was written |
+| `409 Conflict` | A user with this username already exists, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` or `auth_modes` was written. `error.code` `4091` (`PD_ERRCODE_IDENTITY_LINKED`, Server 20.0.0 and later): another account already holds the identity in `idp` and `idp_user_id` (see [Directory Binding](#directory-binding)); no user is created then |
 
 #### Example
 
@@ -741,6 +788,8 @@ Returns details of a specific user.
     "upn": "jdoe@domain.local",
     "dn": "CN=John Doe,CN=Users,DC=domain,DC=local",
     "objectId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "idp_user_id": "",
+    "idp": "",
     "disabled": false,
     "must_change_pass": false,
     "cannot_change_pass": false,
@@ -806,9 +855,14 @@ Include only the fields you want to update.
 !!! warning "Passwords cannot be changed via PATCH"
     Including `password` or `new_password` in a PATCH body returns `400 Bad Request`. Use the dedicated endpoint [POST /admin/users/{id}/password](#change-password-admin) to rotate a user's password.
 
+!!! warning "A binding change ends the user's sessions"
+    *Server 20.0.0 and later.* When the request changes or removes the `idp` and `idp_user_id` the user had, the user's sessions end: their REST session tokens stop working and their connections from the Windows client and the Server Manager are closed. Long-lived API tokens and trusted devices are kept. See [Directory Binding](#directory-binding).
+
 #### Response
 
 `200 OK`
+
+The response carries the fields every user representation has. It does not carry the detail fields -- `sam`, `upn`, `dn`, `objectId`, `idp_user_id`, `idp`, `disabled`, `must_change_pass`, `cannot_change_pass`, `roles`, `member_of`, `last_login` and `passkeys`; read them with [`GET /admin/users/{id}`](#get-user-admin).
 
 ```json
 {
@@ -816,22 +870,11 @@ Include only the fields you want to update.
     "name": "jdoe",
     "auth_modes": ["sspi", "iwa", "webauthn"],
     "account_type": "ad",
+    "two_factor_mode": "default",
     "display_name": "John A. Doe",
     "department": "R&D",
     "email": "jdoe@example.com",
-    "phone": null,
-    "sam": "DOMAIN\\jdoe",
-    "upn": "jdoe@domain.local",
-    "dn": "CN=John Doe,CN=Users,DC=domain,DC=local",
-    "objectId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "disabled": false,
-    "must_change_pass": false,
-    "cannot_change_pass": false,
-    "roles": ["server_admin", "db_admin", "log_reader"],
-    "member_of": [
-        "FEAE7AC9-58D1-4A76-82A6-2C7DB135CFDD",
-        "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
-    ],
+    "phone": "",
     "updated_at": "2024-11-21T10:15:00.000Z"
 }
 ```
@@ -840,11 +883,11 @@ Include only the fields you want to update.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields |
+| `400 Bad Request` | Invalid fields; from Server 20.0.0 also a refused `idp` or `idp_user_id`, or `auth_modes` that give `"azure"` to an account of another type than `azure_ad` while it keeps a GUID in `idp_user_id` (see [Directory Binding](#directory-binding)). Nothing in the request is applied |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, or attempted to modify `roles` without `server_admin` role, or (Server 20.0.0 and later) the `two_factor_mode` or `auth_modes` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values) and [`account_type` Values](#account_type-values)) |
 | `404 Not Found` | User or referenced group not found |
-| `409 Conflict` | Username conflict, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` or `auth_modes` was written |
+| `409 Conflict` | Username conflict, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` or `auth_modes` was written. `error.code` `4091` (`PD_ERRCODE_IDENTITY_LINKED`, Server 20.0.0 and later): another account already holds the identity in `idp` and `idp_user_id` (see [Directory Binding](#directory-binding)) |
 
 #### Example
 

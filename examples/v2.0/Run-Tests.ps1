@@ -31,6 +31,15 @@
     trust flow itself needs an account with an authenticator app or e-mail
     codes and is not covered.
 
+    The directory-binding checks in the users suite (5.4b, Server 20.0.0 or
+    later) create Azure AD and OpenID Connect accounts with 'idp' and
+    'idp_user_id' and read them back; no identity provider is involved, so
+    they check storage and refusals, never a sign-in. The OpenID Connect
+    checks that need a provider use the first one GET /auth/oidc lists and
+    are skipped where it lists none. A server whose GET /admin/users/{id}
+    does not carry 'idp_user_id' skips them all. The accounts are deleted
+    at the end of the block.
+
     Requires an admin account on a running PD Enterprise Server with at least
     one database accessible by the test user.
 
@@ -2107,6 +2116,154 @@ if ($testUserId) {
         if (Assert-Equal "Engineering" $upd.department "department") { Pass-Test }
     } catch { Fail-Test $_.Exception.Message }
 } else { Skip-Test "User not created" }
+
+# 5.4b Directory binding (Server 20.0.0 or later): idp / idp_user_id bind an
+# azure_ad or oidc account to its identity. Storage and refusals only - no
+# identity provider signs in here. Read back with GET /admin/users/{id}: the
+# PATCH response does not carry the binding.
+$bindSupported = $false
+if ($testUserId) {
+    try {
+        $bindProbe = Get-PDUser -Session $adminSession -UserId $testUserId
+        $bindSupported = $bindProbe.PSObject.Properties.Name -contains 'idp_user_id'
+    } catch {}
+}
+$bindObjectId = [guid]::NewGuid().ToString().ToUpperInvariant()
+$azBindId = $null
+$oidcBindId = $null
+$oidcProvider = $null
+
+Start-Test "Binding: azure_ad account with an Object ID, stored in lower case"
+if ($bindSupported) {
+    try {
+        $az = New-PDUser -Session $adminSession -Fields @{
+            name = "azbind_$ts"; auth_modes = @("azure", "webauthn"); idp_user_id = $bindObjectId
+        }
+        $azBindId = $az.id
+        $azRead = Get-PDUser -Session $adminSession -UserId $azBindId
+        # -ceq: PowerShell's -eq ignores letter case
+        if ((Assert-Equal "azure_ad" $azRead.account_type "account_type") -and
+            (Assert-True ($azRead.idp_user_id -ceq $bindObjectId.ToLowerInvariant()) "idp_user_id in lower case") -and
+            (Assert-True ($azRead.idp -ceq "") "idp empty")) { Pass-Test }
+    } catch { Fail-Test $_.Exception.Message }
+} else { Skip-Test "the server does not report idp_user_id" }
+
+Start-Test "Binding: the same Object ID on a second azure_ad account -> 409 / 4091"
+if ($azBindId) {
+    if (Assert-HttpErrorCode -ExpectedStatus 409 -ExpectedCode 4091 -Action {
+        New-PDUser -Session $adminSession -Fields @{
+            name = "azbind2_$ts"; auth_modes = @("azure", "webauthn"); idp_user_id = $bindObjectId.ToLowerInvariant()
+        }
+    }) { Pass-Test "409 / 4091 as expected" }
+} else { Skip-Test "Azure AD account not created" }
+
+Start-Test "Binding: an azure_ad Object ID that is no GUID -> 400"
+if ($bindSupported) {
+    if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+        New-PDUser -Session $adminSession -Fields @{
+            name = "azbind3_$ts"; auth_modes = @("azure", "webauthn"); idp_user_id = "not-a-guid"
+        }
+    }) { Pass-Test "400 as expected" }
+} else { Skip-Test "the server does not report idp_user_id" }
+
+Start-Test "Binding: an azure_ad account with idp but no idp_user_id -> 400"
+if ($bindSupported) {
+    # idp alone is an incomplete binding, refused before the tenant is looked up
+    if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+        New-PDUser -Session $adminSession -Fields @{
+            name = "azbind5_$ts"; auth_modes = @("azure", "webauthn"); idp = [guid]::NewGuid().ToString()
+        }
+    }) { Pass-Test "400 as expected" }
+} else { Skip-Test "the server does not report idp_user_id" }
+
+Start-Test "Binding: a value with white space at either end -> 400"
+if ($bindSupported) {
+    if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+        New-PDUser -Session $adminSession -Fields @{
+            name = "azbind4_$ts"; auth_modes = @("azure", "webauthn"); idp_user_id = " $([guid]::NewGuid())"
+        }
+    }) { Pass-Test "400 as expected" }
+} else { Skip-Test "the server does not report idp_user_id" }
+
+Start-Test "Binding: on a password_depot account -> 400, account unchanged"
+if ($bindSupported) {
+    try {
+        if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+            Set-PDUser -Session $adminSession -UserId $testUserId -Fields @{ idp_user_id = [guid]::NewGuid().ToString() }
+        }) {
+            $pdRead = Get-PDUser -Session $adminSession -UserId $testUserId
+            if (Assert-True ($pdRead.idp_user_id -ceq "") "idp_user_id still empty") { Pass-Test "400 as expected" }
+        }
+    } catch { Fail-Test $_.Exception.Message }
+} else { Skip-Test "the server does not report idp_user_id" }
+
+Start-Test "Binding: oidc account with only idp_user_id -> 400"
+if ($bindSupported) {
+    if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+        New-PDUser -Session $adminSession -Fields @{
+            name = "oidcbind2_$ts"; auth_modes = @("oidc", "webauthn"); idp_user_id = [guid]::NewGuid().ToString()
+        }
+    }) { Pass-Test "400 as expected" }
+} else { Skip-Test "the server does not report idp_user_id" }
+
+Start-Test "Binding: oidc account at a provider the server does not have -> 400"
+if ($bindSupported) {
+    if (Assert-HttpErrorCode -ExpectedStatus 400 -ExpectedCode 400 -Action {
+        New-PDUser -Session $adminSession -Fields @{
+            name = "oidcbind3_$ts"; auth_modes = @("oidc", "webauthn")
+            idp = [guid]::NewGuid().ToString(); idp_user_id = [guid]::NewGuid().ToString()
+        }
+    }) { Pass-Test "400 as expected" }
+} else { Skip-Test "the server does not report idp_user_id" }
+
+if ($bindSupported) {
+    try {
+        $oidcList = Invoke-RestMethod -Uri "https://${Server}:${Port}/v2.0/auth/oidc" -Method GET
+        if ($oidcList.data -and @($oidcList.data).Count -gt 0) { $oidcProvider = @($oidcList.data)[0] }
+    } catch {}
+}
+# A lower-case GUID is a valid user ID at every provider class, an Entra ID
+# provider that uses oid included.
+$oidcSubject = [guid]::NewGuid().ToString()
+
+Start-Test "Binding: oidc account bound to a provider"
+if ($oidcProvider) {
+    try {
+        $oc = New-PDUser -Session $adminSession -Fields @{
+            name = "oidcbind_$ts"; auth_modes = @("oidc", "webauthn"); idp = $oidcProvider.id; idp_user_id = $oidcSubject
+        }
+        $oidcBindId = $oc.id
+        $ocRead = Get-PDUser -Session $adminSession -UserId $oidcBindId
+        if ((Assert-Equal "oidc" $ocRead.account_type "account_type") -and
+            (Assert-Equal $oidcProvider.id $ocRead.idp "idp") -and
+            (Assert-True ($ocRead.idp_user_id -ceq $oidcSubject) "idp_user_id as sent")) { Pass-Test }
+    } catch { Fail-Test $_.Exception.Message }
+} elseif ($bindSupported) { Skip-Test "no OpenID Connect provider on the server" } else { Skip-Test "the server does not report idp_user_id" }
+
+Start-Test "Binding: the same provider and user ID on a second account -> 409 / 4091"
+if ($oidcBindId) {
+    if (Assert-HttpErrorCode -ExpectedStatus 409 -ExpectedCode 4091 -Action {
+        New-PDUser -Session $adminSession -Fields @{
+            name = "oidcbind4_$ts"; auth_modes = @("oidc", "webauthn"); idp = $oidcProvider.id; idp_user_id = $oidcSubject
+        }
+    }) { Pass-Test "409 / 4091 as expected" }
+} else { Skip-Test "OpenID Connect account not created" }
+
+Start-Test "Binding: removed with PATCH (empty strings)"
+if ($oidcBindId) {
+    try {
+        Set-PDUser -Session $adminSession -UserId $oidcBindId -Fields @{ idp = ""; idp_user_id = "" } | Out-Null
+        $ocRead = Get-PDUser -Session $adminSession -UserId $oidcBindId
+        if ((Assert-True ($ocRead.idp -ceq "") "idp empty") -and
+            (Assert-True ($ocRead.idp_user_id -ceq "") "idp_user_id empty")) { Pass-Test }
+    } catch { Fail-Test $_.Exception.Message }
+} else { Skip-Test "OpenID Connect account not created" }
+
+foreach ($bindId in @($azBindId, $oidcBindId)) {
+    if ($bindId) {
+        try { Remove-PDUser -Session $adminSession -UserId $bindId } catch {}
+    }
+}
 
 # 5.5 Create group
 Start-Test "Create group"

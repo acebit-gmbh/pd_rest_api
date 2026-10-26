@@ -225,7 +225,7 @@ Every sign-in through the REST API is recorded in the server's audit trail, with
 
 #### OIDC Identities Matched Within Their Provider (Behavior Change)
 
-With `POST /v2.0/auth/login` and `auth: "oidc"`, the server matches the user ID from the validated token only against accounts linked to the identity provider named in `idp`. The user ID is the provider's configured user-ID claim, `sub` by default. The comparison is case-sensitive. The login answers `401` with "The server cannot find the user account specified." when that user ID is linked only under a different provider, or only in a different letter case. The message does not include the user ID. The account must also allow OIDC authentication (see **Sign-In Methods Follow the Server and Account Settings**).
+With `POST /v2.0/auth/login` and `auth: "oidc"`, the server matches the user ID from the validated token only against accounts linked to the identity provider named in `idp`. The user ID is the value of the provider's user-ID claim: `oid`, the user's Entra Object ID, for an Entra ID provider created in the Server Manager, and `sub` for the other provider classes. The comparison is case-sensitive. The login answers `401` with "The server cannot find the user account specified." when that user ID is linked only under a different provider, or only in a different letter case. The message does not include the user ID. The account must also allow OIDC authentication (see **Sign-In Methods Follow the Server and Account Settings**).
 
 #### `401` for a Sign-In From an Address the Account Does Not Allow (Behavior Change)
 
@@ -517,6 +517,22 @@ The user representation's `auth_modes` keeps its values and answers the sign-in 
 
 !!! warning "Behavior change for clients"
     Send `auth_modes` only when you mean to change the user's sign-in methods, and handle `403` and `409` on a user write that carries it. Read `account_type`, not `auth_modes`, to tell which directory an account belongs to.
+
+#### Entra ID and OpenID Connect Accounts Bound Over REST
+
+`POST /admin/users` and `PATCH /admin/users/{id}` set the identity an OpenID Connect or Azure AD account signs in with, through new members of the user representation: `idp_user_id`, the user's ID at the identity provider, and `idp`, where that ID belongs. An account created this way can sign in with `auth: "oidc"` or `auth: "azure"` without a further step in the Server Manager.
+
+- **Reading.** `GET /admin/users/{id}`, the `201` response of `POST /admin/users` and `GET /me` carry both members on every account, `""` where unset. The list, the compact form and the `PATCH` response do not. `PATCH /me` refuses them with `400`.
+- **Writing.** For an `oidc` account, `idp` is the provider's `id` from `GET /auth/oidc` -- the value a sign-in sends as `idp` -- and `idp_user_id` the value of the provider's user-ID claim, the user's Entra Object ID for an Entra ID provider that uses `oid`; both are required together. For an `azure_ad` account, `idp_user_id` is the user's Entra Object ID and `idp`, optionally, a tenant registered on the server; `idp` is accepted only together with `idp_user_id`. A non-empty value needs an account whose type is `oidc` or `azure_ad`; the members do not set the type, so where the account does not have it yet, send the type's usual methods in `auth_modes` with them, `["oidc", "webauthn"]` or `["azure", "webauthn"]`. An empty string or `null` removes a value, and a member not sent keeps it.
+- **Values stored.** An Entra Object ID must be a GUID; it is accepted in any letter case and stored in lower case. Every other user ID is stored exactly as sent. `idp` is stored in the provider's or the tenant's own spelling.
+- **New answers.** `400` for a value with white space at either end, a control character or more than 255 characters, a binding on an account of another type, an incomplete binding -- an `oidc` binding with only one of `idp` and `idp_user_id`, or an `azure_ad` binding with `idp` but no `idp_user_id` --, an `idp` that names no provider or no registered tenant, and an Entra Object ID that is not a GUID. `409` with `error.code` `4091` (`PD_ERRCODE_IDENTITY_LINKED`) when another account already holds the identity -- for `oidc` the same `idp` and `idp_user_id` on an account of any type, for `azure_ad` the same `idp_user_id` on another account that can sign in with `azure` (an Azure AD account). The message names no account; a `PATCH` that changes only the type of an account that keeps a binding gets the same `409` where the identity it keeps is held under the new type. On `PATCH`, also `400` for `auth_modes` that hold `"azure"` but give the account another type than `azure_ad`, such as `["sspi", "azure"]`, while it keeps a GUID in `idp_user_id`: an `azure` sign-in looks for the Object ID among the Azure AD accounts. A refused request creates no user and changes nothing.
+- **Sessions.** A `PATCH` that changes or removes the binding an account had ends the account's sessions: its REST session tokens stop working, and its connections from the Windows client and the Server Manager are closed. Long-lived API tokens and trusted devices are kept.
+- **Server Manager.** Creating an account with an identity that another account holds, or changing an account's identity to one, is refused in the Server Manager as well.
+- **Audit trail.** A change of the binding is recorded with the user's update, naming the new or the removed `idp` and `idp_user_id`.
+
+See [Directory Binding](api-reference/users.md#directory-binding).
+
+**Client guidance:** before you rely on the binding, check that `GET /admin/users/{id}` carries `idp_user_id`. Take `idp_user_id` from the directory -- for Entra ID the user's Object ID (the Microsoft Graph `id`, the token's `oid`), for another provider the value of the claim it uses as the user ID, normally `sub` --, never from display data, and read the binding back with `GET /admin/users/{id}`. Tell `4091` from a name conflict by `error.code`, never by the message.
 
 #### Policies Read and Changed Over REST
 
@@ -912,6 +928,8 @@ These correct the documentation only; the server's behavior is described as it h
 - **Mirror servers.** The overview now says that a mirror server answers every request other than `GET` that carries a bearer token with `403`, `POST /auth/logout` included. This is not new in Server 20.0.0; it was not documented.
 - **The JSON examples** of entries and folders showed an `icon` that the server of the time would not have returned for them (it ignored `image_index`). With the change above they are now what Server 20.0.0 returns.
 - **The `roles` table of the users reference and the `User.roles` enum of the OpenAPI document lacked `audit_reader`, `security_officer` and `backup_operator`.** The server writes these roles in `roles` and accepts them on `POST /admin/users` and `PATCH /admin/users/{id}`; see [`roles` Values](api-reference/users.md#roles-values).
+- **The OIDC user ID is not always `sub`.** **OIDC Identities Matched Within Their Provider** called the user ID the provider's user-ID claim, "`sub` by default". The claim is set per provider in the Server Manager, and an Entra ID provider created there uses `oid`, the user's Entra Object ID; the other provider classes use `sub`. The entry now says so.
+- **`PATCH /admin/users/{id}` answers the short form of the user.** The reference showed the full representation as its response. The server answers the fields every user representation has (`UserBasic` in the OpenAPI document, which named `User`) and no detail field such as `roles`, `member_of`, `disabled` or the AD attributes; read those with [`GET /admin/users/{id}`](api-reference/users.md#get-user-admin).
 
 ---
 

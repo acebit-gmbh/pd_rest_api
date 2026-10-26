@@ -129,7 +129,11 @@ info:
     authenticated requests, Server 20.0.0 and later) with HTTP `403`;
     `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
     `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
-    that id in this database, Server 20.0.0 and later) with HTTP `404`; and
+    that id in this database, Server 20.0.0 and later) with HTTP `404`;
+    `4091` (`PD_ERRCODE_IDENTITY_LINKED` -- `adminCreateUser` or
+    `adminUpdateUser`: another account already holds the identity in `idp`
+    and `idp_user_id`, Server 20.0.0 and later; the first sub-code of the
+    `409` family) with HTTP `409`; and
     `4131` (`PD_ERRCODE_ICON_TOO_LARGE` -- `uploadDatabaseIcon`: too many bytes,
     too many pixels or too large a stored record, Server 20.0.0 and later; the
     first sub-code of the `413` family) with
@@ -1582,6 +1586,16 @@ paths:
             names each rule broken, its setting and the scope that set
             it, on a line of its own. Nothing is changed: no user is
             created.
+            From Server 20.0.0 also a refused directory binding (`idp`,
+            `idp_user_id`): a value with white space at either end, a
+            control character or more than 255 characters; a non-empty
+            value on an account whose type is neither `oidc` nor
+            `azure_ad`; an incomplete binding (an `oidc` binding with only
+            one of the two, or an `azure_ad` binding with `idp` but no
+            `idp_user_id`); an `idp` that names no OpenID Connect
+            provider or no registered Azure tenant; or an Entra Object ID
+            that is not a GUID. No user
+            is created.
           content:
             application/json:
               schema:
@@ -1619,7 +1633,11 @@ paths:
           description: |
             A user with this name already exists, or (Server 20.0.0 and
             later) the user's policies changed while `two_factor_mode` or
-            `auth_modes` was written.
+            `auth_modes` was written. `error.code` `4091`
+            (`PD_ERRCODE_IDENTITY_LINKED`, Server 20.0.0 and later):
+            another account already holds the identity in `idp` and
+            `idp_user_id`; the message names no account. No user is
+            created.
           content:
             application/json:
               schema:
@@ -1663,11 +1681,26 @@ paths:
               $ref: "#/components/schemas/User"
       responses:
         "200":
-          description: User updated
+          description: |
+            User updated. The short form (`UserBasic`): read the detail
+            fields, such as `roles`, `member_of` and the directory binding,
+            with `adminGetUser`.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
+                $ref: "#/components/schemas/UserBasic"
+        "400":
+          description: |
+            Invalid fields, or (Server 20.0.0 and later) a refused
+            directory binding (`idp`, `idp_user_id`), as for
+            `adminCreateUser`, or `auth_modes` that hold `"azure"` but give
+            the account another type than `azure_ad` (such as
+            `["sspi", "azure"]`) while it keeps a GUID in `idp_user_id`. Nothing
+            in the request is applied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1689,7 +1722,11 @@ paths:
           description: |
             Another user has this name, or (Server 20.0.0 and later) the
             user's policies changed while `two_factor_mode` or `auth_modes` was
-            written.
+            written. `error.code` `4091` (`PD_ERRCODE_IDENTITY_LINKED`, Server
+            20.0.0 and later): another account already holds the identity in
+            `idp` and `idp_user_id` - also where the request changes only the
+            account type of an account that keeps a binding, judged under the
+            new type; the message names no account.
           content:
             application/json:
               schema:
@@ -2595,7 +2632,7 @@ paths:
         may be changed via this endpoint. Any other field in the request
         body returns `400`. Use `/me/password` to change the password and
         `/me/passkeys/...` to manage passkeys. Email, roles, groups,
-        AD binding, and 2FA settings remain admin-only via
+        directory binding, and 2FA settings remain admin-only via
         `PATCH /admin/users/{id}`.
       requestBody:
         required: true
@@ -6714,7 +6751,8 @@ components:
       description: |
         Fields returned for a user in EVERY context -- both the detail
         response (`GET /me`, `GET /admin/users/{id}`) and the list
-        response (`GET /admin/users`). This is the output of the server's
+        response (`GET /admin/users`); the `adminUpdateUser` response
+        carries only these. This is the output of the server's
         `SaveUserToJSON` with `AFullRepresentation=False`.
       properties:
         id:
@@ -6827,6 +6865,40 @@ components:
             objectId:
               type: string
               description: AD objectId (GUID)
+            idp_user_id:
+              type: string
+              nullable: true
+              maxLength: 255
+              description: |
+                Server 20.0.0 and later. The user's ID at the identity
+                provider of an `oidc` or `azure_ad` account: for `oidc` the
+                value of the provider's user-ID claim (the user's Entra
+                Object ID for an Entra ID provider that uses `oid`), for
+                `azure_ad` the user's Entra Object ID. `""` when unset; read
+                in every full representation, on every account. A non-empty
+                value needs the account type `oidc` or `azure_ad` (send
+                the type's usual methods in `auth_modes`, which sets it,
+                `["oidc", "webauthn"]` or `["azure", "webauthn"]`);
+                an empty string or `null`
+                removes it, and a request without it keeps it. No white
+                space at either end and no control characters. An Entra
+                Object ID is a GUID (8-4-4-4-12, without braces), accepted
+                in any letter case and stored in lower case; any other ID
+                is stored exactly as sent. Another account that holds the
+                identity answers 409 with `error.code` 4091. A change or
+                removal of a binding the account had ends its sessions.
+            idp:
+              type: string
+              nullable: true
+              maxLength: 255
+              description: |
+                Server 20.0.0 and later. Where `idp_user_id` belongs: for
+                `oidc` the provider's `id` from `GET /auth/oidc` (required
+                together with `idp_user_id`), for `azure_ad` the Entra
+                tenant ID of a tenant registered on the server (optional,
+                and accepted only together with `idp_user_id`).
+                Stored in the provider's or tenant's own spelling. `""` when
+                unset; an empty string or `null` removes it.
             disabled:
               type: boolean
             must_change_pass:
