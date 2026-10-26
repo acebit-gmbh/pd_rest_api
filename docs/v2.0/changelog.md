@@ -563,6 +563,16 @@ See [Preview a Change](api-reference/policies.md#preview-a-change).
 
 **Client guidance:** preview with the `If-Match` and the body you are about to send, show the warnings before the changed values, and send the `PATCH` once the user confirms. The preview reserves nothing: the change can still answer `412`, or be refused.
 
+#### Audit Records Carry `changed_at` (Schema 3)
+
+`GET /admin/audit` returns the records of the audit trail as they are stored, one JSON object per line. The records the server writes carry `"schema": 3`, and their `event` object ends with a new member, `changed_at`:
+
+- **`changed_at`** is `""` in a record written when the change it records happened. A record written later than its change carries the time of the change there, in UTC (`"2026-11-01T17:02:44Z"`). `ts` is always the time the record was written to the trail. The record's `hmac` covers `changed_at` like every other member.
+- **Key-tool changes.** The server's key tool (`pd_keys`) changes the server's key stores while the server is stopped. The next start of the server records each such change as a record of `kind` `914` (channel `internal`): the Windows account that ran the tool in `actor.user`, the secret that opened the key store in `actor.auth` (`none`, `machine`, `password` or `recovery-code`), `key-tool` in `actor.info`, the key store as the `target` (`server_option` with the `id` `config` or `audit`), the change in `reason` -- for example `Key tool: recovery-replaced (key-store generation 3)` -- and, as a JSON object in the `details` string, the change's id, which is also the record's `correlation`. Its `changed_at` is the time of the change.
+- **Earlier records** are returned unchanged, with the `schema` they were written with; a record of schema 1 or 2 has no `changed_at`.
+
+**Client guidance:** where `changed_at` is not empty, show it as the time of the event and `ts` as the time it was recorded; order records by `seq`. Ignore members you do not know, and do not require `changed_at` on every line.
+
 #### `403` / `4032` When the Licensed Number of Users Is Reached (Behavior Change)
 
 When the server's licensed number of users is reached (the same limit the Server Manager applies; super-administrators do not count), an otherwise valid `POST /admin/users` creates no user and returns `403` with `error.code` = `4032` (`PD_ERRCODE_LICENSE_LIMIT`). `error.message` gives the number of users the server would have with the new account and the licensed number, in the server's language. The refusal is also written to the server log and to the request's admin audit record. Permission, validation and name-conflict errors (`403` with `error.code` `403`, `400`, `409`) are still returned first.
