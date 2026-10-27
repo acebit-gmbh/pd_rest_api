@@ -173,6 +173,8 @@ The authentication follows the standard [HTTP Negotiate protocol (RFC 4559)](htt
 3. Client's HTTP stack automatically retries with `Authorization: Negotiate <SPNEGO-token>` using the process identity's Kerberos ticket.
 4. Server validates the token via SSPI (`AcceptSecurityContext`), maps the authenticated Windows identity to a Password Depot user (by SAM or UPN), and returns a JWT access token.
 
+**Mutual authentication.** *Server 20.0.0 and later.* Where the server's security context produced a final token on the request that completes the handshake, the `200` carries it as `WWW-Authenticate: Negotiate <token>`, as [RFC 4559 &sect;4.1](https://datatracker.ietf.org/doc/html/rfc4559#section-4.1) allows: the server's last SPNEGO token, base64-encoded like the tokens of the handshake. The token belongs to the request that completes the handshake, so an answer other than the `200` on that request (a refusal, a second-factor challenge) carries none. A client that wants to authenticate the server passes this token to its GSS-API or SSPI security context (`gss_init_sec_context`, `InitializeSecurityContext`) as the server's last token, and treats the response as unverified if its context then reports a failure. A `200` without the header completes the sign-in as well. A client that does not need mutual authentication ignores the header.
+
 **Required fields:** none (the `Authorization: Negotiate` header is handled by the HTTP client library)
 
 **Optional fields:** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients)), and for two-factor authentication `tfacode`, `trust_device` and `tfatoken` (see [Trusted Devices](#trusted-devices)). The two-factor members must be in the body of the request that completes the handshake. The platform declared on the first request holds for the whole handshake; a retry may omit it but must not declare a different one.
@@ -521,6 +523,8 @@ When the request carried `"trust_device": true` and made the device trusted (Ser
 
 !!! info "Simplified Response"
     Unlike v1.0, the login response has no `client_id` -- the Bearer token alone identifies the session. Besides `access_token` it carries the trusted-device fields above, only when the login asked for them with `trust_device`, and with the client scope the user's `policy`. Ignore members you do not know.
+
+With `auth: "negotiate"` (*Server 20.0.0 and later*), the `200` can also carry the header `WWW-Authenticate: Negotiate <token>` with the server's final SPNEGO token, for clients that authenticate the server; see [`negotiate`](#negotiate). The body is the same as with every other method.
 
 ### Token Lifetime
 

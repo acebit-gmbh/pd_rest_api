@@ -34,6 +34,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `auth_modes` answers the sign-in methods the server's policies allow the user; a write sets the account type and the user's own **Allowed sign-in methods** entry and can answer `403` or `409`; the new read-only `account_type` names the account type
 - the server's, a group's and a user's policies can be read and changed in the admin scope: `GET` and `PATCH` on `/admin/server/policy`, `/admin/groups/{id}/policy` and `/admin/users/{id}/policy` with `ETag` / `If-Match` and the new statuses `412`, `428` and `503`, `GET /admin/policy-registry` and `GET /admin/policy-conflicts`; an error the policies decide carries the policy reply as `error.policy`; a change can be previewed with `POST` on `/admin/server/policy/preview`, `/admin/groups/{id}/policy/preview` and `/admin/users/{id}/policy/preview`, which changes nothing and is recorded in the audit trail only where it counts users the caller may not read
 - a successful client-scope sign-in (`POST /auth/login`, `POST /auth/webauthn/complete`) also carries `policy`, the signed-in user's client policy bundle, after its other members; `GET /me/policy` returns the user's bundle in every session
+- a Negotiate sign-in's `200` can carry the server's final SPNEGO token in `WWW-Authenticate: Negotiate <token>`, for clients that authenticate the server (mutual authentication); a client that does not need it ignores the header
 - `open_uuid` and `approve_uuid` are optional in the secret representation
 - `include_totp: false` on a shared secret is applied: the recipient no longer gets the entry's one-time code
 - deleted entries and folders answer `404`
@@ -432,6 +433,12 @@ See [Policies for Clients](api-reference/client-policy.md).
 
 !!! warning "Behavior change for clients"
     The answer of a client-scope sign-in has a new member. A client that refuses members it does not know must accept `policy`. The shape of the bundle can still gain members until a Password Depot app applies it: ignore the members you do not know. Detect the feature by `policy` in a client-scope sign-in answer, or by `GET /me/policy` answering `200` with `type` `pd-policy-bundle`; `404` there means the server issues no bundle, while `500` means that it could not issue one at that moment, never that no policy applies.
+
+#### The Server's Final Token on a Negotiate Sign-In
+
+A Negotiate sign-in (`POST /auth/login` with `auth: "negotiate"`) that completes with `200` carries the header `WWW-Authenticate: Negotiate <token>` where the server's security context produced a final token, as [RFC 4559 &sect;4.1](https://datatracker.ietf.org/doc/html/rfc4559#section-4.1) allows: the server's last SPNEGO token, base64-encoded like the tokens of the handshake. A client that wants to authenticate the server (mutual authentication) passes it to its GSS-API or SSPI security context (`gss_init_sec_context`, `InitializeSecurityContext`) as the server's last token, and treats the response as unverified if its context then reports a failure. A `200` without the header completes the sign-in as well. The body of the `200` is the same as with every other `auth` method.
+
+**Client guidance:** a client that does not need mutual authentication ignores the header. See [`negotiate`](api-reference/authentication.md#negotiate).
 
 ### Administration and Permissions
 
@@ -901,8 +908,6 @@ A request that carries more than one `Content-Length` header is refused with `40
 #### `408` When the Request Headers Stop Arriving
 
 If a request's header block stops arriving part-way through - silence for longer than the idle timeout between the request line and the blank line that ends the headers - the server answers `408 Request Timeout` with `error.code` `408` and closes the connection. The body is never read and the request is not dispatched. This is **not** what an idle connection being closed looks like: that is silent and carries no response. A client that receives `408` may retry on a new connection. Like the other header-stage refusals, the body is the JSON error object labelled `text/html; charset=utf-8`.
-
-Servers before 20.0.0 had no read timeout on a REST connection at all: a peer that connected and then said nothing held a server thread indefinitely.
 
 ### Shared-Link Page
 

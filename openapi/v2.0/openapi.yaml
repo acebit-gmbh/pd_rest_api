@@ -314,6 +314,20 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "200":
           description: Authentication successful
+          headers:
+            WWW-Authenticate:
+              schema:
+                type: string
+              description: |
+                Server 20.0.0 and later, `auth: negotiate` only: the server's
+                final SPNEGO token as `Negotiate <base64 token>`, sent where
+                the server's security context produced one on the request that
+                completes the handshake (RFC 4559, section 4.1). A client that
+                authenticates the server passes the token to its GSS-API or
+                SSPI security context and treats the response as unverified if
+                its context reports a failure; a client that does not need
+                mutual authentication ignores the header.
+              example: "Negotiate oYG3MIG0oAMKAQChCwYJKoZIgvcSAQICooGf..."
           content:
             application/json:
               schema:
@@ -363,6 +377,16 @@ paths:
             sspi before the password is checked, otherwise once the token or
             the Windows sign-in was accepted. It counts towards the IP lockout
             (429), not against the account.
+          headers:
+            WWW-Authenticate:
+              schema:
+                type: string
+              description: |
+                `auth: negotiate` only, on a leg of the handshake that asks
+                for the next one: `Negotiate`, or `Negotiate <base64 token>`
+                with the server's next SPNEGO token. Send the next token in
+                `Authorization: Negotiate <token>` on the same connection.
+              example: "Negotiate"
           content:
             application/json:
               schema:

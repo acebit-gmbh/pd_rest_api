@@ -168,6 +168,8 @@ The HTTP client library handles the Negotiate handshake automatically:
     token = response.json()["access_token"]
     ```
 
+*Server 20.0.0 and later:* the `200` that completes the sign-in can carry `WWW-Authenticate: Negotiate <token>`, the server's final SPNEGO token. A client that wants to verify the server (mutual authentication) passes it to its GSS-API or SSPI security context; a client that does not need this ignores it. See the [full reference](../api-reference/authentication.md#negotiate).
+
 !!! warning "Prerequisites"
     - The server must allow **Integrated Windows Authentication**: from Server 20.0.0 the **Allowed sign-in methods** policy must include it (`iwa`) for the user; earlier servers enable it in the server options
     - The PD user account must have `iwa` among the methods it may use (its [`auth_modes`](../api-reference/users.md#auth_modes-values)), as an Active Directory account has wherever the policies allow it, with SAM or UPN populated
