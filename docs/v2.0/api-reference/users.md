@@ -341,7 +341,7 @@ No response body.
 | `409 Conflict` | User does not use `standard` authentication (password change is not applicable) |
 
 !!! warning "Super-administrator accounts"
-    The built-in super-administrator password **cannot** be changed via the REST API. Use the Password Depot Server Manager (native admin application) instead. This is a deliberate restriction -- super-admin credentials are infrastructure-critical and managed outside the REST surface.
+    This endpoint refuses every super-administrator account. The built-in administrator's password -- the super administrator password, which the server's configuration key store keeps -- is changed or reset with [`POST /v2.0/admin/key-stores/super-admin-password`](key-stores.md#change-or-reset-the-super-administrator-password) (Server 20.0.0 and later) or in the Password Depot Server Manager.
 
 !!! warning "`cannot_change_pass` flag"
     If the account has `cannot_change_pass: true` (set by an administrator), this endpoint returns `403`. The user must ask their administrator to either clear the flag or rotate the password via `POST /admin/users/{id}/password`.
@@ -963,7 +963,7 @@ Sets a new password for a user. Only users whose `auth_modes` include `"standard
 !!! warning "Self-service"
     For your own password prefer [`POST /v2.0/me/password`](#change-own-password), which requires the current password. Used on your own account, this endpoint also ends your own REST sessions.
 
-    The built-in **super-administrator** password cannot be changed via **any** REST endpoint (both `/admin/users/{id}/password` and `/me/password` return `403` for this account). Use the Password Depot Server Manager (native admin application) to change the super-admin password.
+    Neither `/admin/users/{id}/password` nor `/me/password` sets the password of a **super-administrator** account: both return `403` for it. The built-in administrator's password -- the super administrator password -- is changed or reset with [`POST /v2.0/admin/key-stores/super-admin-password`](key-stores.md#change-or-reset-the-super-administrator-password) (Server 20.0.0 and later) or in the Password Depot Server Manager.
 
 #### Path Parameters
 

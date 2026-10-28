@@ -76,6 +76,7 @@ nav:
       - Permissions: api-reference/permissions.md
       - Policies: api-reference/policies.md
       - Policies for Clients: api-reference/client-policy.md
+      - Key Stores: api-reference/key-stores.md
       - Alerts: api-reference/alerts.md
       - Secrets: api-reference/secrets.md
   - Changelog: changelog.md

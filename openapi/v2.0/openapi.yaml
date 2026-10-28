@@ -284,6 +284,8 @@ tags:
     description: Group management (admin scope required)
   - name: Admin - Policies
     description: The server's, groups' and users' policies, the preview of a change, the policy registry and the group conflicts (admin scope required; Server 20.0.0 and later)
+  - name: Admin - Key Stores
+    description: The state of the server's key stores, the confirmation and the re-issue of a recovery code, and the change and reset of the super administrator password (admin scope required; Server 20.0.0 and later)
   - name: Admin - Alerts
     description: Alert management (admin scope required)
   - name: Admin - Secrets
@@ -2387,6 +2389,313 @@ paths:
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
 
+  # --- Admin Key Stores (Server 20.0.0 and later) ---
+  /admin/key-stores:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    get:
+      operationId: adminGetKeyStores
+      tags:
+        - Admin - Key Stores
+      summary: The state of the server's key stores (admin)
+      description: |
+        Requires an admin-scoped session of the built-in administrator or of
+        an account with the Security Officer role itself; a long-lived API
+        token with the admin scope may read it. Server 20.0.0 and later.
+        Never a secret, and no audit record. A mirror server answers from
+        its own key stores. Every member of one key store is read from one
+        generation of it. Any other method answers `405` with `Allow: GET`;
+        any other path under `/admin/key-stores` answers `404`.
+      responses:
+        "200":
+          description: The state of the configuration and the audit key store
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: "Always `no-store`, with `Pragma: no-cache`"
+              example: "no-store"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyStoreStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not an admin-scoped session, or the caller is neither the built-in administrator nor a Security Officer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: A key store changed while its state was read; read it again
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/key-stores/recovery-code/confirm:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    post:
+      operationId: adminConfirmRecoveryCode
+      tags:
+        - Admin - Key Stores
+      summary: Confirm a key store's recovery code by typing it back (admin)
+      description: |
+        Requires an admin-scoped session of the built-in administrator or of
+        an account with the Security Officer role itself. Server 20.0.0 and
+        later. A long-lived API token is answered `403` before the body is
+        read, and a mirror server answers `403` before the token is
+        examined. The body is strict JSON, taken as sent. A code that does
+        not open the key store is answered `403` and counted for the session
+        and the client's address; after repeated wrong passwords or codes on
+        the key-store endpoints the session ends. A code with a typing error
+        is answered `400` and not counted. Recorded in the audit trail as
+        kind `917`, channel `rest`, before the key store changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoveryCodeConfirmRequest"
+      responses:
+        "200":
+          description: The code is confirmed; `changed` is `false` when it was confirmed before and nothing was written
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: "Always `no-store`, with `Pragma: no-cache`"
+              example: "no-store"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodeConfirmResponse"
+        "400":
+          description: A malformed body, `vault` missing or unknown, or a code with a typing error (not counted)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller may not, a long-lived API token, a code that does not open the key store (counted), or a mirror server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: A backup is running; confirm the code again when it has finished
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: A body larger than 65535 bytes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          description: The key store could not be changed; nothing was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The key store is not open, the code could not be checked, or the audit trail cannot record the confirmation; nothing was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/key-stores/recovery-code:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    post:
+      operationId: adminIssueRecoveryCode
+      tags:
+        - Admin - Key Stores
+      summary: Issue a new recovery code for a key store (admin)
+      description: |
+        Requires an admin-scoped session of the built-in administrator or of
+        an account with the Security Officer role itself. Server 20.0.0 and
+        later. A long-lived API token is answered `403` before the body is
+        read, and a mirror server answers `403` before the token is
+        examined. The new code is proved by the key store's current recovery
+        code or by the super administrator password; for the audit key
+        store, the password is the way in when its own code is lost, which
+        is recorded as kind `918` and warned of in the server's Windows
+        event log. The previous code no longer opens the key store; copies
+        made before still open with it. The answer carries the new code
+        once: show it to the person who writes it down, then confirm it with
+        `adminConfirmRecoveryCode`; never log, store or cache it. A wrong
+        current code or password is answered `403` and counted as on the
+        confirmation. Recorded as kind `907` (or `918`), channel `rest`,
+        before the key store changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoveryCodeIssueRequest"
+      responses:
+        "200":
+          description: The new recovery code, its members in this order, ASCII JSON
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: "Always `no-store`, with `Pragma: no-cache`"
+              example: "no-store"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodeIssueResponse"
+        "400":
+          description: A malformed body, `vault` or `by` missing or unknown, or a code with a typing error (not counted)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller may not, a long-lived API token, a wrong current code or password (counted), or a mirror server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: A backup is running; issue the code again when it has finished
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: A body larger than 65535 bytes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          description: The new code was saved, but the key file does not open with it, so it was not shown (issue a new code again); or the key store could not be changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The key store is not open, the code or password could not be checked, or the audit trail cannot record the change; nothing was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/key-stores/super-admin-password:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    post:
+      operationId: adminSetSuperAdminPassword
+      tags:
+        - Admin - Key Stores
+      summary: Change or reset the super administrator password (admin)
+      description: |
+        Requires an admin-scoped session of the built-in administrator or of
+        an account with the Security Officer role itself. Server 20.0.0 and
+        later. A long-lived API token is answered `403` before the body is
+        read, and a mirror server answers `403` before the token is
+        examined; each server keeps its own super administrator password.
+        The super administrator password is the built-in administrator's
+        sign-in password, which the configuration key store keeps. A change
+        is proved by the current password, a reset by the configuration key
+        store's recovery code, which the reset confirms. The new password is
+        taken as sent; it may not be empty or `admin` in any letter case,
+        must be well-formed text, and must meet the account password
+        policies for the built-in administrator (the history and the minimum
+        age only for the built-in administrator's own change). A wrong
+        current password or reset code is answered `403` and counted as on
+        the recovery-code endpoints. A change or reset ends the built-in
+        administrator's sessions, REST sessions included -- the caller's own
+        when the built-in administrator changes their own password, after
+        the `200` -- and keeps their long-lived API tokens. Recorded as kind
+        `915` (change) or `916` (reset), channel `rest`, before the key store
+        changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SuperAdminPasswordRequest"
+      responses:
+        "200":
+          description: The password is changed or reset
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: "Always `no-store`, with `Pragma: no-cache`"
+              example: "no-store"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuperAdminPasswordResponse"
+        "400":
+          description: A malformed body, `by` missing or unknown, a new password that is refused (empty, `admin`, not well-formed text, or against the account password policies, the rules named in the message), or a reset code with a typing error (not counted)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller may not, a long-lived API token, a wrong current password or reset code (counted), or a mirror server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: A backup is running; change the password again when it has finished
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: A body larger than 65535 bytes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          description: The password could not be changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The configuration key store is not open, the current password could not be checked, or the audit trail cannot record the change; nothing was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   # --- Admin Alerts ---
   /admin/alerts:
     parameters:
@@ -2693,8 +3002,11 @@ paths:
       summary: Change the caller's own password
       description: |
         Requires knowledge of the current password. Only users whose
-        `auth_modes` include `standard` can change their password here. The built-in
-        super-administrator account cannot use this endpoint. Server 20.0.0
+        `auth_modes` include `standard` can change their password here. No
+        super-administrator account can use this endpoint: the built-in
+        administrator's password is changed with
+        `adminSetSuperAdminPassword` (Server 20.0.0 and later) or in the
+        Password Depot Server Manager. Server 20.0.0
         and later: the new password must also pass the server's account
         password policies that apply to the account, including the minimum
         age since the last change; a successful change ends an expiry that
@@ -3362,8 +3674,10 @@ paths:
       summary: Set a user's password (admin)
       description: |
         Admin password reset. Unlike `/me/password`, this does not require
-        the user's current password. Not allowed for the super-administrator
-        account -- that must be changed via the Password Depot Server Manager.
+        the user's current password. Not allowed for a super-administrator
+        account: the built-in administrator's password is changed or reset
+        with `adminSetSuperAdminPassword` (Server 20.0.0 and later) or in the
+        Password Depot Server Manager.
         Server 20.0.0 and later: the new password must pass the server's
         account password policies that apply to the user; the minimum age
         since the last change applies only when the caller sets their own
@@ -8708,3 +9022,167 @@ components:
           description: In the order of the setting ids
           items:
             $ref: "#/components/schemas/PolicyGroupConflict"
+
+    # --- Key stores (Server 20.0.0 and later) ---
+    KeyStoreStatus:
+      type: object
+      required: [stores]
+      properties:
+        stores:
+          type: array
+          description: The configuration key store, then the audit key store
+          items:
+            $ref: "#/components/schemas/KeyStoreState"
+
+    KeyStoreState:
+      type: object
+      description: |
+        The state of one key store, never a secret. A key store that is not
+        open has `vault` and `open` only; every member of an open one is read
+        from one generation of it.
+      required: [vault, open]
+      properties:
+        vault:
+          type: string
+          enum: [config, audit]
+        open:
+          type: boolean
+          description: Whether the server opened the key store
+        identity:
+          type: string
+          description: The key store's identity, the same for its whole life, printed with its recovery code
+          example: "hNzaNvwX7nWfWt_KSyqkfw"
+        fingerprint:
+          type: string
+          description: The fingerprint of the key store's root, printed with its recovery code
+          example: "3b60eea8b676521f"
+        generation:
+          type: integer
+          format: int64
+          description: The key store's generation; every change raises it
+        machine:
+          type: string
+          enum: [tpm, dpapi-machine]
+          description: What binds the key store to this computer
+        slots:
+          type: array
+          description: How the key store opens - `machine` (on this computer), `password` (with the super administrator password; the configuration key store only), `recovery` (with its recovery code)
+          items:
+            type: string
+            enum: [machine, password, recovery]
+        recovery_confirmed:
+          type: boolean
+          description: Whether the key store's current recovery code was typed back
+
+    RecoveryCodeConfirmRequest:
+      type: object
+      required: [vault, code]
+      properties:
+        vault:
+          type: string
+          enum: [config, audit]
+        code:
+          type: string
+          description: The recovery code as written down, taken as sent
+          example: "<recovery code>"
+
+    RecoveryCodeConfirmResponse:
+      type: object
+      properties:
+        vault:
+          type: string
+          enum: [config, audit]
+        recovery_confirmed:
+          type: boolean
+          description: Always `true`
+        changed:
+          type: boolean
+          description: "`false` when the code was confirmed before; nothing was written then"
+        identity:
+          type: string
+        generation:
+          type: integer
+          format: int64
+
+    RecoveryCodeIssueRequest:
+      type: object
+      required: [vault, by]
+      description: |
+        The new code is proved by the key store's current recovery code
+        (`by` `recovery-code`, with `code`) or by the super administrator
+        password (`by` `password`, with `current`). Every member is taken as
+        sent.
+      properties:
+        vault:
+          type: string
+          enum: [config, audit]
+        by:
+          type: string
+          enum: [recovery-code, password]
+        code:
+          type: string
+          description: The key store's current recovery code, with `by` `recovery-code`
+        current:
+          type: string
+          description: The super administrator password, with `by` `password`
+
+    RecoveryCodeIssueResponse:
+      type: object
+      description: |
+        The members in this order, ASCII JSON. `code` is the new recovery
+        code: show it once to the person who writes it down, never log,
+        store or cache it.
+      properties:
+        vault:
+          type: string
+          enum: [config, audit]
+        by:
+          type: string
+          enum: [recovery-code, password]
+        code:
+          type: string
+          example: "<new recovery code>"
+        fingerprint:
+          type: string
+        identity:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        recovery_confirmed:
+          type: boolean
+          description: Always `false` - the new code is unconfirmed until it is typed back
+
+    SuperAdminPasswordRequest:
+      type: object
+      required: [by, new]
+      description: |
+        A change is proved by the current password (`by` `password`, with
+        `current`), a reset by the configuration key store's recovery code
+        (`by` `recovery-code`, with `code`). Every member is taken as sent.
+      properties:
+        by:
+          type: string
+          enum: [password, recovery-code]
+        current:
+          type: string
+          description: The current super administrator password, with `by` `password`
+        code:
+          type: string
+          description: The configuration key store's recovery code, with `by` `recovery-code`
+        new:
+          type: string
+          description: The new super administrator password
+
+    SuperAdminPasswordResponse:
+      type: object
+      properties:
+        by:
+          type: string
+          enum: [password, recovery-code]
+        held:
+          type: boolean
+          description: Always `false`
+        recovery_confirmed:
+          type: boolean
+          description: Present after a reset only, `true` - the recovery code the reset used is confirmed
