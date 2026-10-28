@@ -628,6 +628,10 @@ An Android client that the server's **Allowed client platforms** policy does not
 
 A client whose declared version is below the server's **Minimum client version** policy, or that declares no version where a minimum applies, receives `403` with `error.code: 4037` and a message naming the version required, at login and on later requests of its session. The `web` platform is never refused. See [Minimum Client Version](#minimum-client-version).
 
+**403 -- Built-in administrator password to be replaced** *(`error.code` `4038`)*
+
+*Server 20.0.0 and later.* A password of the built-in administrator set with the server's key tool (`pd_keys` -- when it creates or upgrades the server's key stores, and `pd_keys password`) is not checked against the server's account password policies when it is set; a password set in the Server Manager is. The server checks a password set with the key tool against **Account password: character groups**, **Account password: minimum character groups** and **Account password: minimum length** (see [Password Rules](users.md#password-rules)) at the account's next password sign-in. A `standard` sign-in with the right password that does not meet them receives `403` with `error.code: 4038` and a message that names the Server Manager and `pd_keys password`; no token is issued and no second factor is asked. It does not count towards the IP lockout (`429`) or against the account. The server log and the audit record name the policies not met. A password that meets them is accepted and not checked again. Show the message; do not retry and do not report it as incorrect credentials.
+
 **401 -- Unauthorized**
 
 ```json

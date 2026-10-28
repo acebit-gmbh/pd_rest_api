@@ -123,10 +123,14 @@ info:
     being edited by another user; nothing was deleted or written, Server
     20.0.0 and later), `4036`
     (`PD_ERRCODE_ANDROID_DISABLED` -- the Android client is disabled, at login,
-    on OIDC discovery or on authenticated requests, Server 20.0.0 and later)
-    and `4037` (`PD_ERRCODE_CLIENT_OUTDATED` -- the client's declared version
+    on OIDC discovery or on authenticated requests, Server 20.0.0 and later),
+    `4037` (`PD_ERRCODE_CLIENT_OUTDATED` -- the client's declared version
     is below the server's Minimum client version policy, at login or on
-    authenticated requests, Server 20.0.0 and later) with HTTP `403`;
+    authenticated requests, Server 20.0.0 and later) and `4038`
+    (`PD_ERRCODE_ADMIN_PASSWORD_RULES` -- `login` of the built-in
+    administrator: its password, set with the server's key tool, does not
+    meet the server's account password policies, Server 20.0.0 and later)
+    with HTTP `403`;
     `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
     `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
     that id in this database, Server 20.0.0 and later) with HTTP `404`;
@@ -4596,7 +4600,14 @@ components:
         policy (session.client.min_version), or that declares none where a
         minimum applies, gets error.code 4037 with a message naming the version
         required, at login and on authenticated requests of its session; the
-        web platform and long-lived API tokens are never refused so.
+        web platform and long-lived API tokens are never refused so. A
+        `standard` login of the built-in administrator with the right password,
+        set with the server's key tool, that does not meet the server's account
+        password policies (account.password.classes, account.password.min_classes,
+        account.password.min_length) gets error.code 4038 with a message naming
+        the Server Manager and pd_keys password: no token is issued, no second
+        factor is asked, and it is not counted towards the IP lockout or against
+        the account (Server 20.0.0 and later).
       content:
         application/json:
           schema:
@@ -4617,6 +4628,11 @@ components:
                 error:
                   code: 4037
                   message: "This version of the application can no longer sign in to the server. Version 20.1.0 or later is required. Please update the application."
+            adminPasswordRules:
+              value:
+                error:
+                  code: 4038
+                  message: "The password of the built-in administrator does not meet the server's password policies. Sign in with the Server Manager to set a new one, or run \"pd_keys password\" on the server."
 
     NotFound:
       description: Resource not found
@@ -7355,10 +7371,13 @@ components:
                 being edited by another user; nothing was deleted or written, Server
                 20.0.0 and later), `4036` (`PD_ERRCODE_ANDROID_DISABLED` -- the
                 Android client is disabled, at login, on OIDC discovery or on
-                authenticated requests, Server 20.0.0 and later) and `4037`
+                authenticated requests, Server 20.0.0 and later), `4037`
                 (`PD_ERRCODE_CLIENT_OUTDATED` -- the client's declared version is
                 below the server's Minimum client version policy, Server 20.0.0
-                and later) with HTTP `403`;
+                and later) and `4038` (`PD_ERRCODE_ADMIN_PASSWORD_RULES` -- `login`
+                of the built-in administrator: its password, set with the server's
+                key tool, does not meet the server's account password policies,
+                Server 20.0.0 and later) with HTTP `403`;
                 `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
                 `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
                 that id in this database, Server 20.0.0 and later) with HTTP `404`; and
