@@ -1614,6 +1614,9 @@ paths:
             names each rule broken, its setting and the scope that set
             it, on a line of its own. Nothing is changed: no user is
             created.
+            From Server 20.0.0 also a `new_password` that is not
+            well-formed Unicode text (a UTF-16 surrogate outside a
+            pair); no user is created.
             From Server 20.0.0 also a refused directory binding (`idp`,
             `idp_user_id`): a value with white space at either end, a
             control character or more than 255 characters; a non-empty
@@ -2717,6 +2720,13 @@ paths:
             the refusal's first line and names each rule broken, its
             setting and the scope that set it, on a line of its own.
             Nothing is changed.
+            From Server 20.0.0 also a new password that is not
+            well-formed Unicode text (a UTF-16 surrogate outside a
+            pair); nothing is changed.
+            From Server 20.0.0 also when another request set or renewed
+            the account's password, or the password rules that apply to
+            the account changed, while this one ran; nothing is
+            changed, and the request can be sent again.
           content:
             application/json:
               schema:
@@ -3385,6 +3395,9 @@ paths:
             `error.message` starts with the refusal's first line and
             names each rule broken, its setting and the scope that set
             it, on a line of its own. Nothing is changed.
+            From Server 20.0.0 also a new password that is not
+            well-formed Unicode text (a UTF-16 surrogate outside a
+            pair); nothing is changed.
           content:
             application/json:
               schema:
