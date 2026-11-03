@@ -20,7 +20,7 @@ Returned by list/children endpoints and create/update responses.
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `type` | string | No | Always `"folder"` |
-| `id` | string (UUID) | No | Unique identifier (server-generated) |
+| `id` | string (UUID) | No | Unique identifier (server-generated). Treat it as an opaque string and compare ids without regard to letter case. *Server 20.0.0 and later:* ids are in lower case, also those of items from an earlier server; an item that another client created under an id of its own can carry that client's letter case, so a database can hold both forms |
 | `name` | string | Yes | Folder name |
 | `icon` | string | No | File name of a standard icon, always `ico0.svg` to `ico134.svg`, served at [`/file/{icon}`](overview.md#entry-icons): the standard icon selected by `image_index`, otherwise the standard folder icon `ico3.svg`. When `database_icon` is set, this is `ico3.svg` and serves as the fallback. *Changed in Server 20.0.0:* earlier servers returned `ico3.svg` whatever `image_index` said, or `<image_name>.ico` for some custom icons. |
 | `database_icon` | object or null | No | The [database icon](icons.md) the folder uses: `{"id", "name", "version"}` of an icon in the folder's own database, or `null` when the folder uses a standard icon or its custom icon no longer exists. It carries no image data - fetch the image with [List Icons](icons.md#list-icons) or [Get Icon](icons.md#get-icon) and cache it by `version`. Absent on servers older than 20.0.0: treat a missing field as "not supported". |

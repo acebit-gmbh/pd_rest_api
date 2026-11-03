@@ -55,7 +55,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases" \
   "data": [
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
-      "name": "Company Passwords.pswe",
+      "name": "Company Passwords.pdepot",
       "description": "Main corporate password database",
       "updated_at": "2024-11-20T16:45:00.000Z",
       "icons": {
@@ -74,7 +74,7 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases" \
     },
     {
       "id": "660e8400-e29b-41d4-a716-446655440001",
-      "name": "IT Infrastructure.pswe",
+      "name": "IT Infrastructure.pdepot",
       "description": "Infrastructure credentials",
       "updated_at": "2024-12-01T09:00:00.000Z",
       "icons": {

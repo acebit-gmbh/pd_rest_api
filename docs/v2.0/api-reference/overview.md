@@ -178,7 +178,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 |:----:|------|-------------|
 | `400` | Bad Request | Invalid request body, missing required fields, or malformed parameters |
 | `401` | Unauthorized | Invalid credentials, expired token, or missing `Authorization` header |
-| `403` | Forbidden | Insufficient permissions, a disabled client platform, a client version below the server's minimum, or a built-in administrator password that does not meet the account password policies; Android disabled uses `error.code: 4036`, an outdated client `error.code: 4037`, a built-in administrator password to be replaced `error.code: 4038` |
+| `403` | Forbidden | Insufficient permissions, a disabled client platform, a client version below the server's minimum, a built-in administrator password that does not meet the account password policies, or (*Server 20.0.0 and later*) a change to a database that accepts no changes at the moment, with `error.code: 403` - reading it still works; Android disabled uses `error.code: 4036`, an outdated client `error.code: 4037`, a built-in administrator password to be replaced `error.code: 4038` |
 | `404` | Not Found | The requested resource (database, entry, folder, user, etc.) does not exist |
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification); a directory identity another account holds uses `error.code: 4091` |
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
@@ -189,7 +189,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `459` | TFA Not Activated | Two-factor authentication needs initial setup (the path of a QR code image, relative to the server's address, is returned in `error.message`) |
 | `460` | TFA Code Required | A valid 6-digit 2FA code, or a trusted-device token the server accepts, must be provided to complete login |
 | `500` | Internal Server Error | Unexpected server-side error |
-| `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0 |
+| `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0. *Server 20.0.0 and later:* also a request for the contents of a database this server cannot open at the moment; the database is still listed by `GET /v2.0/databases`. Match the status, not the message |
 | `503` | Service Unavailable | A [policy change](policies.md#update-server-policy) cannot be made at the moment and was not made, or cannot be previewed at the moment; the same request may succeed later |
 
 ## HTTP Methods
@@ -235,7 +235,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `204` | No Content | Request succeeded; no response body (used for DELETE and logout) |
 | `400` | Bad Request | Client error in the request |
 | `401` | Unauthorized | Authentication required or failed |
-| `403` | Forbidden | Insufficient permissions or a disabled client platform |
+| `403` | Forbidden | Insufficient permissions, a disabled client platform, or a database that accepts no changes at the moment |
 | `404` | Not Found | Resource does not exist |
 | `405` | Method Not Allowed | HTTP method not supported for this endpoint; `Allow` header lists supported methods |
 | `408` | Request Timeout | The request headers stopped arriving part-way through; the connection is closed |
@@ -249,7 +249,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `459` | TFA Not Activated | 2FA initial setup required |
 | `460` | TFA Code Required | 2FA code needed |
 | `500` | Internal Server Error | Server-side failure |
-| `501` | Not Implemented | Requested operation is unsupported for the entry type (for example, one-time codes on a certificate) |
+| `501` | Not Implemented | Requested operation is unsupported for the entry type (for example, one-time codes on a certificate), or the contents of the database cannot be opened at the moment (Server 20.0.0 and later) |
 | `503` | Service Unavailable | Temporarily not possible; nothing was changed (policy routes) |
 
 !!! info "Method Not Allowed (`405`)"

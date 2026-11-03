@@ -288,6 +288,8 @@ tags:
     description: The state of the server's key stores, the confirmation and the re-issue of a recovery code, and the change and reset of the super administrator password (admin scope required; Server 20.0.0 and later)
   - name: Admin - Alerts
     description: Alert management (admin scope required)
+  - name: Admin - Audit
+    description: The server's audit trail (admin scope and an audit role required)
   - name: Admin - Secrets
     description: Secret management (admin scope required)
   - name: Admin - Passkeys
@@ -589,36 +591,6 @@ paths:
   /databases/{db}/folders:
     parameters:
       - $ref: "#/components/parameters/ClientIdentityHeader"
-    get:
-      operationId: listFolders
-      tags:
-        - Folders
-      summary: List folders in a database
-      description: |
-        Returns root-level folders by default. Use the `parent` query parameter
-        to list children of a specific folder.
-      parameters:
-        - $ref: "#/components/parameters/DatabaseIdPath"
-        - name: parent
-          in: query
-          description: Parent folder ID to list children of. Omit for root-level folders.
-          required: false
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: List of folders (basic representation)
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/FolderBasic"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
     post:
       operationId: createFolder
       tags:
@@ -855,43 +827,6 @@ paths:
   /databases/{db}/entries:
     parameters:
       - $ref: "#/components/parameters/ClientIdentityHeader"
-    get:
-      operationId: listEntries
-      tags:
-        - Entries
-      summary: List entries in a database
-      description: |
-        Returns entries in the database. Use the `folder` query parameter to
-        filter by folder. Supports pagination.
-      parameters:
-        - $ref: "#/components/parameters/DatabaseIdPath"
-        - name: folder
-          in: query
-          description: Filter entries by folder ID
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - $ref: "#/components/parameters/PaginationOffset"
-        - $ref: "#/components/parameters/PaginationLimit"
-      responses:
-        "200":
-          description: Paginated list of entries
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/PaginatedResponse"
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/Entry"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
     post:
       operationId: createEntry
       tags:
@@ -1314,7 +1249,11 @@ paths:
       tags:
         - Admin - Databases
       summary: List all server databases (admin)
-      description: Returns all databases on the server regardless of user permissions. Requires an admin-scoped session.
+      description: |
+        Returns the databases the caller manages: every database for a server
+        administrator, and for a database administrator the databases they are
+        designated to manage. `total` counts the databases visible to the
+        caller. Requires an admin-scoped session.
       parameters:
         - $ref: "#/components/parameters/PaginationOffset"
         - $ref: "#/components/parameters/PaginationLimit"
@@ -2696,6 +2635,114 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  # --- Admin Audit ---
+  /admin/audit:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    get:
+      operationId: adminGetAudit
+      tags:
+        - Admin - Audit
+      summary: Export the audit trail (admin)
+      description: |
+        Returns the records of the server's audit trail as they are stored,
+        one JSON object per line (newline-delimited JSON), not in the
+        paginated envelope. Requires an admin-scoped session of an account
+        with the role `server_admin`, `audit_reader` or `security_officer`;
+        other callers receive `403`. The filters combine; a filter that is
+        omitted does not restrict the result. When more records match than
+        the row limit allows, the most recent ones are returned, in the order
+        of the trail. Every export, also one that fails while the records are
+        read, is itself recorded in the audit trail.
+      parameters:
+        - name: start
+          in: query
+          required: false
+          description: Only records written at or after this instant (ISO 8601, UTC). An invalid value answers `400`.
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          required: false
+          description: Only records written at or before this instant (ISO 8601, UTC). An invalid value answers `400`.
+          schema:
+            type: string
+            format: date-time
+        - name: user_id
+          in: query
+          required: false
+          description: Only records whose `actor.id` is this user id, compared exactly.
+          schema:
+            type: string
+        - name: channel
+          in: query
+          required: false
+          description: Only records of this channel, for example `rest`, compared without regard to letter case.
+          schema:
+            type: string
+        - name: target_kind
+          in: query
+          required: false
+          description: Only records whose `target.kind` is this value, compared without regard to letter case.
+          schema:
+            type: string
+        - name: event_kind_min
+          in: query
+          required: false
+          description: Only records whose `event.kind` is at least this number.
+          schema:
+            type: integer
+            minimum: 1
+        - name: event_kind_max
+          in: query
+          required: false
+          description: Only records whose `event.kind` is at most this number.
+          schema:
+            type: integer
+            minimum: 1
+        - name: limit
+          in: query
+          required: false
+          description: |
+            The most records to return. A value below the server's own maximum
+            lowers the limit; otherwise the server's maximum applies
+            (`X-Audit-Max-Rows`).
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The matching records, one JSON object per line
+          headers:
+            X-Audit-Rows:
+              description: Number of records returned
+              schema:
+                type: integer
+            X-Audit-Files-Scanned:
+              description: Number of audit files the server read for this answer
+              schema:
+                type: integer
+            X-Audit-Max-Rows:
+              description: The row limit applied to this answer
+              schema:
+                type: integer
+            X-Audit-Truncated:
+              description: "`True` when the answer reached the row limit, so older matching records may exist; otherwise `False`"
+              schema:
+                type: string
+                enum: ["True", "False"]
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   # --- Admin Alerts ---
   /admin/alerts:
     parameters:
@@ -4011,7 +4058,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/Entry"
         "400":
-          description: Entry has no supported binary content, or part is invalid for the entry type
+          description: |
+            Entry has no supported binary content, or part is invalid for the
+            entry type. Server 20.0.0 and later: also when the content cannot be
+            stored, with a message that names why; nothing is written.
           content:
             application/json:
               schema:
@@ -4934,7 +4984,10 @@ components:
         account.password.min_length) gets error.code 4038 with a message naming
         the Server Manager and pd_keys password: no token is issued, no second
         factor is asked, and it is not counted towards the IP lockout or against
-        the account (Server 20.0.0 and later).
+        the account (Server 20.0.0 and later). Server 20.0.0 and later also
+        answers 403 with error.code 403 to a change to a database that accepts
+        no changes at the moment: nothing is written, and reading the database
+        still works.
       content:
         application/json:
           schema:
@@ -5835,7 +5888,7 @@ components:
           readOnly: true
         name:
           type: string
-          description: Database name (used as part of the storage filename)
+          description: Database name. From Server 20.0.0 it ends in `.pdepot`.
         description:
           type: string
         updated_at:

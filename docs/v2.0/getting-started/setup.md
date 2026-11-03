@@ -5,7 +5,7 @@ The REST service configuration for v2.0 is the same as for v1.0. If the REST ser
 ## Prerequisites
 
 - **Password Depot Enterprise Server** installed and running
-- **REST web service** enabled in Server Manager
+- **REST web service** enabled in Server Manager (Server 19.x). *Server 20.0.0 and later:* the REST service runs whenever the server runs, on its REST port; the **Allowed client platforms** policy decides which clients may use it
 - **SSL certificate** configured (mandatory since v18.0.0)
 - **Port 8714** open and accessible (default REST port)
 

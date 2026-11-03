@@ -20,7 +20,7 @@ Returned by list/children and search endpoints.
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `type` | string | Yes | Entry type: `password`, `credit_card`, `license`, `identity`, `information`, `banking`, `document`, `encrypted_file`, `certificate`, `rdp`, `putty`, `teamviewer`, `custom`, `passkey`. `encrypted_file` and `certificate` require Server 20.0.0 or later. For folders: `folder`. |
-| `id` | string (UUID) | No | Unique identifier (server-generated) |
+| `id` | string (UUID) | No | Unique identifier (server-generated). Treat it as an opaque string and compare ids without regard to letter case. *Server 20.0.0 and later:* ids are in lower case, also those of items from an earlier server; an item that another client created under an id of its own can carry that client's letter case, so a database can hold both forms |
 | `name` | string | Yes | Entry display name |
 | `has_second_pass` | boolean | No | Whether the entry is protected by a second password |
 | `has_otp` | boolean | No | Whether a one-time code (TOTP) can be generated for this entry - see [Get One-Time Code](#get-one-time-code). For a link, whether the link's own TOTP settings produce one, as the Windows client shows. `false` when you may not read the entry, and always `false` for `encrypted_file` and `certificate`. The seed is never returned. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
@@ -1652,7 +1652,7 @@ Returns the compact representation of the entry. The `document` or `certificate`
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Entry has no supported binary content (including `encrypted_file`), the certificate `part` is invalid, or a document request includes a nonempty `part` |
+| `400 Bad Request` | Entry has no supported binary content (including `encrypted_file`), the certificate `part` is invalid, or a document request includes a nonempty `part`; *Server 20.0.0 and later:* also when the content cannot be stored, with a message that names why; nothing is written |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`), or the entry is being edited by another user (`error.code` `4035`, *Server 20.0.0 and later*); nothing is written |
 | `404 Not Found` | Database or entry not found, or the entry is in the recycle bin |

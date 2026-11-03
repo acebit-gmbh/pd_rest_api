@@ -19,7 +19,7 @@ The database object uses different representations depending on scope and contex
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `id` | string (UUID) | No | Unique identifier (server-generated) |
-| `name` | string | Yes | Database filename |
+| `name` | string | Yes | Database name. *Server 20.0.0 and later:* it ends in `.pdepot`; see [Database Name Rules](#database-name-rules) |
 | `description` | string | Yes | Database description |
 | `size` | integer | No | File size in bytes (admin detail only) |
 | `entries_count` | integer | No | Number of password entries (admin detail only) |
@@ -99,7 +99,7 @@ Returns a paginated list of databases accessible by the authenticated user. Only
     "data": [
         {
             "id": "E79BDEB2-1A58-4715-B74C-28A87A2AFD37",
-            "name": "Corporate Passwords.pswe",
+            "name": "Corporate Passwords.pdepot",
             "description": "Main corporate password database",
             "updated_at": "2025-02-28T13:22:22.753Z",
             "icons": {
@@ -161,7 +161,7 @@ Returns details of a specific database that the user has access to. Returns the 
 ```json
 {
     "id": "E79BDEB2-1A58-4715-B74C-28A87A2AFD37",
-    "name": "Corporate Passwords.pswe",
+    "name": "Corporate Passwords.pdepot",
     "description": "Main corporate password database",
     "updated_at": "2025-02-28T13:22:22.753Z",
     "icons": {
@@ -331,7 +331,7 @@ Returns a paginated list of databases on the server. Returns the compact represe
     "data": [
         {
             "id": "E79BDEB2-1A58-4715-B74C-28A87A2AFD37",
-            "name": "Corporate Passwords.pswe",
+            "name": "Corporate Passwords.pdepot",
             "description": "Main corporate password database",
             "updated_at": "2025-02-28T13:22:22.753Z",
             "icons": {
@@ -350,7 +350,7 @@ Returns a paginated list of databases on the server. Returns the compact represe
         },
         {
             "id": "CD089F93-A0CF-475E-A7A0-7F060D005A8D",
-            "name": "IT Department.pswe",
+            "name": "IT Department.pdepot",
             "description": "Shared IT team credentials",
             "updated_at": "2022-10-17T10:58:40.349Z",
             "icons": {
@@ -404,7 +404,7 @@ Creates a new database.
 
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
-| `name` | string | Yes | Database filename. Must follow the [Database Name Rules](#database-name-rules) below. |
+| `name` | string | Yes | Database name. Must follow the [Database Name Rules](#database-name-rules) below. |
 | `description` | string | No | Database description |
 | `disabled` | boolean | No | Whether the database is disabled (default: `false`). Requires database management permission. |
 | `db_admins` | array of UUIDs | No | Database Administrator user IDs. Requires database management permission. |
@@ -413,14 +413,16 @@ Creates a new database.
 
 ```json
 {
-    "name": "New Database.pswe",
+    "name": "New Database",
     "description": "A new password database"
 }
 ```
 
 ##### Database Name Rules
 
-Database names are mapped directly to directory names on the server's filesystem, so the API enforces the following rules to prevent path traversal and reserved-name collisions. Submitting a name that violates any rule returns `400 Bad Request`.
+The API enforces the following rules on database names. Submitting a name that violates any rule returns `400 Bad Request`.
+
+*Server 20.0.0 and later.* A database's name ends in `.pdepot`. A name sent with `.pswe` or `.pswd` at its end is stored with `.pdepot` in its place, and any other name that does not end in `.pdepot` is stored with `.pdepot` appended; the response carries the stored name. A server upgraded to 20.0.0 lists its databases named `.pswe` or `.pswd` with `.pdepot` in their place, except where another database already has that name; such a database keeps its name until it is renamed. Refer to databases by `id`.
 
 | Rule | Example of rejected value |
 |------|---------------------------|
@@ -443,7 +445,7 @@ The same rules are enforced when renaming a database via `PATCH /v2.0/admin/data
 ```json
 {
     "id": "F5A6B7C8-D9E0-1234-ABCD-567890123456",
-    "name": "New Database.pswe",
+    "name": "New Database.pdepot",
     "description": "A new password database",
     "updated_at": "2025-02-17T09:00:00.000Z",
     "icons": {
@@ -480,7 +482,7 @@ The same rules are enforced when renaming a database via `PATCH /v2.0/admin/data
         -H "Authorization: Bearer <token>" \
         -H "Content-Type: application/json" \
         -d '{
-            "name": "New Database.pswe",
+            "name": "New Database",
             "description": "A new password database"
         }'
     ```
@@ -508,7 +510,7 @@ Returns the **full representation** of a specific database, including size, entr
 ```json
 {
     "id": "E79BDEB2-1A58-4715-B74C-28A87A2AFD37",
-    "name": "Corporate Passwords.pswe",
+    "name": "Corporate Passwords.pdepot",
     "description": "Main corporate password database",
     "size": 2462395,
     "entries_count": 391,
@@ -590,7 +592,7 @@ Updates an existing database. Include only the fields you want to update.
 ```json
 {
     "id": "E79BDEB2-1A58-4715-B74C-28A87A2AFD37",
-    "name": "Corporate Passwords.pswe",
+    "name": "Corporate Passwords.pdepot",
     "description": "Updated description",
     "size": 2462395,
     "entries_count": 391,

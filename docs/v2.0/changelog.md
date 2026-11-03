@@ -40,10 +40,12 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `open_uuid` and `approve_uuid` are optional in the secret representation
 - `include_totp: false` on a shared secret is applied: the recipient no longer gets the entry's one-time code
 - deleted entries and folders answer `404`
+- ids of entries and folders are in lower case, also those of items from an earlier server, though an item another client created can carry that client's letter case: compare ids without regard to letter case
 - `DELETE` on an entry or folder moves the item to the database's recycle bin by default; ask for `?mode=permanent` to destroy it, and expect the new `403` / `4035` for an item another user is editing
 - new recycle-bin routes under `/databases/{db}/recyclebin` and a `recycle_bin` object on every database
 - writing a link's fields answers `409`
 - `super_admin` in `roles` is not applied
+- a database's `name` ends in `.pdepot`: `.pswe` or `.pswd` at the end of a name sent is replaced with `.pdepot`, any other name without it gets `.pdepot` appended, and an upgraded server lists its `.pswe` and `.pswd` databases with `.pdepot` in their place where no other database already has that name
 - stricter passkey verification
 - encrypted-file and certificate entries are exposed in entry CRUD, children, search and the recycle bin; certificate public/private files use the existing `/content` route
 - a `/content` upload, for a document or a certificate file, answers `403` / `4035` while another user is editing the entry, and takes a UTF-8 file name in `filename*`
@@ -56,6 +58,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - a read-only `warning` on every entry: the conditional-access warning set in the Windows client, `null` when there is none, for clients to show before the entry is opened or used
 - connections are reused between requests; an idle one is closed silently after 15 seconds, a `404` no longer closes the connection, and above 1024 connections a new one is refused at TCP level
 - a request that sends `Content-Length` twice answers `400`, and a request whose headers stop arriving answers the new `408`
+- a change to a database that accepts no changes at the moment answers `403`, and a request for the contents of a database the server cannot open at the moment answers `501`
 
 ### Breaking Changes
 
@@ -86,6 +89,10 @@ Maintained REST clients now declare their platform through `X-PD-Client` (for ex
 The platform is retained in new session tokens and checked on every authenticated request. Omitting the header cannot change that platform; a conflicting platform returns `400`, unless the stored platform is disabled and its policy refusal applies first. Long-lived API tokens carry no platform and use the declared header or the `web` fallback. Login requests with no declaration also keep that fallback. No platform is inferred from `User-Agent`.
 
 An Android client the policy does not allow receives HTTP `403`, `error.code: 4036`, and `The Android client is disabled on this server.` Other platforms it does not allow receive a plain `403` with a platform-specific message. Servers before 20.0.0 answer `/v2.0/` requests with `501` instead while the Web Client is disabled, whichever client sends them. Malformed or conflicting identity declarations return `400`. CORS permits `X-PD-Client`. See [Client Identity and Supported Clients](api-reference/authentication.md#client-identity-and-supported-clients) for the complete client contract.
+
+#### The REST Service Runs Whenever the Server Runs (Behavior Change)
+
+The REST service is no longer enabled in the Server Manager: Server 20.0.0 runs it whenever the server runs, on its REST port. The server's **Allowed client platforms** policy decides which clients may use it, as described under **Client Platform Restrictions** above. See [Server Setup](getting-started/setup.md).
 
 ### New Features
 
@@ -621,6 +628,15 @@ When the server's licensed number of users is reached (the same limit the Server
 !!! warning "Behavior change for clients"
     Provisioning scripts must expect `403` / `4032` once the licensed number of users is reached, and must not retry it automatically. Tell it apart from a permission refusal by `error.code`, never by the message. The installed licences are shown in the Server Manager.
 
+#### Database Names End in `.pdepot` (Behavior Change)
+
+A database's `name` ends in `.pdepot`. `POST /admin/databases` and `PATCH /admin/databases/{id}` store a name sent with `.pswe` or `.pswd` at its end with `.pdepot` in its place, and any other name that does not end in `.pdepot` with `.pdepot` appended: `"New Database"` and `"New Database.pswe"` are both stored as `"New Database.pdepot"`. The response carries the stored name. The [Database Name Rules](api-reference/databases.md#database-name-rules) apply as before.
+
+A server upgraded to 20.0.0 lists its databases named `.pswe` or `.pswd` with `.pdepot` in their place, except where another database already has that name; such a database keeps its name until it is renamed.
+
+!!! warning "Behavior change for clients"
+    Refer to databases by `id`, never by name, and take a database's name from the server's answers rather than from the name you sent. Do not add or remove an extension yourself.
+
 ### Entries and Folders
 
 #### `DELETE` Moves an Entry or Folder to the Recycle Bin (Behavior Change)
@@ -760,6 +776,20 @@ Unchanged: when you read through a link and the linked entry has a second passwo
 
 !!! warning "Behavior change for clients"
     A request on a link whose linked entry fails one of the conditions above returns `403` (`error.code` `403`). Links to entries you can read and use directly are unaffected.
+
+#### Entry and Folder Ids Are in Lower Case (Behavior Change)
+
+Server 20.0.0 answers the ids of entries and folders in lower case, such as `f1a2b3c4-d5e6-7890-abcd-ef1234567890`: those of items created through this API (`POST /databases/{db}/entries`, `POST /databases/{db}/folders`), and those of items from an earlier server, which answered them in upper case. An item that another client created under an id of its own can carry that client's letter case, so a database can hold both forms.
+
+!!! warning "Behavior change for clients"
+    Treat an id as an opaque string, and compare ids without regard to letter case, also where your client keys a cache or a map by id: an id your client kept from an earlier server comes back in lower case. See the `id` field in [Entries](api-reference/entries.md) and [Folders](api-reference/folders.md).
+
+#### `/content` Uploads That Cannot Be Stored Answer `400` (Behavior Change)
+
+`PUT /databases/{db}/entries/{id}/content`, for a document or a certificate file, also answers `400` when the server cannot store the content it received. The message names why, and nothing is written.
+
+!!! warning "Behavior change for clients"
+    Show the message to the user, but match the status `400`, not the message, in code. Do not repeat the same upload unchanged.
 
 ### Shared Secrets
 
@@ -943,6 +973,16 @@ A request that carries more than one `Content-Length` header is refused with `40
 
 If a request's header block stops arriving part-way through - silence for longer than the idle timeout between the request line and the blank line that ends the headers - the server answers `408 Request Timeout` with `error.code` `408` and closes the connection. The body is never read and the request is not dispatched. This is **not** what an idle connection being closed looks like: that is silent and carries no response. A client that receives `408` may retry on a new connection. Like the other header-stage refusals, the body is the JSON error object labelled `text/html; charset=utf-8`.
 
+#### Databases That Cannot Be Changed or Opened at the Moment Answer `403` and `501` (Behavior Change)
+
+- **`403`.** A request that would change a database that accepts no changes at the moment answers `403` with `error.code` `403`, and nothing is written. Reading the database still works.
+- **`501`.** A request for the contents of a database that the server cannot open at the moment answers `501`. The database is still listed by `GET /databases`.
+
+See [Error Codes](api-reference/overview.md#error-codes).
+
+!!! warning "Behavior change for clients"
+    Match the status and `error.code`, never the message. A `501` for a database's contents does not mean that the route is unsupported: keep the database in the list and tell the user that it cannot be opened at the moment. A plain `403` on a change can also mean that the database accepts no changes at the moment; nothing was written, so keep the user's input.
+
 ### Shared-Link Page
 
 #### Shared-Link Page: Copy Confirmation for RDP, PuTTY and TeamViewer Entries
@@ -979,6 +1019,9 @@ These correct the documentation only; the server's behavior is described as it h
 - **The `roles` table of the users reference and the `User.roles` enum of the OpenAPI document lacked `audit_reader`, `security_officer` and `backup_operator`.** The server writes these roles in `roles` and accepts them on `POST /admin/users` and `PATCH /admin/users/{id}`; see [`roles` Values](api-reference/users.md#roles-values).
 - **The OIDC user ID is not always `sub`.** **OIDC Identities Matched Within Their Provider** called the user ID the provider's user-ID claim, "`sub` by default". The claim is set per provider in the Server Manager, and an Entra ID provider created there uses `oid`, the user's Entra Object ID; the other provider classes use `sub`. The entry now says so.
 - **`PATCH /admin/users/{id}` answers the short form of the user.** The reference showed the full representation as its response. The server answers the fields every user representation has (`UserBasic` in the OpenAPI document, which named `User`) and no detail field such as `roles`, `member_of`, `disabled` or the AD attributes; read those with [`GET /admin/users/{id}`](api-reference/users.md#get-user-admin).
+- **`GET /admin/audit` is described in the OpenAPI document**, with its filters (`start`, `end`, `user_id`, `channel`, `target_kind`, `event_kind_min`, `event_kind_max`), `limit`, the roles that may call it and the `X-Audit-*` response headers.
+- **The OpenAPI document no longer lists `GET /databases/{db}/folders` and `GET /databases/{db}/entries`** (`listFolders`, `listEntries`): the server does not offer them, and the reference never described them. `POST` on both paths is unchanged. Browse a database with [List Children](api-reference/folders.md#list-children-navigation) and search it with [Search](api-reference/search.md).
+- **`GET /admin/databases` returns the databases the caller manages.** The OpenAPI document said that it returns every database regardless of the caller's permissions. A server administrator gets every database, a database administrator the databases whose `db_admins` lists them, and `total` counts the databases visible to the caller, as [List All Databases (Admin)](api-reference/databases.md#list-all-databases-admin) describes.
 
 ---
 
