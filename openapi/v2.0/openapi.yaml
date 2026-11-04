@@ -135,14 +135,15 @@ info:
     `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
     missing second password), `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
     licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
-    later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
-    `updateEntry` needs read permission on the entry, Server 20.0.0 and later),
+    later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- `updateEntry` with a
+    `totp` key needs read permission on the entry, Server 20.0.0 and later),
     `4034` (`PD_ERRCODE_ICON_QUOTA` -- `uploadDatabaseIcon`: the database
     cannot hold another icon, Server 20.0.0 and later), `4035`
-    (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry`, `deleteFolder` or
-    `uploadDocumentContent`: the item, or something inside the folder, is
-    being edited by another user; nothing was deleted or written, Server
-    20.0.0 and later), `4036`
+    (`PD_ERRCODE_ITEM_LOCKED` -- `deleteEntry`, `deleteFolder`,
+    `updateEntry`, `moveEntry`, `updateFolder`, `moveFolder` or
+    `uploadDocumentContent`: the item, or on `deleteFolder` something inside
+    the folder, is being edited by another user; nothing was deleted, moved
+    or written, Server 20.0.0 and later), `4036`
     (`PD_ERRCODE_ANDROID_DISABLED` -- the Android client is disabled, at login,
     on OIDC discovery or on authenticated requests, Server 20.0.0 and later),
     `4037` (`PD_ERRCODE_CLIENT_OUTDATED` -- the client's declared version
@@ -514,6 +515,8 @@ paths:
             factor is an authenticator app (TOTP) that has not been activated
             for the account. `error.message` is the path of a single-use QR
             code image, relative to the server's address (no `/v2.0` prefix).
+            The image can be fetched once, within three minutes of the
+            `459`; after that its path answers `404`.
             After the user has scanned it, resend the login with `tfacode`; the
             first code that verifies activates the app, and `trust_device: true`
             in that request also trusts the device when
@@ -604,7 +607,16 @@ paths:
       tags:
         - Databases
       summary: List all databases
-      description: Returns a paginated list of databases accessible by the authenticated user.
+      description: |
+        Returns a paginated list of databases accessible by the authenticated user.
+
+        Server 20.0.0 and later: in a client-scope session a database an
+        administrator has disabled is left out, and every route under
+        `/databases/{id}` answers `404` for it, the same answer as for an
+        unknown id; a session already working with it gets the `404` at its
+        next request. The admin routes (`adminListDatabases`,
+        `adminGetDatabase`, `adminUpdateDatabase` and the permission routes)
+        still list, read and change it for an administrator who manages it.
       parameters:
         - $ref: "#/components/parameters/PaginationOffset"
         - $ref: "#/components/parameters/PaginationLimit"
@@ -633,6 +645,9 @@ paths:
       tags:
         - Databases
       summary: Get a database by ID
+      description: |
+        Server 20.0.0 and later: in a client-scope session a database an
+        administrator has disabled answers `404`, as an unknown id does.
       parameters:
         - $ref: "#/components/parameters/DatabaseId"
       responses:
@@ -775,6 +790,11 @@ paths:
         `X-New-Second-Password` is applied only when the request succeeds.
         Earlier servers applied the body key by key and kept whatever had
         already been written, the second-password change included.
+
+        Server 20.0.0 and later: while another user has the folder checked
+        out, this call answers `403` with `error.code` `4035` and nothing is
+        written; it is the first check once the body has been read. A folder
+        update needs update permission alone.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/FolderId"
@@ -837,6 +857,9 @@ paths:
             `X-New-Second-Password` that sets, changes or removes a second
             password returns `error.code` `4030`
             (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`); nothing was written.
+            `error.code` 4035 (`PD_ERRCODE_ITEM_LOCKED`, Server 20.0.0 and
+            later): the folder is being edited by another user; nothing was
+            written. Offer to try again later.
           content:
             application/json:
               schema:
@@ -860,6 +883,13 @@ paths:
         The folder, and everything inside it, must be free: when another
         user is editing any of them the folder stays where it is and the
         answer is `403` with `error.code` `4035`.
+
+        Server 20.0.0 and later: the folder is deleted, in both modes, only
+        when the caller may see (use permission) and delete every sub-folder
+        and entry inside it, at any depth; otherwise the answer is `403`
+        with `error.code` `403` and the message "The folder contains an item
+        you may not delete; nothing has been deleted.", and the folder and
+        everything in it stay as they were. This check follows the `4035`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/FolderId"
@@ -892,7 +922,9 @@ paths:
             `mode=permanent`, or any mode while the database keeps no recycle
             bin -- while it holds an entry protected by a second password;
             nothing was deleted.
-            `error.code` 403: no permission to delete the folder.
+            `error.code` 403: no permission to delete the folder, or (Server
+            20.0.0 and later) it holds an item the caller may not see or may
+            not delete; nothing was deleted.
           content:
             application/json:
               schema:
@@ -955,6 +987,13 @@ paths:
         Server 20.0.0 and later: a non-empty `X-New-Second-Password` is
         refused with `403` / `4030`, and the entry is not created. `PUT` on
         this path answers `405` with `Allow: GET, POST, DELETE, PATCH`.
+
+        `custom_fields` (Server 20.0.0 and later) is accepted on `password`
+        and `custom` entries only (`400` for the other types; the `type` of
+        the body decides). The new entry has no field yet, so every element
+        adds a field of the element's `type` (`text` when absent); an element
+        with a non-empty `id`, or with a `type` that is not one of the
+        `CustomField` type words, answers `400`. See `CustomField`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
       requestBody:
@@ -983,6 +1022,10 @@ paths:
             wrong JSON type, or no `secret`), 4006 (the entry's type cannot
             carry a one-time code). The first failing member in the order
             secret, algorithm, digits, period names the code.
+
+            Server 20.0.0 and later, `error.code` 400: `custom_fields` on an
+            entry type other than `password` and `custom`, or an element the
+            `CustomField` write rules refuse. Nothing was written.
 
             `error.code` 4007 (`PD_ERRCODE_ICON_ASSIGNMENT`, Server 20.0.0 and
             later): `image_custom`, `image_index` and `image_name` do not name
@@ -1070,8 +1113,9 @@ paths:
         all four members whenever you send `secret`. The server computes a
         code once before it writes anything; a refused `totp` changes nothing.
         Besides update permission, a `totp` write needs read permission on
-        the entry (`403` / `4033`) and answers a plain `403` for an entry
-        sealed for the caller; the second password is checked first. Only
+        the entry (`403` / `4033`, checked before the second password) and
+        answers a plain `403` for an entry sealed for the caller; the second
+        password is checked before the seal and the `totp` object. Only
         `password`, `credit_card`, `license`, `banking` and `custom` entries
         accept the key (`400` / `4006`; `501` for `encrypted_file` and
         `certificate`; `null` on an entry without a seed does nothing,
@@ -1125,6 +1169,19 @@ paths:
         password; nothing is written. `PUT` on this path answers `405` with
         `Allow: GET, POST, DELETE, PATCH`; `PUT` is taken by
         `uploadDocumentContent` alone.
+
+        Server 20.0.0 and later: besides update permission, the call needs
+        read permission on the entry; without it the answer is `403`
+        (`4033` when the body has a `totp` key), once the body has been read
+        and before every other check on the entry, the second password
+        included. While another user has the entry checked out, the answer
+        is then `403` / `4035`, and nothing is written. `custom_fields` is the
+        complete list of the entry's fields: each element is matched to a
+        field the entry has -- by `id`, otherwise by `name`, otherwise by its
+        position -- and a matched field keeps its `id`, `type` and `secret`;
+        see `CustomField`. Only `password` and `custom` entries accept it
+        (`400` otherwise, judged on the type after the request); on a link
+        it answers `409` first.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
@@ -1177,6 +1234,10 @@ paths:
             member in the order secret, algorithm, digits, period names the
             code.
 
+            Server 20.0.0 and later, `error.code` 400: `custom_fields` on an
+            entry type other than `password` and `custom`, or an element the
+            `CustomField` write rules refuse. Nothing was written.
+
             `error.code` 4007 (`PD_ERRCODE_ICON_ASSIGNMENT`, Server 20.0.0 and
             later): `image_custom`, `image_index` and `image_name` do not name
             a usable icon -- `image_custom` true with an `image_name` that names
@@ -1207,6 +1268,10 @@ paths:
             `X-New-Second-Password` sets, changes or removes one; nothing was
             written. Show the entry read-only, do not re-prompt for the second
             password and do not retry.
+            Server 20.0.0 and later: a plain `403` also when the caller holds
+            update but not read permission on the entry (`4033` with a `totp`
+            key), and `error.code` 4035 (`PD_ERRCODE_ITEM_LOCKED`) while
+            another user is editing the entry; nothing was written.
           content:
             application/json:
               schema:
@@ -1280,6 +1345,10 @@ paths:
       tags:
         - Entries
       summary: Move an entry to a different folder
+      description: |
+        Server 20.0.0 and later: while another user has the entry checked
+        out, the answer is `403` with `error.code` `4035` and the entry stays
+        where it is.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
@@ -1299,7 +1368,17 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            `error.code` 403: no permission to move the entry or to change the
+            target folder. `error.code` 4030
+            (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`, Server 20.0.0 and later):
+            the entry is protected by a second password. `error.code` 4035
+            (`PD_ERRCODE_ITEM_LOCKED`, Server 20.0.0 and later): the entry is
+            being edited by another user. The entry stays where it is.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -1555,6 +1634,14 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          description: |
+            Server 20.0.0 and later: the database has not been converted to
+            the new format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: adminCreatePermission
       tags:
@@ -1582,6 +1669,14 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          description: |
+            Server 20.0.0 and later: the database has not been converted to
+            the new format; nothing is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/databases/{db}/permissions/{id}:
     parameters:
@@ -1606,12 +1701,34 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          description: |
+            Server 20.0.0 and later: the database has not been converted to
+            the new format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     patch:
       operationId: adminUpdatePermission
       tags:
         - Admin - Permissions
       summary: Update a permission (admin)
-      description: Requires an admin-scoped session.
+      description: |
+        Requires an admin-scoped session.
+
+        Server 20.0.0 and later: `principal_id`, as the request would leave
+        it, must name a user or a group of the server (`404` otherwise, as on
+        `adminCreatePermission`). A change of `seal_status` -- to any value,
+        `0` included -- answers `403` unless the caller is the permission's
+        issuer, manages the database, or holds `seal` permission on every
+        entry and folder the permission names in `entry_allow`, as stored and
+        as the request would leave it (on the database itself when it names
+        none the database holds); a request that leaves `seal_status` out, or
+        sends the stored value, is not affected. This check follows the
+        `404` for an unknown `principal_id` and precedes the checks of the
+        rights the permission grants. A refused request leaves the
+        permission unchanged.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/PermissionId"
@@ -1631,15 +1748,41 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            Not the issuer, a seal approver or a manager of the database, no
+            right on a referenced entry, or (Server 20.0.0 and later) a change
+            of `seal_status` the caller may not make; nothing was changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: |
+            Database, permission or referenced entry not found, or (Server
+            20.0.0 and later) a `principal_id` that names no user or group of
+            the server; nothing was changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: |
+            Server 20.0.0 and later: the database has not been converted to
+            the new format; nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: adminDeletePermission
       tags:
         - Admin - Permissions
       summary: Delete a permission (admin)
-      description: Requires an admin-scoped session.
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later: the call
+        opens the database as `adminCreatePermission` and
+        `adminUpdatePermission` do, and answers as they do when the database
+        cannot be opened.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/PermissionId"
@@ -1652,6 +1795,14 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          description: |
+            Server 20.0.0 and later: the database has not been converted to
+            the new format; nothing is deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # --- Admin Users ---
   /admin/users:
@@ -3070,6 +3221,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Secret"
+        "400":
+          description: |
+            Invalid or missing fields, or an entry protected by a second password. Server 20.0.0 and later: also an id
+            in `recipient_ids` or `approver_ids` that names no user or group
+            of the server, or the author in `approver_ids`; nothing is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3102,7 +3262,12 @@ paths:
       tags:
         - Admin - Secrets
       summary: Update a secret (admin)
-      description: Requires an admin-scoped session.
+      description: |
+        Requires an admin-scoped session. Server 20.0.0 and later: the secret
+        as the request would leave it must name users and groups of the
+        server in `recipient_ids` and `approver_ids`, and not its author
+        among the approvers; otherwise the answer is `400` and the secret
+        stays as it was.
       parameters:
         - $ref: "#/components/parameters/SecretId"
       requestBody:
@@ -3118,6 +3283,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Secret"
+        "400":
+          description: |
+            Invalid or missing fields. Server 20.0.0 and later: also an id
+            in `recipient_ids` or `approver_ids` that names no user or group
+            of the server, or the author in `approver_ids`; nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3705,7 +3879,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/Secret"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: |
+            Invalid or missing fields, or an entry protected by a second password. Server 20.0.0 and later: also an id
+            in `recipient_ids` or `approver_ids` that names no user or group
+            of the server, or the author in `approver_ids`; nothing is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3761,6 +3942,10 @@ paths:
         Available to callers listed in the secret's `approver_ids`. The
         action is tallied against the configured quorum; once the quorum
         is reached the secret moves to status `approved`.
+
+        Server 20.0.0 and later: the caller must be named in `approver_ids`
+        by their own ID or through a group, groups within groups included,
+        and must not be the secret's author (`403` otherwise).
       responses:
         "204":
           description: Approval recorded
@@ -3780,6 +3965,10 @@ paths:
       tags:
         - Secrets
       summary: Reject a pending secret (designated approver only)
+      description: |
+        Server 20.0.0 and later: the caller must be named in `approver_ids`
+        by their own ID or through a group, groups within groups included,
+        and must not be the secret's author (`403` otherwise).
       responses:
         "204":
           description: Rejection recorded
@@ -3821,6 +4010,10 @@ paths:
       tags:
         - Admin - Secrets
       summary: Approve a pending secret (admin)
+      description: |
+        Server 20.0.0 and later: the caller must be named in `approver_ids`
+        by their own ID or through a group, groups within groups included,
+        and must not be the secret's author (`403` otherwise).
       responses:
         "204":
           description: Approval recorded
@@ -3840,6 +4033,10 @@ paths:
       tags:
         - Admin - Secrets
       summary: Reject a pending secret (admin)
+      description: |
+        Server 20.0.0 and later: the caller must be named in `approver_ids`
+        by their own ID or through a group, groups within groups included,
+        and must not be the secret's author (`403` otherwise).
       responses:
         "204":
           description: Rejection recorded
@@ -4069,6 +4266,11 @@ paths:
       tags:
         - Folders
       summary: Move a folder to a different parent
+      description: |
+        Server 20.0.0 and later: while another user has the folder checked
+        out, the answer is `403` with `error.code` `4035` and the folder
+        stays where it is. The move weighs the folder it moves, not the
+        items inside it.
       requestBody:
         required: true
         content:
@@ -4087,7 +4289,15 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            `error.code` 403: no permission to move the folder.
+            `error.code` 4035 (`PD_ERRCODE_ITEM_LOCKED`, Server 20.0.0 and
+            later): the folder is being edited by another user. The folder
+            stays where it is.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -4649,7 +4859,9 @@ paths:
         all the items the caller may destroy in one change of the database,
         so an error answer means that nothing was destroyed. An entry
         protected by a second password, and a folder that holds one, stay in
-        the bin as an item the caller may not delete does.
+        the bin as an item the caller may not delete does, and so does a
+        folder that holds an item the caller may not see or may not delete;
+        the other items are destroyed.
       responses:
         "204":
           description: The items the caller can see and may delete were destroyed
@@ -4690,14 +4902,28 @@ paths:
         Server 20.0.0 and later. Destroys that one item -- and, for a folder,
         everything that went down with it. It cannot be restored afterwards;
         ask the user first. An entry protected by a second password, and a
-        folder that holds one, answer `403` / `4030` and stay in the bin.
+        folder that holds one, answer `403` / `4030` and stay in the bin. A
+        folder is destroyed only when the caller may see (use permission)
+        and delete every item inside it; otherwise the answer is `403` with
+        `error.code` `403` and the message "The folder contains an item you
+        may not delete; nothing has been deleted.", and the folder stays in
+        the bin.
       responses:
         "204":
           description: Item destroyed
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            `error.code` 403: the caller may not destroy the item, or the item
+            is a folder that holds an item the caller may not see or may not
+            delete. `error.code` 4030 (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`):
+            an entry protected by a second password, or a folder that holds
+            one. The item stays in the bin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/RecycleBinItemNotFound"
         "405":
@@ -6150,6 +6376,12 @@ components:
               readOnly: true
             disabled:
               type: boolean
+              description: |
+                Whether an administrator has disabled the database. Server
+                20.0.0 and later: a disabled database grants no permission to
+                anyone; in a client-scope session `listDatabases` leaves it
+                out, and every route under `/databases/{id}` answers `404`.
+                The admin routes still see and change it.
             db_admins:
               type: array
               items:
@@ -6203,7 +6435,10 @@ components:
             Whether the caller may see and act on the items OTHER people
             deleted. Everyone may always see what they deleted themselves,
             whatever this says; restoring and destroying still need the rights
-            the recyclebin routes describe.
+            the recyclebin routes describe. `true` for a server administrator,
+            and for a database administrator of this database (the Database
+            Administrator role, listed in `db_admins`) who holds delete and
+            update permission on it.
 
     # --- Database icons ---
     DatabaseIconsCapability:
@@ -6657,7 +6892,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CustomField"
-          description: Additional name/value/type tuples (only for `password` / `custom`)
+          description: The entry's custom fields (only for `password` / `custom`); from Server 20.0.0 on, see `CustomField` for how a write matches them
         author:
           type: string
           format: uuid
@@ -7293,7 +7528,10 @@ components:
           format: uuid
           description: |
             ID of the user OR group this permission applies to. Whether
-            it's a user or group is resolved by lookup on the server.
+            it's a user or group is resolved by lookup on the server. It must
+            name a user or a group of the server: `adminCreatePermission`
+            and, from Server 20.0.0 on, `adminUpdatePermission` answer `404`
+            otherwise.
         issuer_id:
           type: string
           format: uuid
@@ -7343,6 +7581,11 @@ components:
             * 2 = waiting (approval requested)
             * 3 = approved
             * 4 = broken (one-time access already consumed)
+
+            Server 20.0.0 and later: a change of the value with
+            `adminUpdatePermission` needs the permission's issuer, a manager
+            of the database, or `seal` permission on the items the permission
+            names.
         approver_ids:
           type: array
           items:
@@ -7797,14 +8040,29 @@ components:
         `/revoke`) are separate endpoints.
 
         Each UUID field is returned according to the caller's own role on
-        the secret, in either scope: `open_uuid` to the author and to users
-        whose own ID is in `recipient_ids`, `approve_uuid` to the author and
-        to users whose own ID is in `approver_ids`. Any other caller,
+        the secret, in either scope: `open_uuid` to the author and to the
+        callers `recipient_ids` names, `approve_uuid` to the author and to
+        the callers `approver_ids` names -- by their own ID or through a
+        group, groups within groups included (Server 20.0.0 and later). Any
+        other caller,
         including an administrator using the admin scope, receives the
         object without that field, and the `/approve` and `/reject`
         responses carry `open_uuid` only when the approver is also the
         author or a listed recipient. Clients must treat both fields as
         optional. See the field descriptions.
+
+        Server 20.0.0 and later: `recipient_ids` and `approver_ids` hold ids
+        of users and groups of the server, matched as whole ids without
+        regard to letter case; a disabled group counts for nobody.
+        `createSecret`, `adminCreateSecret` and `adminUpdateSecret` answer
+        `400` for an id that names no user or group ("A recipient or an
+        approver of the shared link is no user or group of this server.")
+        and for the author in `approver_ids` ("The author of a shared link
+        cannot approve it."); nothing is created or changed. The author
+        never approves or rejects their own secret (`403`). The HTTPS page
+        of a link whose entry belongs to a database an administrator has
+        disabled answers as for a link that does not exist; the secret
+        itself is not changed.
       allOf:
         - $ref: "#/components/schemas/SecretBasic"
         - type: object
@@ -7851,13 +8109,18 @@ components:
               items:
                 type: string
                 format: uuid
-              description: User IDs of the recipients
+              description: |
+                User or group IDs of the recipients. Server 20.0.0 and later:
+                each must name a user or a group of the server.
             approver_ids:
               type: array
               items:
                 type: string
                 format: uuid
-              description: User IDs of designated approvers
+              description: |
+                User or group IDs of designated approvers, never the author.
+                Server 20.0.0 and later: each must name a user or a group of
+                the server.
             approved_by:
               type: array
               items:
@@ -7887,30 +8150,81 @@ components:
               readOnly: true
               description: >
                 Token embedded in the recipient-access URL; treat it as a
-                credential. Returned only to the secret's author and to
-                users whose own ID is in `recipient_ids` (membership of a
-                listed group is not enough), and absent for every other
-                caller.
+                credential. Returned only to the secret's author and to the
+                callers `recipient_ids` names, by their own ID or through a
+                group, and absent for every other caller.
             approve_uuid:
               type: string
               readOnly: true
               description: >
                 Token embedded in the approver URL; treat it as a
-                credential. Returned only to the secret's author and to
-                users whose own ID is in `approver_ids`, and absent for every
-                other caller.
+                credential. Returned only to the secret's author and to the
+                callers `approver_ids` names, by their own ID or through a
+                group, and absent for every other caller.
 
     # --- Common ---
     CustomField:
       type: object
+      description: |
+        One custom field of a `password` or `custom` entry. Server 20.0.0 and
+        later: `custom_fields` in a `createEntry` or `updateEntry` body is the
+        complete list of the entry's fields, accepted on `password` and
+        `custom` entries only (`400` otherwise; the type the entry has after
+        the request decides, and on a link the `409` comes first). Each
+        element is matched to a field the entry has, each field at most
+        once: by `id` when it is not empty (letter case does not matter),
+        otherwise by `name` without regard to letter case, otherwise by its
+        position in the array. A matched field keeps its `id`, `type` and
+        `secret` and takes only the members the element sends (`name`,
+        `value`, `input_id`); an element that matches no field adds one of
+        the element's `type` (`text` by default; a new `password` or
+        `protected` field is stored as a secret); a field no element matches
+        is deleted, and the fields take the order of the array.
+        `custom_fields` sent back exactly as `getEntry` returned them leave
+        every field as it was. `400`, with
+        nothing written: an `id` that names no field of the entry (on
+        `createEntry`, any non-empty `id`), two elements with the same `id`,
+        or a `type` that is not one of the words listed.
       properties:
         name:
           type: string
         value:
           type: string
+        input_id:
+          type: string
+          description: Associated HTML element ID or name of the field
+        id:
+          type: string
+          description: |
+            Server 20.0.0 and later: the field's id, set by the server; `""`
+            for a field that has not been saved yet. Send it back to name the
+            field a write changes; a write never sets or changes the id.
         type:
           type: string
-          description: "Field type (text, password, url, email, date, etc.)"
+          enum:
+            - text
+            - password
+            - memo
+            - date
+            - number
+            - boolean
+            - decimal
+            - email
+            - url
+            - iban
+            - card_number
+            - protected
+          description: |
+            The field's type, in responses from Server 20.0.0 on. Read-only
+            for a field the entry has -- a write ignores it there -- and the
+            type of a field a write adds (default `text`). Written in lower
+            case as listed.
+        secret:
+          type: boolean
+          readOnly: true
+          description: |
+            Server 20.0.0 and later: whether the server stores the value as a
+            secret. Ignored in a request.
 
     PaginatedResponse:
       type: object
@@ -8015,7 +8329,8 @@ components:
               description: |
                 `459`: the path of a single-use QR code image, relative to the
                 server's address (for example `/temp/<name>.png`; no `/v2.0`
-                prefix). `460`: a localized message -- the prompt, which with
+                prefix), which can be fetched once, within three minutes of the
+                `459`. `460`: a localized message -- the prompt, which with
                 e-mail two-factor authentication names the masked address the
                 code was sent to, or the refusal of a wrong code. Never match
                 on it.

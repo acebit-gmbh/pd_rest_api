@@ -68,6 +68,13 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - an entry template's id answers `404` on every `/entries/{id}` route, and `PUT` on `/entries` and `/entries/{id}` answers `405`
 - `POST /admin/databases` answers `201`, and a name that another database has answers `409` on create and on rename
 - `HEAD` on `/file/<icon>` answers the headers of `GET` without the body; on the API routes it answers `405`
+- in a client-scope session a database an administrator has disabled is left out of `GET /databases`, and every route under `/databases/{db_id}` answers `404` for it; the shared links of its entries answer as links that do not exist
+- `recipient_ids` and `approver_ids` of a shared secret are matched as whole user and group ids, groups within groups included; an id that names no user or group, and the author among the approvers, answer `400`, and the author never approves or rejects their own secret
+- `PATCH` of a permission answers `404` for a `principal_id` that names no user or group, and a change of its `seal_status` needs the issuer, a manager of the database or seal permission on the items it names
+- `custom_fields` elements carry `id`, `type` and `secret`; a write matches each element to a field the entry has, by `id` first, and keeps that field's type; `custom_fields` on an entry other than `password` and `custom` answers `400`
+- `PATCH` of an entry needs read permission as well as update permission
+- `PATCH` and move of an entry or a folder answer `403` / `4035` while another user is editing the item
+- a folder is deleted, or destroyed from the recycle bin, only when the caller may see and delete everything inside it (`403` otherwise), and Empty Recycle Bin leaves such a folder in the bin
 
 ### Breaking Changes
 
@@ -128,7 +135,7 @@ Certificate metadata parsing is best effort and does not reject an otherwise sto
     The same permission, seal and `X-Second-Password` rules apply as for reading the entry, including the checks on a link's target. There are two additional rules. Long-lived API tokens are refused with `403`, so use a login session token. An entry that uses an old form of second-password protection, which the REST API cannot check, also answers a plain `403`. For a link, the code comes from the link's own TOTP settings. The seed is never returned. A successful call is audited as an entry access and fires "password accessed" alerts. For a link, this includes alerts set on the entry it points to. A refused call is audited as a failed entry access and written to the server log; no alert fires for it.
 - **`has_otp`** (boolean, read-only) is part of every entry representation, compact and full, next to `has_second_pass`. It says whether the entry's own TOTP settings can produce a one-time code. It is `false` when you may not read the entry. A `true` value does not bypass the checks above: `/otp` can still answer `403` or `403` / `4031`. Folders do not carry it.
 - **`totp`** (object, read-only in responses) follows `has_otp` in every entry representation, compact and full. It is always an object, never `null`, and never withheld. `state` is `none`, `set` (the same as `has_otp: true`), `invalid` (a seed is stored but produces no code), `unsupported` (type `encrypted_file` or `certificate`) or `hidden` (you may not read the entry); the compact form carries `state` only. The full form adds `writable` and, for `set` and `invalid`, the stored `digits`, `period`, `algorithm` (`null` when the server does not know it) and `conforming`, echoed as stored so that a repair UI can show them. Never the seed. Folders do not carry it.
-- **`totp` in `POST /databases/{db}/entries` and `PATCH /databases/{db}/entries/{id}` bodies** writes the entry's TOTP settings; there is no separate route, and every REST consumer, long-lived API tokens included, may use it. The value is `null` or an object with exactly the members `secret` (Base32, 16 to 128 characters after case folding, whitespace removal and trailing `=` stripping), `algorithm` (`SHA1`, `SHA256`, `SHA512`), `digits` (`6` to `8`) and `period` (`15` to `120`). The key absent leaves the settings alone. On `POST`, `secret` is required, the other members default to `SHA1` / `6` / `30`, and `null` does nothing. On `PATCH`, `null` removes the seed and resets the parameters (an entry without a seed is left unchanged), an object with `secret` sets or replaces the seed in one call, and an object without `secret` changes only the parameters. There is one merge rule: the members that arrive are validated and applied, the members that are absent keep their stored values, and an absent `secret` keeps the stored seed without re-validating it - so send all four members whenever you send `secret`. The server computes a code once before it writes anything; a refused write changes nothing, and an accepted one always leaves `has_otp: true`. Only `password`, `credit_card`, `license`, `banking` and `custom` entries accept the key (`400` / `4006` otherwise, `501` for `encrypted_file` and `certificate`); an `rdp` entry keeps showing a code it already has but cannot be edited over REST. A link's `totp` is the link's own, the one `/otp` computes from; the `409` link guard does not apply. On `PATCH`, the write additionally requires read permission on the entry (`403` / `4033`) and answers a plain `403` for an entry sealed for you; the second password, when the entry has one, is checked first (`403` / `4031`). A seed write is a modification, not an access: it is audited as an entry creation or update with an operation-specific message (`PATCH`: one-time code set, replaced, parameters changed, removed; `POST`: new entry with a one-time code added) and fires the "password added" or "password modified" alerts, never "password accessed". No audit entry, log line, alert or error message contains the seed. A refused `totp` never answers `409`. Removing a seed does not remove it from the entry's history where the database keeps one.
+- **`totp` in `POST /databases/{db}/entries` and `PATCH /databases/{db}/entries/{id}` bodies** writes the entry's TOTP settings; there is no separate route, and every REST consumer, long-lived API tokens included, may use it. The value is `null` or an object with exactly the members `secret` (Base32, 16 to 128 characters after case folding, whitespace removal and trailing `=` stripping), `algorithm` (`SHA1`, `SHA256`, `SHA512`), `digits` (`6` to `8`) and `period` (`15` to `120`). The key absent leaves the settings alone. On `POST`, `secret` is required, the other members default to `SHA1` / `6` / `30`, and `null` does nothing. On `PATCH`, `null` removes the seed and resets the parameters (an entry without a seed is left unchanged), an object with `secret` sets or replaces the seed in one call, and an object without `secret` changes only the parameters. There is one merge rule: the members that arrive are validated and applied, the members that are absent keep their stored values, and an absent `secret` keeps the stored seed without re-validating it - so send all four members whenever you send `secret`. The server computes a code once before it writes anything; a refused write changes nothing, and an accepted one always leaves `has_otp: true`. Only `password`, `credit_card`, `license`, `banking` and `custom` entries accept the key (`400` / `4006` otherwise, `501` for `encrypted_file` and `certificate`); an `rdp` entry keeps showing a code it already has but cannot be edited over REST. A link's `totp` is the link's own, the one `/otp` computes from; the `409` link guard does not apply. On `PATCH`, the write additionally requires read permission on the entry (`403` / `4033`), checked before everything else about the entry, and answers a plain `403` for an entry sealed for you; the second password, when the entry has one, is checked after read permission and before the seal and the `totp` object (`403` / `4031`). A seed write is a modification, not an access: it is audited as an entry creation or update with an operation-specific message (`PATCH`: one-time code set, replaced, parameters changed, removed; `POST`: new entry with a one-time code added) and fires the "password added" or "password modified" alerts, never "password accessed". No audit entry, log line, alert or error message contains the seed. A refused `totp` never answers `409`. Removing a seed does not remove it from the entry's history where the database keeps one.
 
 An entry without a one-time code answers `404` with `error.code` = `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE`). A plain `404` means the database or entry does not exist, the id is a folder, or the entry is in the recycle bin. `4041` is returned only after every access check has passed. Until then, the usual answers come first: `403` for an entry you may not read, a sealed entry or an API token, `403` / `4031` for a missing or wrong second password, and `501` for an unsupported entry type. `has_otp: true` never leads to `4041`. Methods other than `GET` answer `405`.
 
@@ -142,7 +149,7 @@ A refused `totp` write answers `400` with `error.code` `4001` (`PD_ERRCODE_TOTP_
 - **`GET /databases/{db}/recyclebin`** lists the items in the bin, in the standard paginated envelope and in the same row shape [List Children](api-reference/folders.md#list-children-navigation) returns -- compact entry and folder representations, `type` telling the two apart -- without the `path` array. It supports `offset` and `limit`. A deleted folder is one row; the items below it are not listed separately.
 - **`POST /databases/{db}/recyclebin/{id}/restore`** puts one item back into the folder it was deleted from, or into the database root when that folder is gone, and answers `204`. It needs the right to change the folder the item returns to; without it the request answers `403` and the item stays in the bin.
 - **`DELETE /databases/{db}/recyclebin/{id}`** destroys one item, **`DELETE /databases/{db}/recyclebin`** everything the caller can see in the bin and may delete. Both answer `204`, and neither can be undone.
-- **Who sees what.** Everyone sees the items they deleted themselves, and every row names its deleter in `deleted_by`. Putting an item back needs the right to change the folder it returns to, and destroying one needs the right to delete it. Items **other** people deleted need the database's `recycle_bin.can_manage`; without it they are not listed and their ids answer `404` here, the same answer as an id that is not in the bin.
+- **Who sees what.** Everyone sees the items they deleted themselves, and every row names its deleter in `deleted_by`. Putting an item back needs the right to change the folder it returns to, and destroying one needs the right to delete it. Items **other** people deleted need the database's `recycle_bin.can_manage`; without it they are not listed and their ids answer `404` here, the same answer as an id that is not in the bin. `can_manage` is `true` for a server administrator, and for a database administrator of that database -- an account with the Database Administrator role that the database's `db_admins` lists -- who holds delete and update permission on it; a database administrator of another database is an ordinary member here.
 - **`recycle_bin`** (object, read-only) is part of every database representation, client and admin scope, list and detail: `enabled` (the server keeps a bin), `keep` (how many items it holds, `0` when it is off; beyond that number the oldest are dropped) and `can_manage`. Its presence is the capability marker for everything in this section. With `enabled: false` a `recycle` delete removes the item permanently, which is what the Windows client does under the same setting.
 - **Ids are unchanged.** An item in the bin keeps its id, and is addressable again under that id once it is restored. While it is in the bin the entries and folders routes still answer `404` for it, as described under **Deleted Entries and Folders Answer `404`** below.
 
@@ -528,6 +535,16 @@ The list routes, the other admin methods on these resources and the client-scope
 
 `GET /admin/databases/{db}/permissions/{id}` returns `404` unless the caller manages the database or issued the row. This is the same response as for a permission ID that does not exist. A caller that created permission rows, for example to share entries with delegated rights, can list and read those rows as long as it uses an admin-scoped session.
 
+#### Permission Updates Name a Known Principal, and `seal_status` Changes Need the Right to Seal (Behavior Change)
+
+- **A known principal.** `PATCH /admin/databases/{db}/permissions/{id}` answers `404` when `principal_id` names no user or group of the server, as `POST` does, and the permission is not changed.
+- **`seal_status`.** A `PATCH` that changes `seal_status` -- to any value, `0` included -- answers `403` with `error.code` `403` unless the caller is the permission's issuer, manages the database, or holds seal permission on every entry and folder that the permission names in `entry_allow`, as stored and as the request would leave it (on the database itself when it names none the database holds). A `PATCH` that leaves out `seal_status`, or sends the stored value, is not affected. The check comes after the `404` for an unknown `principal_id` and before the checks of the rights the permission grants; a request answered `403` leaves the permission unchanged.
+
+See [Update Permission](api-reference/permissions.md#update-permission).
+
+!!! warning "Behavior change for clients"
+    Send `seal_status` only to change it; otherwise leave the key out, or send the value `GET` returned. A seal approver who may not seal the permission's items cannot change it. Match the status, never the message.
+
 #### Reading Alerts Requires a Server Administrator (Behavior Change)
 
 `GET /admin/alerts` and `GET /admin/alerts/{id}` require a server administrator or super-administrator, as creating, updating and deleting alerts already did. Other admin-scope callers receive `403` with `error.code` `403` (default message: "This account does not have any of the server roles required for this operation."). An unknown alert id still answers `404`.
@@ -686,6 +703,20 @@ A server upgraded to 20.0.0 lists its databases named `.pswe` or `.pswd` with `.
 !!! warning "Behavior change for clients"
     Treat every `2xx` of a create as success and take the new database from the response body. Tell a taken name (`409`) from a refused one (`400`) by the status, never by the message.
 
+#### Disabled Databases Are Closed to Their Users (Behavior Change)
+
+A database that an administrator has disabled (`disabled: true`, set with `PATCH /admin/databases/{id}` or in the Server Manager) grants no permission to anyone while it stays disabled:
+
+- **Listing.** In a client-scope session `GET /databases` leaves it out, and `total` does not count it.
+- **Its routes.** In a client-scope session every route under `/databases/{db_id}` -- the database itself, its children, folders, entries, search, categories, icons and recycle bin -- answers `404` with `error.code` `404`, the same answer as for an id the server does not hold. A session that is already working with the database gets the `404` at its next request.
+- **Shared secrets.** `POST /secrets` and `POST /admin/secrets` for one of its entries answer `403`. The HTTPS page of a shared link of one of its entries (`/shared/...`) answers as for a link that does not exist, its warning page and its content alike. The link itself is not changed: once the database is enabled again, the link opens as before, within its own expiry, open count and approval.
+- **Administration.** The administrator routes are unchanged: `GET /admin/databases` lists the database, and `/admin/databases/{db_id}` reads and changes it and its permissions, for an administrator who manages it.
+
+See [Disabled Databases](api-reference/databases.md#disabled-databases).
+
+!!! warning "Behavior change for clients"
+    A database can disappear from `GET /databases` while a user works with it. Handle the `404` on its routes like the `404` for an unknown id: close the database's views, list the databases again, and do not retry.
+
 ### Entries and Folders
 
 #### `DELETE` Moves an Entry or Folder to the Recycle Bin (Behavior Change)
@@ -699,7 +730,7 @@ A server upgraded to 20.0.0 lists its databases named `.pswe` or `.pswd` with `.
 
 The value is read from the URL query string only and compared without regard to letter case and surrounding spaces. Any other non-empty value answers `400` with the usual error object and deletes nothing; `mode=` with no value is read as the default. Success is `204` with an empty body in both modes, as before. When the database's `recycle_bin.enabled` is `false` the server keeps no recycle bin, and a `recycle` delete removes the item permanently -- the same thing the Windows client does under that setting.
 
-Both modes are refused for an item another user has open for editing: `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`, default message "The item is being edited by another user."), and nothing is deleted. For a folder this covers anything inside it, so a single checked-out entry keeps the whole folder. A plain `403` still means the caller may not delete the item at all.
+Both modes are refused for an item another user has open for editing: `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`, default message "The item is being edited by another user."), and nothing is deleted. For a folder this covers anything inside it, so a single checked-out entry keeps the whole folder. A plain `403` still means the caller may not delete the item at all -- for a folder, also an item inside it (see **A Folder Is Deleted Only With Everything in It** below).
 
 !!! warning "Behavior change for clients"
     An integration that deletes through this API and expects the item to be gone must now send `?mode=permanent`; without it the item is recoverable and still counts against the bin's `keep`. An integration that wants the user to be able to undo a deletion needs no change. Detect the parameter by the `recycle_bin` object on the database, never by sending `mode` and reading the answer. Handle the new `403` / `4035` by the numeric `error.code`, never by the message, which is localizable, and offer a retry rather than reporting a permission problem.
@@ -710,6 +741,20 @@ Both modes are refused for an item another user has open for editing: `403` with
 
 !!! warning "Behavior change for clients"
     Handle `403` / `4035` by the numeric `error.code`, never by the message, which is localizable, and offer a retry rather than reporting a permission problem. To replace the content shown through a link, upload to the entry named in `linked_item`.
+
+#### `PATCH` and Moves Refused While the Item Is Being Edited (Behavior Change)
+
+`PATCH /databases/{db}/entries/{id}`, `POST /databases/{db}/entries/{id}/move`, `PATCH /databases/{db}/folders/{id}` and `POST /databases/{db}/folders/{id}/move` answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user." while another user has the entry or the folder checked out, and nothing is written -- the answer `DELETE` gives. On a `PATCH` the check comes first once the body has been read and, for an entry, read permission confirmed (see **Updating an Entry Requires Read Permission** below). A move weighs the item it moves, not the items inside a folder. A plain `403` still means that the caller may not change the item.
+
+!!! warning "Behavior change for clients"
+    Handle `403` / `4035` by the numeric `error.code`, never by the message, which is localizable: keep the user's input and offer a retry rather than reporting a permission problem.
+
+#### Updating an Entry Requires Read Permission (Behavior Change)
+
+`PATCH /databases/{db}/entries/{id}` needs read permission on the entry as well as update permission. Without it the request answers `403` with `error.code` `403` -- `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED`) when the body has a `totp` key -- and nothing is written. The check comes after the `400` for a body that is not a JSON object and before every other check on the entry, the `X-Second-Password` check included. `PATCH /databases/{db}/folders/{id}` needs update permission alone, as before. See [Order of checks](api-reference/entries.md#order-of-checks).
+
+!!! warning "Behavior change for clients"
+    Offer no edit action on an entry the user may not read. A plain `403` here does not ask for a second password; only `4031` does.
 
 #### Deleted Entries and Folders Answer `404` (Behavior Change)
 
@@ -770,6 +815,17 @@ The custom and type-specific fields of a link belong to the entry it points to, 
 
 !!! warning "Behavior change for clients"
     To change the fields shown through a link, update the entry named in `linked_item`. Do not send a link's `GET` response back unchanged in a `PATCH`.
+
+#### Custom Fields Carry `id`, `type` and `secret`, and a Write Keeps What Each Field Is (Behavior Change)
+
+- **Reading.** Each element of `custom_fields` in the full representation of a `password` or `custom` entry carries three more members after `name`, `value` and `input_id`, none of which a write changes on a field the entry has: `id`, the field's id (`""` for a field that has not been saved yet); `type`, one of `text`, `password`, `memo`, `date`, `number`, `boolean`, `decimal`, `email`, `url`, `iban`, `card_number` and `protected`; and `secret`, whether the server stores the value as a secret.
+- **Writing.** `custom_fields` in a `POST` or `PATCH` body is the complete list of the entry's fields. Each element is matched to a field the entry already has -- by `id` where the element has one, otherwise by `name` without regard to letter case, otherwise by its position in the array -- and each field at most once. A matched field keeps its `id`, its `type` and whether it is secret, and takes only the members the element sends (`name`, `value`, `input_id`); a member the element leaves out keeps its value. An element that matches no field adds a field of the element's `type`, `text` when it has none; a new `password` or `protected` field is stored as a secret. A field that no element matches is deleted, and the fields take the order of the array. `secret` in a request is ignored, and so is `type` on a matched field. `custom_fields` sent back exactly as `GET` returned them leave every field as it was.
+- **Refusals.** `400`, with nothing of the entry written, for an element whose `id` names no field of the entry, two elements that name the same `id`, a `type` that is not one of the words above, and `custom_fields` on an entry of any other type than `password` and `custom` -- the type the entry has after the request decides: the `type` of a `POST` body, or a `type` change in the same `PATCH`. `custom_fields` on a link still answers `409`, before the type is weighed.
+
+See [Writing Custom Fields](api-reference/entries.md#writing-custom-fields).
+
+!!! warning "Behavior change for clients"
+    Send `custom_fields` back with the `id` of each field `GET` returned, and only for `password` and `custom` entries; write the typed values of the other types through their sub-object, for example `credit_card`. Match the status `400`, never the message.
 
 #### Icon Fields Validated and `icon` Corrected (Behavior Change)
 
@@ -869,9 +925,21 @@ The id of an entry template -- one of the templates a database keeps for new ent
 
 `PUT` is taken by `PUT /databases/{db}/entries/{id}/content` alone. On `/databases/{db}/entries` and `/databases/{db}/entries/{id}` it answers `405 Method Not Allowed` with `Allow: GET, POST, DELETE, PATCH`, and nothing is changed. An entry is updated with `PATCH`.
 
+#### A Folder Is Deleted Only With Everything in It (Behavior Change)
+
+A folder is deleted only when the caller may see (use permission) and delete every sub-folder and entry inside it, at any depth:
+
+- `DELETE /databases/{db}/folders/{id}`, in both modes, and `DELETE /databases/{db}/recyclebin/{id}` of a folder answer `403` with `error.code` `403` and the message "The folder contains an item you may not delete; nothing has been deleted." when an item inside may not be deleted; an item the caller may not see counts as one. The folder and everything in it stay as they were. On `DELETE /databases/{db}/folders/{id}` the check comes after the `403` / `4035` for an item another user is editing.
+- `DELETE /databases/{db}/recyclebin` (Empty Recycle Bin) leaves such a folder in the bin, as it leaves an item the caller may not delete, and destroys the other items.
+
+See [Delete Folder](api-reference/folders.md#delete-folder).
+
+!!! warning "Behavior change for clients"
+    A plain `403` on a folder delete can concern the folder or something inside it: show `error.message` and do not retry. Match the status and code, never the message, which is localizable.
+
 #### Empty Recycle Bin Destroys Everything It May, or Nothing (Behavior Change)
 
-`DELETE /databases/{db}/recyclebin` weighs every item in the bin first and then destroys all the items the caller may destroy in one change of the database: when the call answers an error, nothing was destroyed. An item the caller may not see or may not delete stays in the bin, and so does an entry protected by a second password, or a folder that holds one (see **Entries Protected by a Second Password Are Read-Only** above); the call answers `204`. When there is something to destroy, it answers `403` with `error.code` `403` where the database accepts no changes at the moment, and `503` with `error.code` `503` where the change could not be written (see **Changes That Cannot Be Written Answer `503`** below). See [Empty Recycle Bin](api-reference/recyclebin.md#empty-recycle-bin).
+`DELETE /databases/{db}/recyclebin` weighs every item in the bin first and then destroys all the items the caller may destroy in one change of the database: when the call answers an error, nothing was destroyed. An item the caller may not see or may not delete stays in the bin, and so does a folder that holds such an item (see **A Folder Is Deleted Only With Everything in It** above), an entry protected by a second password, or a folder that holds one (see **Entries Protected by a Second Password Are Read-Only** above); the call answers `204`. When there is something to destroy, it answers `403` with `error.code` `403` where the database accepts no changes at the moment, and `503` with `error.code` `503` where the change could not be written (see **Changes That Cannot Be Written Answer `503`** below). See [Empty Recycle Bin](api-reference/recyclebin.md#empty-recycle-bin).
 
 !!! warning "Behavior change for clients"
     After an error the bin is as it was: list it again before you tell the user what is left in it, and on `503` offer to try again later. A `204` does not mean that the bin is empty; list it to see what stayed.
@@ -900,16 +968,29 @@ The channel refusal, the approval, quorum and second-factor settings, and exact 
 
 `POST /secrets` and `POST /admin/secrets` now require `read` permission on the entry named by `entry_id` (in the database named by `database_id`), in addition to `share`. A caller who holds `share` without `read` receives `403 Forbidden` (body `error.code` = `403`). Existing secrets are not affected.
 
+#### Recipients and Approvers Are User and Group Ids (Behavior Change)
+
+`recipient_ids` and `approver_ids` of a shared secret hold the ids of users and groups of the server. A caller is a recipient or an approver when the list names the caller's own id or a group the caller belongs to, also through groups within groups; a disabled group, and membership through one, counts for nobody. An id matches only as a whole id, without regard to letter case.
+
+- **Create and update.** `POST /secrets`, `POST /admin/secrets` and `PATCH /admin/secrets/{id}` answer `400` when `recipient_ids` or `approver_ids` holds an id that names no user or group of the server ("A recipient or an approver of the shared link is no user or group of this server."), and when `approver_ids` names the author ("The author of a shared link cannot approve it."). Nothing is created, and a `PATCH` answered `400` leaves the secret as it was. On a create, these checks come once the body is read, before the database and the entry are looked up.
+- **Approve and reject.** `POST .../approve` and `POST .../reject`, in client and admin scope, need a caller that `approver_ids` names, directly or through a group, and who is not the secret's author; any other caller gets `403`.
+- **Link tokens.** `open_uuid` and `approve_uuid` follow the same matching; see **Link Tokens Returned Only to Those They Are For** below.
+
+See [Recipients and Approvers](api-reference/secrets.md#recipients-and-approvers).
+
+!!! warning "Behavior change for clients"
+    Send ids, taken for example from `GET /users` and `GET /groups`, never names, and leave the author out of `approver_ids`. Offer the author no approve or reject action on their own secret. Match the status `400` or `403`, never the message, which is localizable.
+
 #### Link Tokens Returned Only to Those They Are For (Behavior Change)
 
 In the full secret representation, the link tokens depend on who is asking:
 
 | Field | Returned to | Omitted for |
 |-------|-------------|-------------|
-| `open_uuid` | the secret's author, and users whose own ID is in `recipient_ids` | everyone else |
-| `approve_uuid` | the secret's author, and users whose own ID is in `approver_ids` | everyone else |
+| `open_uuid` | the secret's author, and the callers `recipient_ids` names, directly or through a group | everyone else |
+| `approve_uuid` | the secret's author, and the callers `approver_ids` names, directly or through a group | everyone else |
 
-Membership of a listed group does not count. The rule depends on the caller's role in the secret, not on the scope. Administrators using `/admin/secrets` receive a token only if they are the author or are listed for it. The rule applies to every response that carries the full representation:
+A listed group counts for its members, also through groups within groups, and a disabled group for nobody, as described under **Recipients and Approvers Are User and Group Ids** above. The rule depends on the caller's role in the secret, not on the scope. Administrators using `/admin/secrets` receive a token only if they are the author or are listed for it. The rule applies to every response that carries the full representation:
 
 - create, in client and admin scope
 - `GET` by id, in client and admin scope
@@ -1061,7 +1142,7 @@ If a request's header block stops arriving part-way through - silence for longer
 #### Databases That Accept No Changes or Are Not Converted Answer `403` and `501` (Behavior Change)
 
 - **`403`.** A request that would change a database that accepts no changes at the moment, or an item that the database keeps read-only, answers `403` with `error.code` `403`, and nothing is written. Reading the database still works.
-- **`501`.** A database that the server holds but has not converted to the new format answers every request for its contents with `501` and the message "This database is not available on this server: it has not been converted to the new format.": the routes under `/databases/{db}/` (children, entries, folders, search, categories, icons, recycle bin), `POST` and `PATCH` on `/admin/databases/{db}/permissions`, `PATCH /admin/databases/{id}`, and a shared secret created for one of its entries. The database is still listed by `GET /databases`. A `501` keeps its own message; it is never replaced by the general text of a `500`.
+- **`501`.** A database that the server holds but has not converted to the new format answers every request for its contents with `501` and the message "This database is not available on this server: it has not been converted to the new format.": the routes under `/databases/{db}/` (children, entries, folders, search, categories, icons, recycle bin), every method on `/admin/databases/{db}/permissions`, `PATCH /admin/databases/{id}`, and a shared secret created for one of its entries. The database is still listed by `GET /databases`. A `501` keeps its own message; it is never replaced by the general text of a `500`.
 
 See [Error Codes](api-reference/overview.md#error-codes).
 
@@ -1119,6 +1200,7 @@ These correct the documentation only; the server's behavior is described as it h
 - **The OpenAPI document no longer lists `GET /databases/{db}/folders` and `GET /databases/{db}/entries`** (`listFolders`, `listEntries`): the server does not offer them, and the reference never described them. `POST` on both paths is unchanged. Browse a database with [List Children](api-reference/folders.md#list-children-navigation) and search it with [Search](api-reference/search.md).
 - **Disabling an account ends its REST sessions.** **Disabled Accounts Refused on Every Request** said that disabling an account revokes none of its tokens. Disabling ends the account's REST sessions, a super-administrator's excepted; its session tokens then answer "Access token is invalid or expired.", and long-lived API tokens are refused while the account is disabled and accepted again once it is re-enabled, as the entry now says.
 - **`GET /admin/databases` returns the databases the caller manages.** The OpenAPI document said that it returns every database regardless of the caller's permissions. A server administrator gets every database, a database administrator the databases whose `db_admins` lists them, and `total` counts the databases visible to the caller, as [List All Databases (Admin)](api-reference/databases.md#list-all-databases-admin) describes.
+- **The QR code image of a `459` can be fetched within three minutes.** `459` under [Login Error Responses](api-reference/authentication.md#error-responses) said only that the image can be fetched once. It can be fetched once, within three minutes of the `459`; once it has been fetched, or once the three minutes have passed, its path answers `404`, and every `459` carries a new path. This is not new in Server 20.0.0; it was not documented. Fetch the image as soon as the `459` arrives, and send the login again for a new `459` when the user needs it later.
 
 ---
 

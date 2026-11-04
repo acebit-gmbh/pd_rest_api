@@ -101,6 +101,8 @@ The seal mechanism provides an additional layer of approval for sensitive entrie
 | `3` | Approved | Seal has been approved |
 | `4` | Broken | Seal has been broken/violated |
 
+*Server 20.0.0 and later.* Changing `seal_status` with [Update Permission](#update-permission) needs the permission's issuer, a manager of the database, or seal permission on the items the permission names; see [Changing the Seal Status](#changing-the-seal-status).
+
 ### Authorization
 
 Permission management requires one of:
@@ -171,6 +173,7 @@ Returns a paginated list of all permissions for a database. Returns the compact 
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions to manage this database |
 | `404 Not Found` | Database not found |
+| `501 Not Implemented` | *Server 20.0.0 and later.* The database has not been converted to the new format |
 
 ### Example
 
@@ -264,6 +267,7 @@ Returns the full representation of the created permission.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (no `use` access on database, or no `share` right on referenced entries) |
 | `404 Not Found` | Database, user/group, or referenced entry not found |
+| `501 Not Implemented` | *Server 20.0.0 and later.* The database has not been converted to the new format; nothing is created |
 
 ### Example
 
@@ -329,6 +333,7 @@ Returns the **full representation** of a specific permission, including entry-le
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions to manage this database |
 | `404 Not Found` | Database or permission not found |
+| `501 Not Implemented` | *Server 20.0.0 and later.* The database has not been converted to the new format |
 
 ### Example
 
@@ -348,6 +353,18 @@ PATCH /v2.0/admin/databases/{db}/permissions/{id}
 ```
 
 Updates an existing permission. Include only the fields you want to update. The caller must be the permission's issuer, a designated seal approver, or a Database/Server Administrator.
+
+*Server 20.0.0 and later.* `principal_id`, as the request would leave it, must name a user or a group of the server, as on [Create Permission](#create-permission); otherwise the request answers `404` and the permission is not changed.
+
+### Changing the Seal Status
+
+*Server 20.0.0 and later.* A request that changes `seal_status` -- to any value, `0` included -- answers `403 Forbidden` unless the caller:
+
+- is the permission's issuer; or
+- manages the database (a Server Administrator, or a Database Administrator of this database); or
+- holds `seal` permission on every entry and folder the permission names in `entry_allow`, as stored and as the request would leave it -- on the database itself when it names none the database holds.
+
+A request that leaves out `seal_status`, or sends the stored value, is not affected. The check comes after the `404` for a `principal_id` that names no user or group, and before the checks of the rights the permission grants. A request answered `403` leaves the permission unchanged.
 
 ### Path Parameters
 
@@ -405,8 +422,9 @@ Returns the full representation of the updated permission.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Not the issuer/approver and not a DB manager, or no `share` right on referenced entries |
-| `404 Not Found` | Database, permission, or referenced entry not found |
+| `403 Forbidden` | Not the issuer/approver and not a DB manager, or no `share` right on referenced entries, or (*Server 20.0.0 and later*) a change of `seal_status` the caller may not make -- see [Changing the Seal Status](#changing-the-seal-status) |
+| `404 Not Found` | Database, permission, or referenced entry not found, or (*Server 20.0.0 and later*) a `principal_id` that names no user or group of the server |
+| `501 Not Implemented` | *Server 20.0.0 and later.* The database has not been converted to the new format; nothing is changed |
 
 ### Example
 
@@ -452,6 +470,7 @@ No response body.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Not the issuer and not a DB manager |
 | `404 Not Found` | Database or permission not found |
+| `501 Not Implemented` | *Server 20.0.0 and later.* The database has not been converted to the new format; nothing is deleted. Delete opens the database as [Create Permission](#create-permission) and [Update Permission](#update-permission) do, and gives the same answers when it cannot be opened |
 
 ### Example
 

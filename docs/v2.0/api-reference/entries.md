@@ -469,15 +469,40 @@ This sub-object is present only in the full representation when the caller may r
 {
     "name": "Recovery Email",
     "value": "recovery@company.com",
-    "input_id": "field_1"
+    "input_id": "field_1",
+    "id": "FIELD-ID-1",
+    "type": "email",
+    "secret": false
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Field display name |
-| `value` | string | Field value |
-| `input_id` | string | Input identifier |
+| Field | Type | Writable | Description |
+|-------|------|:--------:|-------------|
+| `name` | string | Yes | Field display name |
+| `value` | string | Yes | Field value |
+| `input_id` | string | Yes | Input identifier |
+| `id` | string | No | *Server 20.0.0 and later.* The field's id; `""` for a field that has not been saved yet. Send it back to name the field a write changes (see [Writing Custom Fields](#writing-custom-fields)) |
+| `type` | string | New fields only | *Server 20.0.0 and later.* The field's type: `text`, `password`, `memo`, `date`, `number`, `boolean`, `decimal`, `email`, `url`, `iban`, `card_number` or `protected`. Read-only for a field the entry has; sets the type of a field a write adds (default `text`) |
+| `secret` | boolean | No | *Server 20.0.0 and later.* Whether the server stores the value as a secret. Ignored in a request |
+
+#### Writing Custom Fields
+
+*Server 20.0.0 and later.* `custom_fields` can be written on `password` and `custom` entries, the types whose full representation carries it, and in a `POST` or `PATCH` body it is always the complete list of the entry's fields. Each element of the array is matched to a field the entry already has, each field at most once:
+
+1. by `id`, when the element has a non-empty `id` (letter case does not matter);
+2. otherwise by `name`, without regard to letter case;
+3. otherwise by its position: the element matches the entry's field at the same position in the list, when no other element has matched that field.
+
+A matched field keeps its `id`, its `type` and whether it is secret. Only the members the element sends are changed -- `name`, `value`, `input_id` -- and a member the element leaves out keeps its value. An element that matches no field adds a new field, of the element's `type`, or `text` when the element has none; a new field of type `password` or `protected` is stored as a secret. A field that no element matches is deleted, and the fields take the order of the array. `secret` in a request is ignored, and so is `type` on a matched field: the type of an existing field cannot be changed through REST. `custom_fields` sent back exactly as a `GET` returned them leave every field as it was. On `POST` the new entry has no field yet, so every element adds one.
+
+These answer `400 Bad Request`, and nothing of the entry is written:
+
+- an element that is not an object;
+- an element whose `id` names no field of the entry (on `POST`, any non-empty `id`), and two elements that name the same `id`;
+- a `type` that is not one of the words above, written in lower case as listed;
+- `custom_fields` on an entry of any other type than `password` and `custom`. The type the entry has after the request decides: the `type` of a `POST` body, or a `type` change in the same `PATCH`. Write the typed values of the other types through their [sub-object](#type-specific-fields), for example `credit_card`.
+
+`custom_fields` on a link answers `409` (see [Update Entry](#update-entry)); that check comes before the `400` for the type.
 
 !!! note "No Flat List Endpoint"
     Unlike other resources, entries do not have a flat `GET /databases/{db}/entries` listing endpoint. To browse entries, use the [List Children](folders.md#list-children-navigation) endpoint which returns both folders and entries within a given location. To search across all entries, use the [Search](search.md) endpoint.
@@ -485,11 +510,11 @@ This sub-object is present only in the full representation when the caller may r
 ### Second Password Protection
 
 !!! info "Second Password Protection"
-    Entries can be protected with an optional second password. When `has_second_pass` is `true`, retrieving the full representation (including `pass`, `comments`, and `custom_fields`) requires the `X-Second-Password` request header with the correct password. `login` and `url` are part of every representation and are not withheld for a protected entry. Nor is [`warning`](#conditional-access-warning): list and search rows carry it without `X-Second-Password`, so a client can show the warning before it asks for the second password.
+    Entries can be protected with an optional second password. When `has_second_pass` is `true`, retrieving the full representation (including `pass`, `comments`, and `custom_fields`) requires the `X-Second-Password` request header with the correct password. The header is verified on every request on its own: send it with each request that needs it. `login` and `url` are part of every representation and are not withheld for a protected entry. Nor is [`warning`](#conditional-access-warning): list and search rows carry it without `X-Second-Password`, so a client can show the warning before it asks for the second password.
 
     Reading an entry's [one-time code](#get-one-time-code) requires `X-Second-Password` in the same way - for a link, also the second password of the entry it points to. `has_second_pass` on a link describes the link itself, so handle `4031` on `/otp` whatever it says.
 
-    Updating (`PATCH`) a protected entry **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`, and the change is applied only if the request succeeds - after any refusal the entry is still under its previous second password. Writing the entry's [one-time-code settings](#one-time-code-settings) follows the same rule - the second password is checked before anything about `totp` is - but the seed itself is not encrypted with the second password.
+    Updating (`PATCH`) a protected entry **requires** a correct `X-Second-Password`, which the server verifies; a missing or wrong value returns `403 Forbidden` with body `error.code` = `4031`. Changing the second password via `X-New-Second-Password` additionally requires the correct current `X-Second-Password`, and the change is applied only if the request succeeds - after any refusal the entry is still under its previous second password. Writing the entry's [one-time-code settings](#one-time-code-settings) follows the same rule - the second password is checked before the `totp` object is; only read permission (`403` / `4033`) comes earlier - but the seed itself is not encrypted with the second password.
 
     Both headers must be **Base64-encoded** (UTF-8 bytes → Base64). This ensures reliable transport of passwords containing non-ASCII characters (e.g., umlauts, accented letters).
 
@@ -573,7 +598,10 @@ Returns the **full representation** of a specific entry, including the password,
         {
             "name": "Recovery Email",
             "value": "recovery@company.com",
-            "input_id": "field_1"
+            "input_id": "field_1",
+            "id": "FIELD-ID-1",
+            "type": "email",
+            "secret": false
         }
     ],
     "urls": [
@@ -687,7 +715,7 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 | `category` | string | No | Category label. *Server 20.0.0 and later:* a value the database's [category list](databases.md#list-categories) does not already hold is added to that list -- see [How a Category Is Created](databases.md#how-a-category-is-created) |
 | `tags` | string | No | Tags (comma-separated) |
 | `comments` | string | No | Comments/notes |
-| `custom_fields` | array of objects | No | Custom fields, for `password` and `custom` types (see [Custom Field Object](#custom-field-object)) |
+| `custom_fields` | array of objects | No | Custom fields, for `password` and `custom` types (see [Custom Field Object](#custom-field-object)). *Server 20.0.0 and later:* refused with `400` for the other types; see [Writing Custom Fields](#writing-custom-fields) |
 | `<type>` | object | No | Type-specific data sub-object keyed by type name (see [Type-Specific Fields](#type-specific-fields)) |
 | `urls` | array of strings | No | Associated URLs |
 | `expires_at` | string (ISO 8601) or null | No | Expiration date |
@@ -756,7 +784,7 @@ Returns the compact representation of the created entry (without `pass`). When t
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields (body `error.code` = `400`), **or** a refused `totp` object (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)) |
+| `400 Bad Request` | Invalid or missing required fields (body `error.code` = `400`), **or** a refused `totp` object (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)), **or** (*Server 20.0.0 and later*) `custom_fields` that [Writing Custom Fields](#writing-custom-fields) refuses |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) a non-empty `X-New-Second-Password` (`error.code` `4030`); the entry is not created |
 | `404 Not Found` | Database or parent folder not found |
@@ -810,6 +838,8 @@ PATCH /v2.0/databases/{db}/entries/{id}
 ```
 
 Updates an existing entry. Include only the fields you want to update.
+
+*Server 20.0.0 and later.* The caller needs read permission on the entry as well as update permission. Without it the request answers `403` -- `403` / `4033` when the body has a `totp` key -- once the body has been read and before anything else about the entry is looked at, the second password included. While another user has the entry checked out, the request then answers `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user.", and nothing is written. See [Order of checks](#order-of-checks).
 
 ### Path Parameters
 
@@ -872,6 +902,10 @@ The `totp` key writes the entry's one-time-code (TOTP) settings. It has four for
 !!! note "A refused one-time-code write is never `409`"
     A refused `totp` answers `400` (`error.code` `4001` to `4006`), `403` (`403`, `4031` or `4033`) or `501` - never `409`. `409` on this route keeps its one meaning: the body tried to write a link's `custom_fields` or type sub-object through the link. A `totp` write on a link is allowed and changes the link's own settings.
 
+#### Custom fields (`custom_fields`)
+
+*Server 20.0.0 and later.* `custom_fields` is the complete list of the entry's fields, and each element is matched to a field the entry has -- by `id`, otherwise by `name`, otherwise by its position -- which keeps its type. Send back the `id` of each field `GET` returned; `custom_fields` sent back exactly as `GET` returned them leave every field as it was. Only `password` and `custom` entries accept the key. The rules and the `400`s are under [Writing Custom Fields](#writing-custom-fields).
+
 #### Category (`category`)
 
 *Server 20.0.0 and later.* A `category` the database's [category list](databases.md#list-categories) does not already hold is added to that list, so that every editor offers it from then on -- the same thing a save in the Windows client does. The match ignores letter case, the name is trimmed before it is added, a blank value adds nothing, and no route in this API removes a name from the list - a Password Depot client can remove one. A `PATCH` adds the category the item carries after the write, whether or not the body sent one, so saving an older item puts its category in the list. Folders do it too. The write itself is unaffected: the `category` is stored exactly as it was sent, the response is the same, and nothing is refused for it. See [How a Category Is Created](databases.md#how-a-category-is-created).
@@ -913,9 +947,9 @@ Returns the compact representation of the updated entry.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields (body `error.code` = `400`), **or** a refused `totp` write (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)) |
+| `400 Bad Request` | Invalid fields (body `error.code` = `400`), **or** a refused `totp` write (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)), **or** (*Server 20.0.0 and later*) `custom_fields` that [Writing Custom Fields](#writing-custom-fields) refuses |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions, a `totp` write on an entry that is sealed for you, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`); *Server 20.0.0 and later:* a protected entry, or an `X-New-Second-Password` that sets, changes or removes a second password (`4030`) |
+| `403 Forbidden` | Insufficient permissions -- *Server 20.0.0 and later:* read as well as update permission on the entry --, a `totp` write on an entry that is sealed for you, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`); *Server 20.0.0 and later:* a protected entry, or an `X-New-Second-Password` that sets, changes or removes a second password (`4030`); the entry is being edited by another user (`4035`) |
 | `404 Not Found` | Database or entry not found |
 | `501 Not Implemented` | `totp` sent for an entry of type `encrypted_file` or `certificate` |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is written. Try again later |
@@ -1044,6 +1078,8 @@ POST /v2.0/databases/{db}/entries/{id}/move
 
 Moves an entry to a different folder within the same database.
 
+*Server 20.0.0 and later.* While another user has the entry checked out, the request answers `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user.", and the entry stays where it is.
+
 ### Path Parameters
 
 | Parameter | Type | Required | Description |
@@ -1098,7 +1134,7 @@ Returns the compact representation of the moved entry.
 |--------|-------------|
 | `400 Bad Request` | Invalid target folder |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) the entry is protected by a second password (`error.code` `4030`, see [Second Password Protection](#second-password-protection)); the entry stays where it is |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) the entry is protected by a second password (`error.code` `4030`, see [Second Password Protection](#second-password-protection)), **or** (*Server 20.0.0 and later*) the entry is being edited by another user (`error.code` `4035`); the entry stays where it is |
 | `404 Not Found` | Database, entry, or target folder not found |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the entry stays where it is. Try again later |
 
@@ -1276,9 +1312,9 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 
 **Links.** A link may carry a one-time code. The write goes to the link's **own** settings - the ones `/otp` computes the link's code from - and the entry it points to is weighed as on every other write of a link. The `409` that guards a link's `custom_fields` and type sub-object does not apply to `totp`.
 
-**Permissions and tokens.** A `totp` write needs the rights of any other entry write - create permission on the folder for `POST`, update permission on the entry for `PATCH` - and, on `PATCH`, read permission on the entry as well (`403` / `4033`): a caller who may update but not read an entry cannot destroy a seed they cannot see. An entry that is sealed for you answers a plain `403`. Long-lived API tokens write seeds exactly like a session; they still cannot read one, because no route returns a seed, and they still cannot read codes.
+**Permissions and tokens.** A `totp` write needs the rights of any other entry write - create permission on the folder for `POST`, update permission on the entry for `PATCH` - and, on `PATCH`, read permission on the entry as well, which every `PATCH` of an entry needs from Server 20.0.0 on; with a `totp` key in the body its absence answers `403` / `4033`: a caller who may update but not read an entry cannot destroy a seed they cannot see. An entry that is sealed for you answers a plain `403`. Long-lived API tokens write seeds exactly like a session; they still cannot read one, because no route returns a seed, and they still cannot read codes.
 
-**Second password.** On `PATCH`, a protected entry needs the correct `X-Second-Password` (`403` / `4031`) before anything about `totp` is looked at; the seed itself is not encrypted with the second password. On `POST`, `totp` needs no `X-Second-Password`; `X-New-Second-Password` keeps its own rule (the `second_pass` permission).
+**Second password.** On `PATCH`, a protected entry needs the correct `X-Second-Password` (`403` / `4031`) before the `totp` object is looked at; only read permission comes earlier (see [Order of checks](#order-of-checks)); the seed itself is not encrypted with the second password. On `POST`, `totp` needs no `X-Second-Password`; `X-New-Second-Password` keeps its own rule (the `second_pass` permission).
 
 **Audit and alerts.** A one-time-code write is recorded as an entry **modification** - a creation or an update - never as an entry access, and the alerts that fire are the ones for a password added or modified, never "password accessed". The audit message names the operation: on `PATCH`, that the entry's one-time code has been set, replaced, had its parameters changed, or been removed; on `POST`, that a new entry with a one-time code has been added. A refused write is recorded as a failed modification. No audit entry, server-log line, alert or error message ever contains the submitted seed.
 
@@ -1289,23 +1325,24 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 1. `404` when the database or entry does not exist, the id is a folder, or the entry is in the recycle bin; `403` without use permission
 2. `403` without update permission
 3. `400` when the body is not a JSON object
-4. `403` / `4031` for a wrong or missing `X-Second-Password` on a protected entry; then a plain `403` for an `encrypted_file` or `certificate` entry with legacy second-password protection that REST cannot verify
-5. `400` / `4007` when the body carries `image_custom`, `image_index` or `image_name` and they do not name a usable icon (see [Assigning an Icon](#assigning-an-icon)); a body without these keys is not checked
-6. `403` when `X-New-Second-Password` is sent without the `second_pass` permission
-7. Without a `totp` key nothing below applies
-8. `400` / `4005` when `totp` is not `null` or an object of the four members
-9. `403` / `4033` without read permission on the entry
-10. `403` when the entry is sealed for you
-11. `400` / `4006` or `501` for the entry's type (after a `type` change in the same body)
-12. `400` / `4005` for an object without `secret` on an entry that has no seed
-13. `400` / `4001` to `4004` from the admission rules and the code computation
-14. `400` for a value of the wrong JSON type and `409` for `custom_fields` or a type sub-object on a link. The body is applied to a copy of the entry to decide this, so the entry itself is untouched when it answers
-15. `403` when the entry is, or by this body becomes, a link to an entry you may not read or use, that is sealed for you, that is a folder or that was deleted; `400` when the entry is, or by this body becomes, a link to itself, a link to another link, or a link although another link already points at it
-16. Only now is anything written, as one: `X-New-Second-Password` is applied, the previous version goes to the history where the database keeps one, the body is applied, `updated_at` is bumped, and the write is audited
+4. `403` / `4033` without read permission on the entry (*Server 20.0.0 and later*; a body without a `totp` key gets a plain `403` here)
+5. `403` / `4035` when another user has the entry checked out (*Server 20.0.0 and later*)
+6. `403` / `4031` for a wrong or missing `X-Second-Password` on a protected entry; then a plain `403` for an `encrypted_file` or `certificate` entry with legacy second-password protection that REST cannot verify
+7. `400` / `4007` when the body carries `image_custom`, `image_index` or `image_name` and they do not name a usable icon (see [Assigning an Icon](#assigning-an-icon)); a body without these keys is not checked
+8. `403` when `X-New-Second-Password` is sent without the `second_pass` permission
+9. Without a `totp` key nothing below applies
+10. `400` / `4005` when `totp` is not `null` or an object of the four members
+11. `403` when the entry is sealed for you
+12. `400` / `4006` or `501` for the entry's type (after a `type` change in the same body)
+13. `400` / `4005` for an object without `secret` on an entry that has no seed
+14. `400` / `4001` to `4004` from the admission rules and the code computation
+15. `400` for a value of the wrong JSON type and `409` for `custom_fields` or a type sub-object on a link; (*Server 20.0.0 and later*) `400` for `custom_fields` on a type that does not take them, which comes after that `409`, and for `custom_fields` that [Writing Custom Fields](#writing-custom-fields) refuses. The body is applied to a copy of the entry to decide this, so the entry itself is untouched when it answers
+16. `403` when the entry is, or by this body becomes, a link to an entry you may not read or use, that is sealed for you, that is a folder or that was deleted; `400` when the entry is, or by this body becomes, a link to itself, a link to another link, or a link although another link already points at it
+17. Only now is anything written, as one: `X-New-Second-Password` is applied, the previous version goes to the history where the database keeps one, the body is applied, `updated_at` is bumped, and the write is audited
 
-Up to and including step 15 nothing has been written. After any of those refusals the entry has all the fields it had before, its previous icon, its previous one-time-code settings, its previous author, no new history item and none evicted, and its previous second password.
+Up to and including step 16 nothing has been written. After any of those refusals the entry has all the fields it had before, its previous icon, its previous one-time-code settings, its previous author, no new history item and none evicted, and its previous second password.
 
-The three `400`s of step 15 are judged on the entry the body would produce, not on what the body asks for, so a `PATCH` that says nothing about the link is judged on the link the entry already has - a request that only renames an existing link can answer `400` because of the link's shape. To mend such an entry, send `is_link: false`, or a `linked_item` that points at an entry which is not itself a link, in the same `PATCH`.
+The three `400`s of step 16 are judged on the entry the body would produce, not on what the body asks for, so a `PATCH` that says nothing about the link is judged on the link the entry already has - a request that only renames an existing link can answer `400` because of the link's shape. To mend such an entry, send `is_link: false`, or a `linked_item` that points at an entry which is not itself a link, in the same `PATCH`.
 
 `POST /v2.0/databases/{db}/entries` with a `totp` key: the parent folder and create permission (`404`, `403`), then the body (`400`), then the `image_*` keys (`400` / `4007`), then `X-New-Second-Password`, then `totp` in the same order - `4005` for the shape, `4006` / `501` for the type, `4005` for an object without `secret` (required here), `4001` to `4004`. There is no read or seal check on `POST`, because there is nothing to hide yet. `is_link` and `linked_item` in the body are weighed exactly as on `PATCH`: `403` for a target you may not read or use, then `400` for a link to itself or to another link. The new entry is built apart from the database and is added to it only after every check has passed, so a refused `POST` creates nothing.
 

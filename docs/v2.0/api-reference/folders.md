@@ -416,6 +416,8 @@ PATCH /v2.0/databases/{db}/folders/{id}
 
 Updates an existing folder. Include only the fields you want to update.
 
+*Server 20.0.0 and later.* While another user has the folder checked out, the request answers `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user.", and nothing is written; this is the first check once the body has been read. A folder `PATCH` needs update permission on the folder alone.
+
 ### Path Parameters
 
 | Parameter | Type | Required | Description |
@@ -488,7 +490,7 @@ Returns the compact representation of the updated folder.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields (`error.code` `400`), or `image_*` keys that do not name a usable icon (`error.code` `4007`, see [Assigning an icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (`error.code` `403`), or a missing/incorrect `X-Second-Password` on a protected folder (`error.code` `4031`), or (*Server 20.0.0 and later*) an `X-New-Second-Password` that sets, changes or removes a second password (`error.code` `4030`) |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), or a missing/incorrect `X-Second-Password` on a protected folder (`error.code` `4031`), or (*Server 20.0.0 and later*) an `X-New-Second-Password` that sets, changes or removes a second password (`error.code` `4030`), or (*Server 20.0.0 and later*) the folder is being edited by another user (`error.code` `4035`) |
 | `404 Not Found` | Database or folder not found |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is written. Try again later |
 
@@ -553,12 +555,15 @@ No response body. Both modes answer alike.
 |--------|-------------|
 | `400 Bad Request` | `mode` is neither `recycle` nor `permanent`; nothing is deleted. Default message: `The "mode" parameter accepts only "recycle" or "permanent".` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) a delete that would destroy the folder -- `mode=permanent`, or any mode while the database keeps no recycle bin -- while it holds an entry protected by a second password (`error.code` `4030`) |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) the folder holds an item you may not see or may not delete (`error.code` `403`, see the note below), **or** (*Server 20.0.0 and later*) a delete that would destroy the folder -- `mode=permanent`, or any mode while the database keeps no recycle bin -- while it holds an entry protected by a second password (`error.code` `4030`) |
 | `404 Not Found` | Database or folder not found |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is deleted. Try again later |
 
 !!! note "A folder holding an item someone is editing is not deleted"
     *Server 20.0.0 and later.* When the folder itself, or any sub-folder or entry below it, is checked out by another user, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the whole folder stays exactly as the request found it, down to the last entry. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other user is done, on a plain `403` they cannot.
+
+!!! note "A folder holding an item you may not delete is not deleted"
+    *Server 20.0.0 and later.* A folder is deleted, in both modes, only when you may see (use permission) and delete every sub-folder and entry inside it, at any depth. Otherwise the request answers `403` with `error.code` `403` and the message "The folder contains an item you may not delete; nothing has been deleted.", and the folder and everything in it stay as they were. The check comes after the `4035` above. The same rule applies when a folder is destroyed from the recycle bin with [Delete Item](recyclebin.md#delete-item), and [Empty Recycle Bin](recyclebin.md#empty-recycle-bin) leaves such a folder in the bin.
 
 ### Examples
 
@@ -585,6 +590,8 @@ POST /v2.0/databases/{db}/folders/{id}/move
 ```
 
 Moves a folder to a different parent folder within the same database.
+
+*Server 20.0.0 and later.* While another user has the folder checked out, the request answers `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user.", and the folder stays where it is. A move weighs the folder it moves, not the items inside it.
 
 ### Path Parameters
 
@@ -632,7 +639,7 @@ Returns the compact representation of the moved folder.
 |--------|-------------|
 | `400 Bad Request` | Invalid target folder or circular reference (cannot move a folder into itself or its descendants) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), or (*Server 20.0.0 and later*) the folder is being edited by another user (`error.code` `4035`); the folder stays where it is |
 | `404 Not Found` | Database, folder, or target folder not found |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the folder stays where it is. Try again later |
 

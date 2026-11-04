@@ -53,12 +53,12 @@ Includes all compact fields plus:
 | `quorum_n` | integer | Yes | Number of approvals required (default: `1`) |
 | `quorum_m` | integer | Yes | Total number of designated approvers (default: `2`) |
 | `require_2fa` | boolean | Yes | Whether 2FA is required to open the secret |
-| `recipient_ids` | array of UUIDs | Yes | User or group IDs who can open the secret (for `pd-server` protocol) |
-| `approver_ids` | array of UUIDs | Yes | User IDs designated as approvers |
+| `recipient_ids` | array of UUIDs | Yes | User or group IDs who can open the secret (for `pd-server` protocol). See [Recipients and Approvers](#recipients-and-approvers) |
+| `approver_ids` | array of UUIDs | Yes | User or group IDs designated as approvers; never the author. See [Recipients and Approvers](#recipients-and-approvers) |
 | `approved_by` | array of objects | No | List of received approvals (read-only, see below) |
 | `rejected_by` | array of objects | No | List of received rejections (read-only, see below) |
-| `open_uuid` | string | No | Token for the open link (read-only); treat it as a credential. Returned only to the author and to users whose own ID is in `recipient_ids` (membership of a listed group is not enough) — see [Who receives the link tokens](#who-receives-the-link-tokens) |
-| `approve_uuid` | string | No | Token for the approve link (read-only); treat it as a credential. Returned only to the author and to users whose own ID is in `approver_ids` |
+| `open_uuid` | string | No | Token for the open link (read-only); treat it as a credential. Returned only to the author and to the callers `recipient_ids` names, directly or through a group — see [Who receives the link tokens](#who-receives-the-link-tokens) |
+| `approve_uuid` | string | No | Token for the approve link (read-only); treat it as a credential. Returned only to the author and to the callers `approver_ids` names, directly or through a group |
 
 !!! note "Shared links and one-time codes"
     `include_totp` decides whether the recipient of the secret gets the shared entry's one-time code. It matters only for an entry that has a TOTP seed, including one written through the REST API (see [One-Time Code Settings](entries.md#one-time-code-settings)); the HTTPS page additionally shows a code only when the entry can produce one (`has_otp: true`).
@@ -130,6 +130,18 @@ When a secret is created, the server generates two UUID hashes (`open_uuid` and 
 
 The `open_uuid` and `approve_uuid` are returned in the full representation, but only to the callers each token is for. Clients construct the final URLs using the server hostname and port.
 
+*Server 20.0.0 and later.* While the entry of a secret belongs to a database an administrator has disabled (see [Disabled Databases](databases.md#disabled-databases)), the HTTPS page of its link answers exactly as for a link that does not exist, its warning page and its content alike. The secret itself is not changed: once the database is enabled again, the link opens as before, within its own expiry, open count and approval.
+
+### Recipients and Approvers
+
+*Server 20.0.0 and later.* `recipient_ids` and `approver_ids` hold the ids of users and groups of the server:
+
+- **Matching.** A caller is a recipient or an approver when the list names the caller's own id or a group the caller belongs to, also through groups within groups. A disabled group, and membership through one, counts for nobody. An id matches only as a whole id, without regard to letter case.
+- **Known ids only.** [Create Secret](#create-secret) and [Update Secret (Admin)](#update-secret-admin) answer `400 Bad Request` with the message "A recipient or an approver of the shared link is no user or group of this server." when either list holds an id that names no user or group of the server.
+- **The author approves nothing.** The same two routes answer `400` with the message "The author of a shared link cannot approve it." when `approver_ids` names the author, and [Approve Secret](#approve-secret) and [Reject Secret](#reject-secret) answer `403` to the author, whatever the lists say.
+
+A request answered `400` creates nothing, and an update answered `400` leaves the secret as it was. The messages can be localized: match the status, never the message.
+
 ### Who receives the link tokens
 
 !!! warning "These UUIDs are credentials"
@@ -142,8 +154,8 @@ The `open_uuid` and `approve_uuid` are returned in the full representation, but 
 
     | Field | Returned to |
     |-------|-------------|
-    | `open_uuid` | the secret's `author`, and users whose own ID is in `recipient_ids` (membership of a listed group is not enough) |
-    | `approve_uuid` | the secret's `author`, and users whose own ID is in `approver_ids` |
+    | `open_uuid` | the secret's `author`, and the callers `recipient_ids` names, directly or through a group (see [Recipients and Approvers](#recipients-and-approvers)) |
+    | `approve_uuid` | the secret's `author`, and the callers `approver_ids` names, directly or through a group |
 
     For any other caller the field is **absent**, so a full representation
     does not always contain it. Treat a missing field as "not for you", not as
@@ -273,8 +285,8 @@ Creates a new shared secret for an entry. The caller must have **share permissio
 | `quorum_n` | integer | No | Approvals required (default: `1`) |
 | `quorum_m` | integer | No | Total approvers (default: `2`) |
 | `require_2fa` | boolean | No | Require 2FA to open (default: `false`) |
-| `recipient_ids` | array of UUIDs | No | User/group IDs who can open the secret |
-| `approver_ids` | array of UUIDs | No | User IDs designated as approvers |
+| `recipient_ids` | array of UUIDs | No | User/group IDs who can open the secret. *Server 20.0.0 and later:* each must name a user or a group of the server (`400` otherwise) |
+| `approver_ids` | array of UUIDs | No | User/group IDs designated as approvers. *Server 20.0.0 and later:* each must name a user or a group of the server, and the author may not be among them (`400` otherwise) |
 
 !!! note
     The `database_name`, `entry_path`, `entry_user`, and `entry_type` fields are auto-populated from the referenced entry if not provided in the request.
@@ -338,9 +350,9 @@ Returns the full representation of the created secret. The `status` is set to `"
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields, or entry is protected by a second password |
+| `400 Bad Request` | Invalid or missing required fields, or entry is protected by a second password, or (*Server 20.0.0 and later*) `recipient_ids` or `approver_ids` holds an id that names no user or group of the server, or `approver_ids` names the author -- see [Recipients and Approvers](#recipients-and-approvers) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (no share permission on the entry) |
+| `403 Forbidden` | Insufficient permissions (no share permission on the entry), also for an entry of a database an administrator has disabled (*Server 20.0.0 and later*) |
 | `404 Not Found` | Database or entry not found |
 
 ### Example
@@ -441,8 +453,9 @@ Returns the **full representation** of a specific secret. In client scope, the c
 
 !!! note "The two UUID fields depend on who is asking"
     This example is the response the secret's **author** receives. Any other
-    caller receives a token field only if their own ID is listed for it:
-    `open_uuid` in `recipient_ids`, `approve_uuid` in `approver_ids`. In the
+    caller receives a token field only if they are listed for it, by their
+    own ID or through a group: `open_uuid` in `recipient_ids`, `approve_uuid`
+    in `approver_ids`. In the
     client scope only the author can read a secret; approvers receive it in
     the `approve` and `reject` responses. See
     [Who receives the link tokens](#who-receives-the-link-tokens).
@@ -476,6 +489,8 @@ Updates an existing secret. **Admin scope only.** Include only the fields you wa
 
 `include_totp` can be changed here as well. When it is omitted, the stored value is kept; a new value applies the next time the secret is opened.
 
+*Server 20.0.0 and later.* The secret as the request would leave it must name users and groups of the server in `recipient_ids` and `approver_ids`, and not its author among the approvers (see [Recipients and Approvers](#recipients-and-approvers)); otherwise the request answers `400` and the secret stays as it was.
+
 ### Path Parameters
 
 | Parameter | Type | Required | Description |
@@ -502,7 +517,7 @@ Returns the full representation of the updated secret.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields |
+| `400 Bad Request` | Invalid fields, or (*Server 20.0.0 and later*) an id in `recipient_ids` or `approver_ids` that names no user or group of the server, or the author in `approver_ids`; the secret is not changed |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (requires Server Administrator role) |
 | `404 Not Found` | Secret not found |
@@ -570,7 +585,7 @@ POST /v2.0/secrets/{id}/approve
 POST /v2.0/admin/secrets/{id}/approve
 ```
 
-Approves a secret that is in `pending_approval` status. The caller must be listed in the secret's `approver_ids`. When the number of approvals reaches `quorum_n`, the secret transitions to `available` status.
+Approves a secret that is in `pending_approval` status. The caller must be listed in the secret's `approver_ids` -- *Server 20.0.0 and later:* by their own ID or through a group, groups within groups included -- and, from Server 20.0.0 on, must not be the secret's author; this holds in both scopes (see [Recipients and Approvers](#recipients-and-approvers)). When the number of approvals reaches `quorum_n`, the secret transitions to `available` status.
 
 ### Path Parameters
 
@@ -602,7 +617,7 @@ Returns the full representation of the secret with updated status and `approved_
 |--------|-------------|
 | `400 Bad Request` | Secret is not in `pending_approval` status |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Caller is not a designated approver |
+| `403 Forbidden` | Caller is not a designated approver, or (*Server 20.0.0 and later*) is the secret's author |
 | `404 Not Found` | Secret not found |
 
 ### Example
@@ -625,7 +640,7 @@ POST /v2.0/secrets/{id}/reject
 POST /v2.0/admin/secrets/{id}/reject
 ```
 
-Rejects a secret that is in `pending_approval` status. The caller must be listed in the secret's `approver_ids`. The secret transitions to `rejected` status immediately.
+Rejects a secret that is in `pending_approval` status. The caller must be listed in the secret's `approver_ids` -- *Server 20.0.0 and later:* by their own ID or through a group, groups within groups included -- and, from Server 20.0.0 on, must not be the secret's author; this holds in both scopes (see [Recipients and Approvers](#recipients-and-approvers)). The secret transitions to `rejected` status immediately.
 
 ### Path Parameters
 
@@ -645,7 +660,7 @@ Returns the full representation of the secret with `rejected` status.
 |--------|-------------|
 | `400 Bad Request` | Secret is not in `pending_approval` status |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Caller is not a designated approver |
+| `403 Forbidden` | Caller is not a designated approver, or (*Server 20.0.0 and later*) is the secret's author |
 | `404 Not Found` | Secret not found |
 
 ### Example

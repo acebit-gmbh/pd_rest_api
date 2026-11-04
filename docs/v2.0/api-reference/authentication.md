@@ -793,7 +793,7 @@ Common causes:
 }
 ```
 
-Returned when the user's second factor is an authenticator app (TOTP) that has not been activated for this account yet. `error.message` holds the path of a QR code image, relative to the server's address and without the `/v2.0` prefix (here `https://your-server:8714/temp/2d71...4881.png`). The image can be fetched once; every `459` carries a new path. The user scans it with an authenticator app; then resend the login request with the `tfacode` field.
+Returned when the user's second factor is an authenticator app (TOTP) that has not been activated for this account yet. `error.message` holds the path of a QR code image, relative to the server's address and without the `/v2.0` prefix (here `https://your-server:8714/temp/2d71...4881.png`). The image can be fetched once, within three minutes of the `459`; once it has been fetched, or once the three minutes have passed, its path answers `404 Not Found`. Every `459` carries a new path, so fetch the image as soon as the `459` arrives and send the login again when the user needs a new one. The user scans it with an authenticator app; then resend the login request with the `tfacode` field.
 
 !!! info
     Activation is completed over REST: the first code that verifies activates the authenticator app for the account, and later logins answer `460`. Add `"trust_device": true` to that request to trust the device at the same time (see [Trusted Devices](#trusted-devices)).

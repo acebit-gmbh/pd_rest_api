@@ -24,7 +24,7 @@ The database object uses different representations depending on scope and contex
 | `size` | integer | No | File size in bytes (admin detail only) |
 | `entries_count` | integer | No | Number of password entries (admin detail only) |
 | `icons_count` | integer | No | Number of icon slots in the database's icon collection, removed icons included (admin detail only). Unrelated to `icons`: it is not a capability marker, and it can be larger than the `total` of [List Icons](icons.md#list-icons), which leaves removed icons out |
-| `disabled` | boolean | Restricted | Whether the database is disabled (admin detail only). Requires database management permission. |
+| `disabled` | boolean | Restricted | Whether the database is disabled (admin detail only). Requires database management permission. *Server 20.0.0 and later:* a disabled database is closed to its users; see [Disabled Databases](#disabled-databases). |
 | `db_admins` | array of UUIDs | Restricted | User IDs designated as Database Administrators (admin detail only). Requires database management permission. |
 | `db_supervisors` | array of UUIDs | Restricted | User IDs designated as Database Supervisors (admin detail only). Requires database management permission. |
 | `include_server_supervisors` | boolean | Restricted | Whether server-level supervisors have access to this database (admin detail only). Requires database management permission. |
@@ -64,7 +64,7 @@ Every database object - client and admin scope, list and detail, compact and ful
 | `keep` | integer | How many items the bin holds: `1000` unless an administrator has changed it, and `0` when the bin is off. Beyond that number the oldest items are dropped |
 | `can_manage` | boolean | Whether the current caller may see and act on the items **other** people deleted in this database. Everyone always sees what they deleted themselves, whatever this field says; restoring and destroying still need the rights described under [Recycle Bin](recyclebin.md) |
 
-Like `icons`, this object is on every database object, but only `can_manage` describes the **current caller** on **this one** database, so it can differ from one database to the next within the same session. `enabled` and `keep` are a server-wide setting and read the same on every database of a server. Read `can_manage` from here rather than deriving it from a role, and read `enabled` before you tell a user that a deletion can be undone. See [Recycle Bin](recyclebin.md) for the endpoints and for what a caller finds in the bin.
+Like `icons`, this object is on every database object, but only `can_manage` describes the **current caller** on **this one** database, so it can differ from one database to the next within the same session. `enabled` and `keep` are a server-wide setting and read the same on every database of a server. `can_manage` is `true` for a server administrator, and for a database administrator of this database -- an account with the Database Administrator role that the database's `db_admins` lists -- who holds delete and update permission on it; for everyone else it is `false`, a database administrator of another database included. Read `can_manage` from here rather than deriving it from a role, and read `enabled` before you tell a user that a deletion can be undone. See [Recycle Bin](recyclebin.md) for the endpoints and for what a caller finds in the bin.
 
 ---
 
@@ -76,7 +76,18 @@ These endpoints are available in both `client` and `admin` sessions. They return
     Only `GET` is supported under `/v2.0/databases/*`. Any attempt to create (`POST`), modify (`PATCH`), or delete (`DELETE`) a database on this path returns `405 Method Not Allowed`. Database management operations are **admin-only** and live under [`/v2.0/admin/databases`](#admin-endpoints) -- the session must be opened with `"scope": "admin"` at login.
 
 !!! note "A database not converted to the new format"
-    *Server 20.0.0 and later.* A database that the server holds but has not converted to the new format is listed and returned by the routes on this page like every other database. Every request for its contents -- children, entries, folders, search, categories, icons, recycle bin, a new or changed permission, and [Update Database](#update-database-admin) -- answers `501 Not Implemented` with the message "This database is not available on this server: it has not been converted to the new format." Keep the database in the list and tell the user that it cannot be opened on this server; match the status, not the message.
+    *Server 20.0.0 and later.* A database that the server holds but has not converted to the new format is listed and returned by the routes on this page like every other database. Every request for its contents -- children, entries, folders, search, categories, icons, recycle bin, a new, changed or deleted permission, and [Update Database](#update-database-admin) -- answers `501 Not Implemented` with the message "This database is not available on this server: it has not been converted to the new format." Keep the database in the list and tell the user that it cannot be opened on this server; match the status, not the message.
+
+### Disabled Databases
+
+*Server 20.0.0 and later.* An administrator can disable a database (`disabled` in the [full representation](#database-object), set with [Update Database (Admin)](#update-database-admin) or in the Server Manager). While it is disabled, the database grants no permission to anyone:
+
+- In a client-scope session [List Databases](#list-databases) leaves it out, and `total` does not count it.
+- In a client-scope session every route under `/v2.0/databases/{db_id}` -- [Get Database](#get-database), children, folders, entries, search, categories, icons and the recycle bin -- answers `404 Not Found`, the same answer as for an id the server does not hold. A session that is already working with the database gets the `404` at its next request.
+- A shared secret cannot be created for one of its entries (`403`), and the HTTPS page of a shared link of one of its entries answers as for a link that does not exist; see [Access URLs](secrets.md#access-urls).
+- The [admin endpoints](#admin-endpoints) are unchanged: [List All Databases (Admin)](#list-all-databases-admin) lists a disabled database, and [Get Database (Admin)](#get-database-admin), [Update Database (Admin)](#update-database-admin) and the database's [permissions](permissions.md) read and change it, for an administrator who manages it.
+
+Enabling the database again (`"disabled": false`) gives its users back what their permissions allow. Handle the `404` like the one for an unknown id: close the database's views and list the databases again.
 
 ### List Databases
 
@@ -84,7 +95,7 @@ These endpoints are available in both `client` and `admin` sessions. They return
 GET /v2.0/databases
 ```
 
-Returns a paginated list of databases accessible by the authenticated user. Only databases the user has effective access rights on are included. Returns the compact representation (no admin-specific fields).
+Returns a paginated list of databases accessible by the authenticated user. Only databases the user has effective access rights on are included; in a client-scope session a database an administrator has disabled is not (*Server 20.0.0 and later*, see [Disabled Databases](#disabled-databases)). Returns the compact representation (no admin-specific fields).
 
 #### Query Parameters
 
@@ -189,7 +200,7 @@ Returns details of a specific database that the user has access to. Returns the 
 |--------|-------------|
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions to access this database |
-| `404 Not Found` | Database not found |
+| `404 Not Found` | Database not found or not accessible to you, or (*Server 20.0.0 and later*, in a client-scope session) disabled by an administrator -- see [Disabled Databases](#disabled-databases) |
 
 #### Example
 

@@ -55,7 +55,7 @@ Two rules decide what a caller finds in a database's bin:
 - **Your own deletions are always yours.** Every caller sees the items that caller deleted, whether or not `can_manage` is set. Acting on one is a separate question: putting an item back needs the right on the folder it returns to (see [Restore Item](#restore-item)), and destroying one needs the right to delete it (see [Delete Item](#delete-item)).
 - **Other people's deletions need `can_manage`.** The database's [`recycle_bin.can_manage`](databases.md#recycle-bin-capability) says whether this caller may also see and act on items *other* people deleted. When it is `false`, those items are not listed, and their ids answer `404` on every route here -- the same answer as an id that is not in the bin at all.
 
-`can_manage` is computed for the current caller and for that one database, so it can differ from one database to the next in the same session. Read it from the database object rather than deriving it from a role.
+`can_manage` is computed for the current caller and for that one database, so it can differ from one database to the next in the same session. It is `true` for a server administrator, and for a database administrator of that database -- an account with the Database Administrator role that the database's `db_admins` lists -- who holds delete and update permission on it; a database administrator of another database sees only what they deleted themselves. Read it from the database object rather than deriving it from a role.
 
 Every row says who deleted it, in `deleted_by`, which is what makes a bin worth listing for a caller with `can_manage`: without it, one person's deletions cannot be told from another's.
 
@@ -245,6 +245,8 @@ DELETE /v2.0/databases/{db}/recyclebin/{id}
 
 Destroys one item in the recycle bin. A folder is destroyed with everything that went into the bin with it. This cannot be undone.
 
+A folder is destroyed only when you may see (use permission) and delete every sub-folder and entry inside it, at any depth. Otherwise the request answers `403` with the message "The folder contains an item you may not delete; nothing has been deleted.", and the folder stays in the bin as it was -- the rule [Delete Folder](folders.md#delete-folder) applies as well.
+
 ### Path Parameters
 
 | Parameter | Type | Required | Description |
@@ -263,7 +265,7 @@ No response body.
 | Status | `error.code` | Meaning |
 |:------:|:------------:|---------|
 | `401` | `401` | Not authenticated |
-| `403` | `403` | You may not destroy this item |
+| `403` | `403` | You may not destroy this item, or the item is a folder that holds an item you may not see or may not delete; it stays in the bin |
 | `403` | `4030` | The item is an entry protected by a second password, or a folder that holds one; it stays in the bin (see [Second Password Protection](entries.md#second-password-protection)) |
 | `404` | `404` | The id is not in this database's recycle bin, or it is an item you may not see; the database does not exist or is not accessible to you; a server older than 20.0.0 |
 | `405` | `405` | Method other than `DELETE` on this path (`Allow: DELETE`) |
@@ -292,7 +294,7 @@ No response body.
 DELETE /v2.0/databases/{db}/recyclebin
 ```
 
-Destroys every item in the database's recycle bin that the caller can see **and may delete** -- the caller's own deletions, and everybody's when [`can_manage`](#who-sees-what) is `true`. An item the caller may not see, or may not delete, is left in the bin, and the call answers `204` all the same. This cannot be undone.
+Destroys every item in the database's recycle bin that the caller can see **and may delete** -- the caller's own deletions, and everybody's when [`can_manage`](#who-sees-what) is `true`. An item the caller may not see, or may not delete, is left in the bin, and so is a folder that holds such an item (see [Delete Item](#delete-item)); the call answers `204` all the same. This cannot be undone.
 
 **All or nothing.** The server weighs every item first and then destroys all the items the caller may destroy in one change of the database: when the call answers an error, nothing was destroyed and the bin is as it was. An entry protected by a second password, and a folder that holds one, stay in the bin as an item the caller may not delete does (see [Second Password Protection](entries.md#second-password-protection)).
 
