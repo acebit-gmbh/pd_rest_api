@@ -528,7 +528,7 @@ With `auth: "negotiate"` (*Server 20.0.0 and later*), the `200` can also carry t
 
 ### Token Lifetime
 
-Access tokens expire after a period of inactivity; the timer resets on every authenticated API call. From Server 20.0.0 the period is the server's **Disconnect after inactivity** policy (`session.idle_timeout`) as it applies to the user, the same period that ends the user's desktop connections: 60 minutes by default, set in the Server Manager under *Policies* for the server, a group or the user, from 10 minutes to 10000 minutes or *No limit*, with which a session ends after 600000 seconds (about 7 days) without a request. The period is read on every request, so a shorter one applies to an open session from its next request. Servers before 20.0.0 end a session after **10 minutes of inactivity**. Session tokens suit interactive use and short-lived scripts.
+Access tokens expire after a period of inactivity; the timer resets on every authenticated API call -- from Server 20.0.0 the timer of the session that makes the call (see [Sessions](#sessions)). From Server 20.0.0 the period is the server's **Disconnect after inactivity** policy (`session.idle_timeout`) as it applies to the user, the same period that ends the user's desktop connections: 60 minutes by default, set in the Server Manager under *Policies* for the server, a group or the user, from 10 minutes to 10000 minutes or *No limit*, with which a session ends after 600000 seconds (about 7 days) without a request. The period is read on every request, so a shorter one applies to an open session from its next request. Servers before 20.0.0 end a session after **10 minutes of inactivity**. Session tokens suit interactive use and short-lived scripts.
 
 For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines, monitoring scripts), a Super Administrator can generate **long-lived tokens** in the Password Depot Server Manager for any user account, in client or admin scope, with an expiry date 1 to 730 days ahead (180 by default). Long-lived tokens do not expire on inactivity. They stay valid until their expiry -- 00:00 on the expiry date chosen, or the earlier time to which the server's API token policies cut it --, or until they are revoked or deleted in the Server Manager or the API token policies end them (below). An admin-scope token needs an account with a server role, and a Super Administrator's token must be admin scope.
 
@@ -560,6 +560,18 @@ When a token is created in the Server Manager, the server refuses it where **All
     - Revoke tokens immediately when they are no longer needed
 
 A `tfatoken` is not an access token. It authenticates no API request and has no inactivity timeout; it stands in for the two-factor code at `/auth/login` for the trusted-device period that applies to the user. See [Trusted Devices](#trusted-devices).
+
+### Sessions
+
+*Server 20.0.0 and later.* Each completed sign-in -- `POST /auth/login` with every `auth` method, and `POST /auth/webauthn/complete` -- starts a REST session of its own, and the account's other REST sessions stay valid: one account can be signed in on a second device, in the Web Client beside an app, and in `admin` scope beside `client` scope.
+
+- **Its own inactivity period.** Each session ends after the inactivity period described under [Token Lifetime](#token-lifetime), counted from that session's own last request.
+- **Logout.** [`POST /auth/logout`](#logout) ends the calling session alone.
+- **At most 32 at once.** An account holds at most 32 REST sessions, `client` and `admin` scope together. A sign-in beyond the limit ends the account's session that has gone unused the longest.
+- **What ends every session of the account.** Disabling the account (a super-administrator's excepted), a change of its password other than with [`POST /me/password`](users.md#change-own-password), a change or removal of its [directory binding](users.md#directory-binding), repeated wrong passwords or codes on the [key-store endpoints](key-stores.md#wrong-passwords-and-codes), a disconnect of the user in the Server Manager, and a restart of the server. `POST /me/password` ends the account's other REST sessions and keeps the calling one; made with a long-lived API token, it ends all of them.
+- **A second sign-in.** The server's **Second sign-in of the same user** policy weighs the account's sessions over the classic protocol (for example the Windows client) alone; it neither ends nor counts REST sessions. See [Error Responses](#error-responses).
+
+A session token whose session has ended answers `401` with `error.code` `401` and "Access token is invalid or expired.". The token names its session in the claim `sid` (see [Token Structure](#token-structure)). Long-lived API tokens belong to no session: a logout, the limit and a restart do not affect them.
 
 ### Address Restrictions
 
@@ -605,6 +617,7 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 | `amr` | Authentication Methods References | array of strings | *Server 20.0.0 and later.* `["pwd"]` on a token that a sign-in with `auth: "standard"` issued; absent after every other sign-in method. The server reads it to decide whether `GET /me` reports an expired password; see [Expired Passwords](#expired-passwords). Long-lived API tokens do not carry it |
 | `client_version` | -- | string | *Server 20.0.0 and later.* The client version the sign-in declared, in `X-PD-Client` or the login body, as it was sent; absent where the sign-in declared none. Every request made with the token is checked against the server's **Minimum client version** policy with this version; see [Minimum Client Version](#minimum-client-version). Long-lived API tokens do not carry it |
 | `client_declared` | -- | boolean | *Server 20.0.0 and later.* `true` where the sign-in named its platform, in `X-PD-Client` or the `client` object of the login or WebAuthn-begin body, so that `client_platform` is the client's own declaration; absent where it named none and `client_platform` is the `web` the server gave it. The server reads it for `session.declared` of the [client policy bundle](client-policy.md#session). Long-lived API tokens do not carry it |
+| `sid` | Session ID | string | *Server 20.0.0 and later.* An opaque value that names the REST session the sign-in started. The token is accepted only while that session lasts; see [Sessions](#sessions). Long-lived API tokens do not carry it |
 
 **Telling the two token types apart on the client side:**
 
@@ -632,6 +645,10 @@ A client whose declared version is below the server's **Minimum client version**
 
 *Server 20.0.0 and later.* A password of the built-in administrator set with the server's key tool (`pd_keys` -- when it creates or upgrades the server's key stores, and `pd_keys password`) is not checked against the server's account password policies when it is set; a password set in the Server Manager is. The server checks a password set with the key tool against **Account password: character groups**, **Account password: minimum character groups** and **Account password: minimum length** (see [Password Rules](users.md#password-rules)) at the account's next password sign-in. A `standard` sign-in with the right password that does not meet them receives `403` with `error.code: 4038` and a message that names the Server Manager and `pd_keys password`; no token is issued and no second factor is asked. It does not count towards the IP lockout (`429`) or against the account. The server log and the audit record name the policies not met. A password that meets them is accepted and not checked again. Show the message; do not retry and do not report it as incorrect credentials.
 
+**403 -- Admin scope refused**
+
+*Server 20.0.0 and later.* A sign-in with `"scope": "admin"` by an account that holds no server role receives `403` with `error.code: 403`, with every `auth` method and on the passkey sign-in. It comes once the credential is accepted and before a second factor is asked; no token is issued, and it counts towards the IP lockout (`429`) as a failed sign-in. See [Client vs Admin Scope](#client-vs-admin-scope).
+
 **401 -- Unauthorized**
 
 ```json
@@ -647,7 +664,7 @@ Returned when credentials are invalid (`error.code` `401`), and for the refusals
 
 *Server 20.0.0 and later.* A disabled account receives the answer the same request gets for an account the server does not know, with every `auth` method and whatever the password: this one for `standard` and `sspi`, "The server cannot find the user account specified." for `azure` and `oidc`, "Windows authentication succeeded but no matching Password Depot user found for "..."." for `negotiate`, and "Authentication failed." on the passkey sign-in (all localized). The same answer goes to a `standard` or `sspi` sign-in to a super-administrator account, even with the right password, from an address blocked for an hour after sign-ins to the built-in administrator account from it failed as often as the server's lock-out policy (`auth.lockout.threshold`) allows, and to an `sspi` sign-in whose password Windows refuses. These refusals count towards the IP lockout (`429`), never against the account. With `standard`, `sspi`, `azure` and `oidc` a disabled super-administrator account is refused only where the lock-out policy sets a number of failed sign-ins for it, and the built-in administrator account never. The failed sign-in at which the lock-out policy disables an account, or blocks such an address, is answered as every other failed one: this `401` after a wrong password, `460` after a wrong two-factor code. None of them has a sub-code of its own. The server log and the administrators' alert name the reason, and so does the audit record of a refused sign-in, with every `auth` method and with a passkey.
 
-*Server 20.0.0 and later.* A sign-in of an account that has a session over the classic protocol (for example the Windows client) is answered `401` where the server's **Second sign-in of the same user** policy (`session.concurrent`) refuses a second session, with every `auth` method and on the passkey sign-in; with `auth: "negotiate"` and on the passkey sign-in only where a value set for a group or the user refuses it. It counts towards the IP lockout (`429`).
+*Server 20.0.0 and later.* A sign-in of an account that has a session over the classic protocol (for example the Windows client) is answered `401` where the server's **Second sign-in of the same user** policy (`session.concurrent`) refuses a second session, with every `auth` method and on the passkey sign-in; with `auth: "negotiate"` and on the passkey sign-in only where a value set for a group or the user refuses it. It counts towards the IP lockout (`429`). The policy is applied once the sign-in's second factor is verified, or, where none is asked, once its credential is accepted: a sign-in answered `459` or `460`, or refused for another reason, ends none of the account's sessions, and where the policy ends the other session, that session ends only then. A sign-in the policy refuses issues no token and makes no device trusted. The policy weighs the account's sessions over the classic protocol alone, never its REST sessions (see [Sessions](#sessions)).
 
 *Server 20.0.0 and later.* A sign-in from an address the account may not use -- one the server's **Allowed network addresses** policy does not allow for it, the account's converted IP restriction included -- receives the answer the same request gets for an account the server does not know, as a method the account may not use does (this one for `standard` and `sspi`). It counts towards the IP lockout (`429`). See [Address Restrictions](#address-restrictions).
 
@@ -899,7 +916,7 @@ When `scope` is omitted, it defaults to `"client"`. A client session sees only t
     ```
 
 !!! warning "Admin Privileges"
-    Only users with server administrator role can log in with `"scope": "admin"`. Non-admin users will receive a `403 Forbidden` error.
+    Only users with a server role can log in with `"scope": "admin"`. Other users receive `403 Forbidden` (`error.code` `403`) -- from Server 20.0.0 with every `auth` method and on the passkey sign-in, once the credential is accepted and before a second factor is asked, counted towards the IP lockout (`429`). See [Error Responses](#error-responses).
 
 ---
 
@@ -913,7 +930,7 @@ Ends the current session. The exact behavior depends on the token type.
 | **Auth required** | Yes (`Authorization: Bearer <token>`) |
 
 !!! info "Behavior by token type"
-    - **Short-lived session tokens** (issued by `POST /auth/login`) are discarded and the server drops the associated session state. The token will be rejected on subsequent use.
+    - **Short-lived session tokens** (issued by `POST /auth/login`) are discarded and the server drops the associated session state. The token will be rejected on subsequent use. *Server 20.0.0 and later:* the logout ends the calling session alone; the account's other REST sessions continue (see [Sessions](#sessions)).
     - **Long-lived API tokens** (issued by the Password Depot Server Manager) are **not** revoked by this endpoint. Automated clients often share a single token across runs and should not be able to revoke it via the API. To revoke a long-lived token, use the Password Depot Server Manager.
     - A [trusted device](#trusted-devices) is not forgotten: a `tfatoken` stays valid after logout.
 

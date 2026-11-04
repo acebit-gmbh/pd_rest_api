@@ -212,8 +212,10 @@ No response body. The item is out of the bin: its own [entry](entries.md) or [fo
 |:------:|:------------:|---------|
 | `401` | `401` | Not authenticated |
 | `403` | `403` | You may not change the folder the item returns to |
+| `403` | `4030` | The item is an entry protected by a second password, which cannot be changed in this version; it stays in the bin (see [Second Password Protection](entries.md#second-password-protection)) |
 | `404` | `404` | The id is not in this database's recycle bin, or it is an item you may not see; the database does not exist or is not accessible to you; a server older than 20.0.0 |
 | `405` | `405` | Method other than `POST` (`Allow: POST`) |
+| `503` | `503` | The change could not be written to the database; the item stays in the bin. Try again later |
 
 ### Examples
 
@@ -262,8 +264,10 @@ No response body.
 |:------:|:------------:|---------|
 | `401` | `401` | Not authenticated |
 | `403` | `403` | You may not destroy this item |
+| `403` | `4030` | The item is an entry protected by a second password, or a folder that holds one; it stays in the bin (see [Second Password Protection](entries.md#second-password-protection)) |
 | `404` | `404` | The id is not in this database's recycle bin, or it is an item you may not see; the database does not exist or is not accessible to you; a server older than 20.0.0 |
 | `405` | `405` | Method other than `DELETE` on this path (`Allow: DELETE`) |
+| `503` | `503` | The change could not be written to the database; nothing is destroyed. Try again later |
 
 ### Examples
 
@@ -290,6 +294,8 @@ DELETE /v2.0/databases/{db}/recyclebin
 
 Destroys every item in the database's recycle bin that the caller can see **and may delete** -- the caller's own deletions, and everybody's when [`can_manage`](#who-sees-what) is `true`. An item the caller may not see, or may not delete, is left in the bin, and the call answers `204` all the same. This cannot be undone.
 
+**All or nothing.** The server weighs every item first and then destroys all the items the caller may destroy in one change of the database: when the call answers an error, nothing was destroyed and the bin is as it was. An entry protected by a second password, and a folder that holds one, stay in the bin as an item the caller may not delete does (see [Second Password Protection](entries.md#second-password-protection)).
+
 ### Path Parameters
 
 | Parameter | Type | Required | Description |
@@ -300,15 +306,17 @@ Destroys every item in the database's recycle bin that the caller can see **and 
 
 `204 No Content`
 
-No response body. An empty bin answers `204` as well, so the call is safe to repeat.
+No response body. An empty bin answers `204` as well, so the call is safe to repeat. A `204` does not mean that the bin is empty: list it to see what stayed.
 
 ### Error Responses
 
 | Status | `error.code` | Meaning |
 |:------:|:------------:|---------|
 | `401` | `401` | Not authenticated |
+| `403` | `403` | The database accepts no changes at the moment; nothing was destroyed |
 | `404` | `404` | Database not found or not accessible to you. Also the answer of a server older than 20.0.0 |
 | `405` | `405` | Method other than `GET` or `DELETE` (`Allow: GET, DELETE`) |
+| `503` | `503` | The change could not be written to the database; nothing was destroyed. Try again later |
 
 ### Examples
 

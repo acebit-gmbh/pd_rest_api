@@ -157,6 +157,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
     | `4008` | `400` | `PD_ERRCODE_ICON_IMAGE` | `POST /databases/{db}/icons`: `data` is not a usable PNG |
     | `4012` | `401` | `PD_ERRCODE_2FA_EMAIL_SEND_FAILED` | Login: e-mail two-factor authentication is required, but the server cannot send the verification e-mail |
     | `4013` | `401` | `PD_ERRCODE_2FA_EMAIL_MISSING` | Login: e-mail two-factor authentication is required, but the account has no e-mail address |
+    | `4030` | `403` | `PD_ERRCODE_SECOND_PASSWORD_READ_ONLY` | The item is protected by a second password and cannot be changed in this version, or the request sets, changes or removes a second password (`X-New-Second-Password`); nothing was written. Reading the item still works |
     | `4031` | `403` | `PD_ERRCODE_INVALID_SECOND_PASS` | Wrong or missing second password; a generic access-denied `403` keeps `error.code = 403` |
     | `4032` | `403` | `PD_ERRCODE_LICENSE_LIMIT` | `POST /admin/users`: the server's licensed number of users is reached |
     | `4033` | `403` | `PD_ERRCODE_TOTP_READ_REQUIRED` | Entry `totp` write on `PATCH`: read permission on the entry is required as well |
@@ -170,7 +171,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
     | `4091` | `409` | `PD_ERRCODE_IDENTITY_LINKED` | `POST /admin/users` or `PATCH /admin/users/{id}`: another account already holds the identity in `idp` and `idp_user_id`; nothing was created or changed. A name conflict keeps `error.code = 409` |
     | `4131` | `413` | `PD_ERRCODE_ICON_TOO_LARGE` | `POST /databases/{db}/icons`: too many bytes, too many pixels, or too large a stored record |
 
-    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4032` to `4038`, `4041`, `4042`, `4091` and `4131` are new. `4091` belongs to [Directory Binding](users.md#directory-binding) and is the first sub-code of the `409` family. `4035` belongs to [Delete Entry](entries.md#delete-entry), [Delete Folder](folders.md#delete-folder) and [Upload Document or Certificate Content](entries.md#upload-document-content). `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
+    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4030`, `4032` to `4038`, `4041`, `4042`, `4091` and `4131` are new. `4030` belongs to [Second Password Protection](entries.md#second-password-protection): treat it as "this item is read-only" -- show the item read-only, offer no action that sets a second password, do not ask for the second password again (that is `4031` alone) and do not retry. `4091` belongs to [Directory Binding](users.md#directory-binding) and is the first sub-code of the `409` family. `4035` belongs to [Delete Entry](entries.md#delete-entry), [Delete Folder](folders.md#delete-folder) and [Upload Document or Certificate Content](entries.md#upload-document-content). `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
 
 ## Error Codes
 
@@ -178,7 +179,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 |:----:|------|-------------|
 | `400` | Bad Request | Invalid request body, missing required fields, or malformed parameters |
 | `401` | Unauthorized | Invalid credentials, expired token, or missing `Authorization` header |
-| `403` | Forbidden | Insufficient permissions, a disabled client platform, a client version below the server's minimum, a built-in administrator password that does not meet the account password policies, or (*Server 20.0.0 and later*) a change to a database that accepts no changes at the moment, with `error.code: 403` - reading it still works; Android disabled uses `error.code: 4036`, an outdated client `error.code: 4037`, a built-in administrator password to be replaced `error.code: 4038` |
+| `403` | Forbidden | Insufficient permissions, a disabled client platform, a client version below the server's minimum, a built-in administrator password that does not meet the account password policies, or (*Server 20.0.0 and later*) a change to a database that accepts no changes at the moment or to an item that the database keeps read-only, with `error.code: 403` - reading it still works; Android disabled uses `error.code: 4036`, an outdated client `error.code: 4037`, a built-in administrator password to be replaced `error.code: 4038`, a change of an item protected by a second password `error.code: 4030` (*Server 20.0.0 and later*) |
 | `404` | Not Found | The requested resource (database, entry, folder, user, etc.) does not exist |
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification); a directory identity another account holds uses `error.code: 4091` |
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
@@ -189,8 +190,8 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `459` | TFA Not Activated | Two-factor authentication needs initial setup (the path of a QR code image, relative to the server's address, is returned in `error.message`) |
 | `460` | TFA Code Required | A valid 6-digit 2FA code, or a trusted-device token the server accepts, must be provided to complete login |
 | `500` | Internal Server Error | Unexpected server-side error |
-| `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0. *Server 20.0.0 and later:* also a request for the contents of a database this server cannot open at the moment; the database is still listed by `GET /v2.0/databases`. Match the status, not the message |
-| `503` | Service Unavailable | A [policy change](policies.md#update-server-policy) cannot be made at the moment and was not made, or cannot be previewed at the moment; the same request may succeed later |
+| `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0. *Server 20.0.0 and later:* also every request for the contents of a database that the server holds but has not converted to the new format, with the message "This database is not available on this server: it has not been converted to the new format."; the database is still listed by `GET /v2.0/databases`. A `501` keeps its own message. Match the status, not the message |
+| `503` | Service Unavailable | A [policy change](policies.md#update-server-policy) cannot be made at the moment and was not made, or cannot be previewed at the moment; the same request may succeed later. *Server 20.0.0 and later:* also a change to a database's contents that the server could not write to the database file, with `error.code: 503` and the message "The database cannot be changed at the moment. Try again later."; nothing was written. A change the database refuses for what the request asks (an id that exists already, a move the folder tree does not allow) answers `409` |
 
 ## HTTP Methods
 
@@ -203,7 +204,9 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `DELETE` | Remove a resource | `204 No Content` |
 
 !!! note "Unsupported methods"
-    `HEAD` is not implemented. The server responds with `405 Method Not Allowed` for any method outside the table above, per [RFC 7231 §4.1](https://datatracker.ietf.org/doc/html/rfc7231#section-4.1). If you receive a HEAD response with `Content-Length: 0`, that is the spec-compliant result of the server returning a 405 plus Indy stripping the body (HEAD responses MUST NOT include a message body, per [RFC 7231 §4.3.2](https://datatracker.ietf.org/doc/html/rfc7231#section-4.3.2)). `OPTIONS` is supported only as a CORS preflight -- it returns `204 No Content` with an empty body and the standard CORS headers.
+    *Server 20.0.0 and later:* `HEAD /file/<icon>` answers as `GET` does -- the status, `Content-Type`, `Content-Length` and the other headers -- without the body (see [Entry Icons](#entry-icons)). `HEAD` on every `/v2.0/` route, and on `/temp/` and `/shared/` paths, answers `405 Method Not Allowed` with `Allow: GET, POST, PUT, PATCH, DELETE, OPTIONS`, before any authentication, and `HEAD` on a `/v1.0/` path answers `410`. `PUT` on `/v2.0/databases/{db}/entries` and `/v2.0/databases/{db}/entries/{id}` answers `405` with `Allow: GET, POST, DELETE, PATCH`; `PUT` is taken by [`.../entries/{id}/content`](entries.md#upload-document-content) alone.
+
+    The server responds with `405 Method Not Allowed` for any method outside the table above, per [RFC 7231 §4.1](https://datatracker.ietf.org/doc/html/rfc7231#section-4.1). If you receive a HEAD response with `Content-Length: 0`, that is the spec-compliant result of the server returning a 405 plus Indy stripping the body (HEAD responses MUST NOT include a message body, per [RFC 7231 §4.3.2](https://datatracker.ietf.org/doc/html/rfc7231#section-4.3.2)). `OPTIONS` is supported only as a CORS preflight -- it returns `204 No Content` with an empty body and the standard CORS headers.
 
 !!! note "Path casing"
     v2.0 URL paths are **case-sensitive** (per [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986#section-6.2.2.1) and industry convention -- GitHub, Stripe, AWS, etc.). `/v2.0/me` works; `/v2.0/ME` returns `404 Not Found`. This makes WAF/proxy allowlists deterministic and log aggregation reliable. v1.0 retains case-insensitive matching for backward compatibility. HTTP header names, JSON field names, and query parameter names are not affected by this rule.
@@ -235,7 +238,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `204` | No Content | Request succeeded; no response body (used for DELETE and logout) |
 | `400` | Bad Request | Client error in the request |
 | `401` | Unauthorized | Authentication required or failed |
-| `403` | Forbidden | Insufficient permissions, a disabled client platform, or a database that accepts no changes at the moment |
+| `403` | Forbidden | Insufficient permissions, a disabled client platform, a database that accepts no changes at the moment, or an item protected by a second password (`4030`) |
 | `404` | Not Found | Resource does not exist |
 | `405` | Method Not Allowed | HTTP method not supported for this endpoint; `Allow` header lists supported methods |
 | `408` | Request Timeout | The request headers stopped arriving part-way through; the connection is closed |
@@ -249,8 +252,8 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `459` | TFA Not Activated | 2FA initial setup required |
 | `460` | TFA Code Required | 2FA code needed |
 | `500` | Internal Server Error | Server-side failure |
-| `501` | Not Implemented | Requested operation is unsupported for the entry type (for example, one-time codes on a certificate), or the contents of the database cannot be opened at the moment (Server 20.0.0 and later) |
-| `503` | Service Unavailable | Temporarily not possible; nothing was changed (policy routes) |
+| `501` | Not Implemented | Requested operation is unsupported for the entry type (for example, one-time codes on a certificate), or the database has not been converted to the new format (Server 20.0.0 and later) |
+| `503` | Service Unavailable | Temporarily not possible; nothing was changed (policy routes; from Server 20.0.0 also a change to a database's contents that could not be written) |
 
 !!! info "Method Not Allowed (`405`)"
     When a method is not supported for a given endpoint the server returns `405 Method Not Allowed`, and the response includes an `Allow` header listing the supported methods (per [RFC 7231 §6.5.5](https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.5)).

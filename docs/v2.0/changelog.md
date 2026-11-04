@@ -20,7 +20,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - request bodies must be valid JSON; send `{}` when a request has no body fields
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
 - `importance` strings map to the levels the desktop and mobile clients show
-- a password change ends the account's REST sessions
+- a password change ends the account's REST sessions; `POST /me/password` ends all of them but the calling one
 - the server's account password policies decide which new password `POST /me/password`, `POST /admin/users/{id}/password` and `POST /admin/users` accept, in place of the master-password rules of the client security policies: a refused one answers `400` naming the rules it breaks; a password older than the policies' maximum age reads as `must_change_pass: true` in `GET /me`
 - `POST /auth/login` can trust a device: `trust_device: true` with a verified `tfacode` returns a `tfatoken`, which later logins send instead of `tfacode`; `459` and `460` carry `error.trust_device_possible`
 - whether a second factor is asked, which one, and the trusted-device period follow the server's policies, which replace the server's two-factor settings; a login that requires a second factor for which the policies allow no method answers `401`
@@ -58,7 +58,16 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - a read-only `warning` on every entry: the conditional-access warning set in the Windows client, `null` when there is none, for clients to show before the entry is opened or used
 - connections are reused between requests; an idle one is closed silently after 15 seconds, a `404` no longer closes the connection, and above 1024 connections a new one is refused at TCP level
 - a request that sends `Content-Length` twice answers `400`, and a request whose headers stop arriving answers the new `408`
-- a change to a database that accepts no changes at the moment answers `403`, and a request for the contents of a database the server cannot open at the moment answers `501`
+- a change to a database that accepts no changes at the moment answers `403`, and a request for the contents of a database that has not been converted to the new format answers `501`
+- an account can hold several REST sessions at once, at most 32: each sign-in starts a session of its own, and `POST /auth/logout` ends the calling session alone
+- the server's **Second sign-in of the same user** policy is applied once the second factor is verified: a sign-in answered `459` or `460`, or refused, ends none of the account's other sessions
+- a sign-in with `"scope": "admin"` by an account that holds no server role answers `403` with every `auth` method
+- entries protected by a second password are read-only: a change of such an entry, and `X-New-Second-Password` on `POST` or `PATCH` of an entry or a folder, answer `403` with the new `error.code` `4030`; reading them is unchanged
+- Empty Recycle Bin destroys every item the caller may destroy in one change, or nothing, and leaves items protected by a second password in the bin
+- a change the server could not write to the database answers `503`, and nothing is written
+- an entry template's id answers `404` on every `/entries/{id}` route, and `PUT` on `/entries` and `/entries/{id}` answers `405`
+- `POST /admin/databases` answers `201`, and a name that another database has answers `409` on create and on rename
+- `HEAD` on `/file/<icon>` answers the headers of `GET` without the body; on the API routes it answers `405`
 
 ### Breaking Changes
 
@@ -183,11 +192,11 @@ A refused upload answers `400` / `4008` (`PD_ERRCODE_ICON_IMAGE`: `data` is not 
 
 #### Disabled Accounts Refused on Every Request (Behavior Change)
 
-A token that belongs to a disabled account is refused on every route that requires a bearer token, including `POST /auth/logout`. Session tokens and long-lived API tokens both answer `401` with `error.code` `401` and the message "The user account is currently disabled." in the server's language. The server checks the account right after it verifies the token's signature. That is before it checks the token's expiry, its inactivity window and, for API tokens, whether the token is still registered. A refused request therefore does not extend the session's inactivity window.
+A token that belongs to a disabled account is refused on every route that requires a bearer token, including `POST /auth/logout`. Session tokens and long-lived API tokens both answer `401` with `error.code` `401` and the message "The user account is currently disabled." in the server's language, or, for a session token whose session disabling ended (see below), "Access token is invalid or expired.". The server checks the account right after it verifies the token's signature and, for a session token, its session. That is before it checks the token's expiry, its inactivity window and, for API tokens, whether the token is still registered. A refused request therefore does not extend the session's inactivity window.
 
 `POST /auth/login` refuses a disabled account with every `auth` method, whatever the password, and answers it the `401` the same request gets for an account the server does not know: "Logon failure: unknown user name or bad password." for `standard` and `sspi`, "The server cannot find the user account specified." for `azure` and `oidc`, and for `negotiate` the answer to a Windows account that matches no Password Depot user. The passkey sign-in (`/auth/webauthn/*`) answers "Authentication failed.". The refusal counts towards the IP lockout (`429`), never against the account; the server log and the administrators' alert name the reason. Super-administrator accounts are exempt from the token check and from the `standard`, `sspi`, `azure` and `oidc` sign-in checks only where the server's lock-out policy (`auth.lockout.threshold`) is set to *No limit* for them; where it sets a number of failed sign-ins, as it does by default, these checks apply to them as to every other account. The built-in administrator account is always exempt (see **Client Platforms, Account Lock-Out and a Second Sign-In Follow the Server's Policies** below). Negotiate sign-in and passkey sign-in (`/auth/webauthn/*`) refuse every disabled account, super-administrators included.
 
-Disabling an account does not revoke any of its tokens. They are refused while the account is disabled. Once the account is re-enabled they are accepted again, unless they have expired, timed out or been revoked in the meantime.
+Disabling an account ends its REST sessions, those of a super-administrator account excepted: their session tokens are not accepted again when the account is re-enabled. It revokes none of the account's long-lived API tokens, and none of a super-administrator's session tokens: they are refused while the account is disabled, as described above, and accepted again once it is re-enabled, unless they have expired, timed out or been revoked in the meantime.
 
 !!! warning "Behavior change for clients"
     Treat a `401` on an authenticated route as "sign in again", and discard the token locally, because `POST /auth/logout` is refused as well. For a disabled account the new sign-in is refused too, answered as for an account the server does not know; a client cannot tell the two apart. Show `error.message` instead of retrying, and do not match on its text, which follows the server's language. Refused sign-ins count toward the address's failed-login limit, which answers `429`.
@@ -263,14 +272,14 @@ The address compared is the connection's peer address, never a header such as `X
 
 #### Password Changes End the Account's REST Sessions (Behavior Change)
 
-When a user's password is changed anywhere other than `POST /me/password`, all of that user's REST session tokens stop working immediately. The next request with any of them returns `401` ("Access token is invalid or expired."):
+When a user's password is changed, that user's REST session tokens stop working immediately -- with `POST /me/password` all of them but the calling session's. The next request with any of them returns `401` ("Access token is invalid or expired."):
 
 | Password change | The account's REST session tokens |
 |-----------------|-----------------------------------|
 | `POST /admin/users/{id}/password` | Invalidated -- including the caller's own session when an administrator uses it on their own account |
 | Password changed or reset in the Server Manager | Invalidated |
 | Password changed by the user in the Windows client | Invalidated |
-| `POST /me/password` | Kept: after the `204`, the account's REST session tokens, including the calling session's, stay valid |
+| `POST /me/password` | The calling session stays valid after the `204`; the account's other REST sessions are invalidated. Made with a long-lived API token, the change invalidates all of the account's REST sessions |
 
 Long-lived API tokens are not affected by any password change, and neither are trusted devices (see **Trusted Devices for Two-Factor Sign-In** below).
 
@@ -379,9 +388,9 @@ The server's policies below, set in the Server Manager under *Policies* for the 
 
 **Allowed client platforms.** A value enforced at server scope refuses the platform to every account alike and is checked at login (both WebAuthn steps included), on OIDC discovery (`GET /auth/oidc`) and on every authenticated request, before the account is known. Otherwise the policy that applies to the account is checked once the sign-in has proven the account and its address is allowed -- after the password, identity token or Windows sign-in was accepted and before a second factor is asked, or after the passkey assertion was verified -- and on every authenticated request, long-lived API tokens included, so that a platform can be refused on a later request of an established session. A refused platform does not count towards the IP lockout (`429`); the server log and the audit record name the policy setting and the scope. A mirror server that has not yet received its main server's policies after the upgrade refuses every platform.
 
-**Failed sign-ins before the account is locked.** A wrong password with `standard` and a wrong two-factor code are counted per account; an `sspi` sign-in whose password Windows refuses counts towards the IP lockout only. The failed sign-in that reaches the number is answered as every other failed one: `401` "Logon failure: unknown user name or bad password." after a wrong password, `460` after a wrong two-factor code; the server log, the audit record and the administrators' alert name the lock-out. Once the policy has disabled an account, a super-administrator included, every request with one of its session tokens or long-lived API tokens is refused with `401` "The user account is currently disabled.". Its sign-ins with `standard`, `sspi`, `azure` and `oidc` are refused with the `401` an account the server does not know gets (see **Disabled Accounts Refused on Every Request** above); Negotiate and passkey sign-ins refuse every disabled account. The account stays disabled until an administrator enables it again.
+**Failed sign-ins before the account is locked.** A wrong password with `standard` and a wrong two-factor code are counted per account; an `sspi` sign-in whose password Windows refuses counts towards the IP lockout only. The failed sign-in that reaches the number is answered as every other failed one: `401` "Logon failure: unknown user name or bad password." after a wrong password, `460` after a wrong two-factor code; the server log, the audit record and the administrators' alert name the lock-out. Once the policy has disabled an account, a super-administrator included, every request with one of its session tokens or long-lived API tokens is refused with `401` and `error.code` `401`. Its sign-ins with `standard`, `sspi`, `azure` and `oidc` are refused with the `401` an account the server does not know gets (see **Disabled Accounts Refused on Every Request** above); Negotiate and passkey sign-ins refuse every disabled account. The account stays disabled until an administrator enables it again.
 
-**Second sign-in of the same user.** The policy applies to `POST /auth/login` with every `auth` method and to `POST /auth/webauthn/complete`. With `auth: "negotiate"` and on the passkey sign-in only a value set for a group or the user applies, never the server's, and only one that refuses the new sign-in or ends the other session. While the account has a Server Manager session, a sign-in this rule applies to is refused instead of ending that session. A refused sign-in answers `401` with the policy's refusal message, and it counts towards the IP lockout (`429`). Only the account's sessions over the classic protocol are taken into account, never its REST sessions, and a REST sign-in is never taken for such a session reconnecting, whatever address it comes from.
+**Second sign-in of the same user.** The policy applies to `POST /auth/login` with every `auth` method and to `POST /auth/webauthn/complete`. With `auth: "negotiate"` and on the passkey sign-in only a value set for a group or the user applies, never the server's, and only one that refuses the new sign-in or ends the other session. While the account has a Server Manager session, a sign-in this rule applies to is refused instead of ending that session. A refused sign-in answers `401` with the policy's refusal message, and it counts towards the IP lockout (`429`). Only the account's sessions over the classic protocol are taken into account, never its REST sessions, and a REST sign-in is never taken for such a session reconnecting, whatever address it comes from. The policy is applied once the sign-in's second factor is verified; see **A Second Sign-In Is Decided Once the Second Factor Is Verified** below.
 
 !!! warning "Behavior change for clients"
     A platform that works for one account can be refused for another, and an established session can be refused with `403` on a later request when the policy changes. Treat that `403` as an administrator restriction: show `error.message`, do not retry, and do not report it as wrong credentials. A sign-in can be refused with `401` because the account is signed in on another device; show the message and do not retry automatically. Match the status and code, never the message, which is localizable.
@@ -397,6 +406,39 @@ A REST session ends after the inactivity period of the server's **Disconnect aft
 
 !!! warning "Behavior change for clients"
     Do not assume a fixed inactivity period. A client that signs the user out after 10 minutes without a request ends sessions the server still accepts; one that keeps a session open longer than the server's period gets `401`. Treat a `401` on an authenticated route as the end of the session and sign in again.
+
+#### Several REST Sessions per Account (Behavior Change)
+
+Each completed sign-in -- `POST /auth/login` with every `auth` method, and `POST /auth/webauthn/complete` -- starts a REST session of its own, and the account's other REST sessions stay valid: a second device, the Web Client beside an app, an `admin`-scope session beside a `client`-scope one.
+
+- **Logout.** `POST /auth/logout` with a session token ends that session alone; the account's other sessions continue.
+- **Inactivity.** Each session has its own inactivity period, the one of **REST Sessions Follow the Server's Inactivity Policy** above, counted from that session's own last request.
+- **Limit.** An account holds at most 32 REST sessions at once, `client` and `admin` scope together. A sign-in beyond the limit ends the account's session that has gone unused the longest.
+- **What ends every session of the account.** Disabling the account (a super-administrator's excepted, see **Disabled Accounts Refused on Every Request** above), a change of its password as described under **Password Changes End the Account's REST Sessions** above, a change or removal of its directory binding with `PATCH /admin/users/{id}`, repeated wrong passwords or codes on the key-store endpoints (see [Key Stores](api-reference/key-stores.md#wrong-passwords-and-codes)), a disconnect of the user in the Server Manager, and a restart of the server. `POST /me/password` ends the account's other REST sessions and keeps the calling one.
+- **The token.** A session token carries the new claim `sid`, which names its session; see [Token Structure](api-reference/authentication.md#token-structure). Long-lived API tokens carry no session and are unaffected.
+
+A session token whose session has ended answers `401` with `error.code` `401` and "Access token is invalid or expired.". See [Sessions](api-reference/authentication.md#sessions).
+
+!!! warning "Behavior change for clients"
+    A sign-in does not end the account's other REST sessions: end a session you no longer need with `POST /auth/logout`. A script that signs in on every run should log out at the end of each run, or its oldest sessions are ended for it once the limit is reached. A `401` on an authenticated route means that the session of that token has ended; sign in again, and do not discard the account's other sessions because of it.
+
+#### A Second Sign-In Is Decided Once the Second Factor Is Verified (Behavior Change)
+
+The server's **Second sign-in of the same user** policy (`session.concurrent`, see **Client Platforms, Account Lock-Out and a Second Sign-In Follow the Server's Policies** above) is applied to a REST sign-in once its second factor is verified, or, where none is asked, once its credential is accepted -- with every `auth` method, `negotiate` included.
+
+- A sign-in answered `459` or `460` ends none of the account's sessions and is not refused because of them: the policy is not applied to it yet. A sign-in refused for any reason ends none of them either.
+- With the setting that ends the other session, the account's sessions over the classic protocol end once the second factor is verified. With the setting that refuses the new sign-in, it is refused then: `401` with the policy's message, which names the address of the other session, counted towards the IP lockout (`429`). Such a sign-in issues no token and makes no device trusted, also where it carried `"trust_device": true` with a code that verified.
+- The policy weighs the account's sessions over the classic protocol (for example the Windows client) alone. It neither ends nor counts the account's REST sessions (see **Several REST Sessions per Account** above), so a REST sign-in is never refused because of another REST session.
+
+!!! warning "Behavior change for clients"
+    A sign-in that the policy refuses is answered `401` after the user has entered the two-factor code. Show `error.message`, do not retry automatically, and match the status and code, never the message, which is localizable.
+
+#### `403` for an Admin-Scope Sign-In Without a Server Role (Behavior Change)
+
+A sign-in with `"scope": "admin"` by an account that holds no server role answers `403` with `error.code` `403`, with every `auth` method of `POST /auth/login`, as the passkey sign-in (`POST /auth/webauthn/complete`) does. It comes once the credential is accepted, before a second factor is asked; no token is issued, and the refusal counts towards the IP lockout (`429`) as a failed sign-in. See [Client vs Admin Scope](api-reference/authentication.md#client-vs-admin-scope).
+
+!!! warning "Behavior change for clients"
+    Tell this refusal from wrong credentials by the status: `403` means that the account may not use the `admin` scope. Offer the `client` scope or ask the user to contact an administrator, and do not retry.
 
 #### Clients Below the Server's Minimum Version Are Refused (Behavior Change)
 
@@ -637,6 +679,13 @@ A server upgraded to 20.0.0 lists its databases named `.pswe` or `.pswd` with `.
 !!! warning "Behavior change for clients"
     Refer to databases by `id`, never by name, and take a database's name from the server's answers rather than from the name you sent. Do not add or remove an extension yourself.
 
+#### Create Database Answers `201`, a Taken Name `409` (Behavior Change)
+
+`POST /admin/databases` answers `201 Created` with the database object, as every other route that creates something does. A name that another database already has -- the name as it is stored, ending in `.pdepot` (see **Database Names End in `.pdepot`** above) -- answers `409 Conflict` on `POST /admin/databases` and on a rename with `PATCH /admin/databases/{id}`; nothing is created or changed. A name the [Database Name Rules](api-reference/databases.md#database-name-rules) refuse still answers `400`.
+
+!!! warning "Behavior change for clients"
+    Treat every `2xx` of a create as success and take the new database from the response body. Tell a taken name (`409`) from a refused one (`400`) by the status, never by the message.
+
 ### Entries and Folders
 
 #### `DELETE` Moves an Entry or Folder to the Recycle Bin (Behavior Change)
@@ -687,6 +736,24 @@ Without the permission, the request answers `403` with `error.code = 403`, not `
 
 !!! warning "Behavior change for clients"
     Only re-prompt for a second password on `4031`. A plain `403` here means the user may not set second passwords in this folder or on this item. Send the request again without `X-New-Second-Password`, or tell the user.
+
+#### Entries Protected by a Second Password Are Read-Only (Behavior Change)
+
+An entry protected by a second password is read as before -- with `X-Second-Password`; a missing or wrong one answers `403` / `4031` -- but it cannot be changed. These requests answer `403` with the new `error.code` `4030` (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`) and the message "Changing a second password, or an item protected by one, is not available in this version: the change is refused.", and nothing is written:
+
+- `PATCH /databases/{db}/entries/{id}`, `POST .../move`, `PUT .../content` and `DELETE` (both modes) of a protected entry;
+- `POST /databases/{db}/recyclebin/{id}/restore` and `DELETE /databases/{db}/recyclebin/{id}` of a protected entry;
+- destroying a folder that holds a protected entry: `DELETE /databases/{db}/folders/{id}?mode=permanent`, any `DELETE` of such a folder while the database keeps no recycle bin, and `DELETE /databases/{db}/recyclebin/{id}` of such a folder;
+- `X-New-Second-Password` on an entry or a folder -- on `POST`, a non-empty one; on `PATCH`, one that sets, changes or removes the second password (an empty header removes it). The `second_pass` permission is checked first (see **Setting a Second Password Requires the `second_pass` Permission** above), so a request without it still answers a plain `403`.
+
+On `PATCH`, a missing or wrong `X-Second-Password` is answered `403` / `4031` before `4030`.
+
+On Server 20.0.0 a second password protects entries. A folder that was protected by one on an earlier server has none of its own after the upgrade (`has_second_pass` is `false`): the entries it held keep theirs, and the folder can be renamed, moved and moved to the recycle bin like any other folder, while destroying it is refused as long as it holds a protected entry. [Empty Recycle Bin](api-reference/recyclebin.md#empty-recycle-bin) leaves a protected entry, and a folder that holds one, in the bin, as it leaves an item the caller may not delete, and answers `204`.
+
+`4030` is a new sub-code of the `403` family. See [Second Password Protection](api-reference/entries.md#second-password-protection).
+
+!!! warning "Behavior change for clients"
+    Treat `403` / `4030` as "this item is read-only": show it read-only, offer no action that sets, changes or removes a second password, do not ask for the second password again -- that is what `4031` alone means -- and do not retry. Go by the answer, whatever `has_second_pass` says. Match the numeric `error.code`, never the message.
 
 #### Link Entries: Fields Cannot Be Written Through the Link (Behavior Change)
 
@@ -790,6 +857,24 @@ Server 20.0.0 answers the ids of entries and folders in lower case, such as `f1a
 
 !!! warning "Behavior change for clients"
     Show the message to the user, but match the status `400`, not the message, in code. Do not repeat the same upload unchanged.
+
+#### Entry Templates Answer `404` on Entry Routes (Behavior Change)
+
+The id of an entry template -- one of the templates a database keeps for new entries -- answers `404` on every `/databases/{db}/entries/{id}` route (`GET`, `PATCH`, `DELETE`, `/move`, `/content`, `/otp`), as an id the database does not hold.
+
+!!! warning "Behavior change for clients"
+    An id that answers `404` here is not an entry of the database; handle it like an unknown id.
+
+#### `PUT` on `/entries` and `/entries/{id}` Answers `405` (Behavior Change)
+
+`PUT` is taken by `PUT /databases/{db}/entries/{id}/content` alone. On `/databases/{db}/entries` and `/databases/{db}/entries/{id}` it answers `405 Method Not Allowed` with `Allow: GET, POST, DELETE, PATCH`, and nothing is changed. An entry is updated with `PATCH`.
+
+#### Empty Recycle Bin Destroys Everything It May, or Nothing (Behavior Change)
+
+`DELETE /databases/{db}/recyclebin` weighs every item in the bin first and then destroys all the items the caller may destroy in one change of the database: when the call answers an error, nothing was destroyed. An item the caller may not see or may not delete stays in the bin, and so does an entry protected by a second password, or a folder that holds one (see **Entries Protected by a Second Password Are Read-Only** above); the call answers `204`. When there is something to destroy, it answers `403` with `error.code` `403` where the database accepts no changes at the moment, and `503` with `error.code` `503` where the change could not be written (see **Changes That Cannot Be Written Answer `503`** below). See [Empty Recycle Bin](api-reference/recyclebin.md#empty-recycle-bin).
+
+!!! warning "Behavior change for clients"
+    After an error the bin is as it was: list it again before you tell the user what is left in it, and on `503` offer to try again later. A `204` does not mean that the bin is empty; list it to see what stayed.
 
 ### Shared Secrets
 
@@ -973,15 +1058,26 @@ A request that carries more than one `Content-Length` header is refused with `40
 
 If a request's header block stops arriving part-way through - silence for longer than the idle timeout between the request line and the blank line that ends the headers - the server answers `408 Request Timeout` with `error.code` `408` and closes the connection. The body is never read and the request is not dispatched. This is **not** what an idle connection being closed looks like: that is silent and carries no response. A client that receives `408` may retry on a new connection. Like the other header-stage refusals, the body is the JSON error object labelled `text/html; charset=utf-8`.
 
-#### Databases That Cannot Be Changed or Opened at the Moment Answer `403` and `501` (Behavior Change)
+#### Databases That Accept No Changes or Are Not Converted Answer `403` and `501` (Behavior Change)
 
-- **`403`.** A request that would change a database that accepts no changes at the moment answers `403` with `error.code` `403`, and nothing is written. Reading the database still works.
-- **`501`.** A request for the contents of a database that the server cannot open at the moment answers `501`. The database is still listed by `GET /databases`.
+- **`403`.** A request that would change a database that accepts no changes at the moment, or an item that the database keeps read-only, answers `403` with `error.code` `403`, and nothing is written. Reading the database still works.
+- **`501`.** A database that the server holds but has not converted to the new format answers every request for its contents with `501` and the message "This database is not available on this server: it has not been converted to the new format.": the routes under `/databases/{db}/` (children, entries, folders, search, categories, icons, recycle bin), `POST` and `PATCH` on `/admin/databases/{db}/permissions`, `PATCH /admin/databases/{id}`, and a shared secret created for one of its entries. The database is still listed by `GET /databases`. A `501` keeps its own message; it is never replaced by the general text of a `500`.
 
 See [Error Codes](api-reference/overview.md#error-codes).
 
 !!! warning "Behavior change for clients"
-    Match the status and `error.code`, never the message. A `501` for a database's contents does not mean that the route is unsupported: keep the database in the list and tell the user that it cannot be opened at the moment. A plain `403` on a change can also mean that the database accepts no changes at the moment; nothing was written, so keep the user's input.
+    Match the status and `error.code`, never the message. A `501` for a database's contents does not mean that the route is unsupported: keep the database in the list and tell the user that it cannot be opened on this server; show `error.message`. A plain `403` on a change can also mean that the database, or the item, accepts no changes; nothing was written, so keep the user's input.
+
+#### Changes That Cannot Be Written Answer `503` (Behavior Change)
+
+A change to a database's contents that the server could not write to the database file answers `503 Service Unavailable` with `error.code` `503` and the message "The database cannot be changed at the moment. Try again later.", and nothing is written: the database is as it was before the request. A change that the database refuses for what the request asks -- an id that exists already, or a move the folder tree does not allow -- still answers `409`.
+
+!!! warning "Behavior change for clients"
+    On `503` keep the user's input and offer to try again later; do not repeat the request in a tight loop. Match the status, never the message.
+
+#### `HEAD` Requests (Behavior Change)
+
+`HEAD /file/<icon>` answers as `GET` does -- the status, `Content-Type: image/svg+xml`, `Content-Length` and the other headers -- without the body; a name that is not a standard icon answers `404`. `HEAD` on a `/v2.0/` route, and on `/temp/` and `/shared/` paths, answers `405 Method Not Allowed` with `Allow: GET, POST, PUT, PATCH, DELETE, OPTIONS`, before any authentication. `HEAD` on a `/v1.0/` path answers `410`. See [HTTP Methods](api-reference/overview.md#http-methods).
 
 ### Shared-Link Page
 
@@ -1021,6 +1117,7 @@ These correct the documentation only; the server's behavior is described as it h
 - **`PATCH /admin/users/{id}` answers the short form of the user.** The reference showed the full representation as its response. The server answers the fields every user representation has (`UserBasic` in the OpenAPI document, which named `User`) and no detail field such as `roles`, `member_of`, `disabled` or the AD attributes; read those with [`GET /admin/users/{id}`](api-reference/users.md#get-user-admin).
 - **`GET /admin/audit` is described in the OpenAPI document**, with its filters (`start`, `end`, `user_id`, `channel`, `target_kind`, `event_kind_min`, `event_kind_max`), `limit`, the roles that may call it and the `X-Audit-*` response headers.
 - **The OpenAPI document no longer lists `GET /databases/{db}/folders` and `GET /databases/{db}/entries`** (`listFolders`, `listEntries`): the server does not offer them, and the reference never described them. `POST` on both paths is unchanged. Browse a database with [List Children](api-reference/folders.md#list-children-navigation) and search it with [Search](api-reference/search.md).
+- **Disabling an account ends its REST sessions.** **Disabled Accounts Refused on Every Request** said that disabling an account revokes none of its tokens. Disabling ends the account's REST sessions, a super-administrator's excepted; its session tokens then answer "Access token is invalid or expired.", and long-lived API tokens are refused while the account is disabled and accepted again once it is re-enabled, as the entry now says.
 - **`GET /admin/databases` returns the databases the caller manages.** The OpenAPI document said that it returns every database regardless of the caller's permissions. A server administrator gets every database, a database administrator the databases whose `db_admins` lists them, and `total` counts the databases visible to the caller, as [List All Databases (Admin)](api-reference/databases.md#list-all-databases-admin) describes.
 
 ---

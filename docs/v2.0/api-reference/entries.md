@@ -479,6 +479,11 @@ This sub-object is present only in the full representation when the caller may r
 | `value` | string | Field value |
 | `input_id` | string | Input identifier |
 
+!!! note "No Flat List Endpoint"
+    Unlike other resources, entries do not have a flat `GET /databases/{db}/entries` listing endpoint. To browse entries, use the [List Children](folders.md#list-children-navigation) endpoint which returns both folders and entries within a given location. To search across all entries, use the [Search](search.md) endpoint.
+
+### Second Password Protection
+
 !!! info "Second Password Protection"
     Entries can be protected with an optional second password. When `has_second_pass` is `true`, retrieving the full representation (including `pass`, `comments`, and `custom_fields`) requires the `X-Second-Password` request header with the correct password. `login` and `url` are part of every representation and are not withheld for a protected entry. Nor is [`warning`](#conditional-access-warning): list and search rows carry it without `X-Second-Password`, so a client can show the warning before it asks for the second password.
 
@@ -495,8 +500,16 @@ This sub-object is present only in the full representation when the caller may r
 
     To **remove** second password protection, send `X-Second-Password` with the current password and `X-New-Second-Password` with an empty string (both Base64-encoded).
 
-!!! note "No Flat List Endpoint"
-    Unlike other resources, entries do not have a flat `GET /databases/{db}/entries` listing endpoint. To browse entries, use the [List Children](folders.md#list-children-navigation) endpoint which returns both folders and entries within a given location. To search across all entries, use the [Search](search.md) endpoint.
+!!! warning "Read-only in Server 20.0.0"
+    *Server 20.0.0 and later.* An entry protected by a second password is read as described above, but it cannot be changed. These requests answer `403` with `error.code` `4030` (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`) and the message "Changing a second password, or an item protected by one, is not available in this version: the change is refused.", and nothing is written:
+
+    - [Update Entry](#update-entry), [Move Entry](#move-entry), [Upload Document or Certificate Content](#upload-document-content) and [Delete Entry](#delete-entry) (both modes) of a protected entry;
+    - [Restore Item](recyclebin.md#restore-item) and [Delete Item](recyclebin.md#delete-item) of a protected entry in the recycle bin, and destroying a folder that holds one (see [Delete Folder](folders.md#delete-folder));
+    - `X-New-Second-Password` on [Create Entry](#create-entry), [Update Entry](#update-entry), [Create Folder](folders.md#create-folder) and [Update Folder](folders.md#update-folder): setting, changing or removing a second password. The `second_pass` permission is checked first; without it the answer is a plain `403`.
+
+    On `PATCH`, a missing or wrong `X-Second-Password` is answered `403` / `4031` before `4030`. A second password protects entries: a folder that was protected by one on an earlier server has none of its own after the upgrade, and the entries it held keep theirs. [Empty Recycle Bin](recyclebin.md#empty-recycle-bin) leaves a protected entry, and a folder that holds one, in the bin.
+
+    Treat `403` / `4030` as "this item is read-only": show it read-only, offer no action that sets, changes or removes a second password, do not ask for the second password again -- that is what `4031` alone means -- and do not retry. Go by the answer, whatever `has_second_pass` says, and match the numeric `error.code`, never the message.
 
 ---
 
@@ -591,7 +604,10 @@ Returns the **full representation** of a specific entry, including the password,
 |--------|-------------|
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry, read directly or through a link (body `error.code` = `403`), **or** a missing/incorrect `X-Second-Password` for a protected entry (body `error.code` = `4031`) |
-| `404 Not Found` | Database or entry not found, **or** the entry is in the recycle bin |
+| `404 Not Found` | Database or entry not found, **or** the entry is in the recycle bin, **or** (*Server 20.0.0 and later*) the id is an entry template's |
+
+!!! note "Entry templates are not addressable"
+    *Server 20.0.0 and later.* The id of an entry template -- one of the templates a database keeps for new entries -- answers `404 Not Found` on this endpoint and on every other `/entries/{id}` route (`PATCH`, `DELETE`, `/move`, `/content`, `/otp`), exactly as an id the database does not hold.
 
 !!! note "Deleted entries are not addressable"
     An entry in the database's [recycle bin](recyclebin.md) keeps its id, but
@@ -656,7 +672,7 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 
 | Header | Required | Description |
 |--------|----------|-------------|
-| `X-New-Second-Password` | No | Base64-encoded. Set a second password on the new entry |
+| `X-New-Second-Password` | No | Base64-encoded. Set a second password on the new entry. *Server 20.0.0 and later:* a non-empty value is refused with `403` / `4030` and the entry is not created (see [Second Password Protection](#second-password-protection)) |
 
 ### Request Body
 
@@ -742,9 +758,10 @@ Returns the compact representation of the created entry (without `pass`). When t
 |--------|-------------|
 | `400 Bad Request` | Invalid or missing required fields (body `error.code` = `400`), **or** a refused `totp` object (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) a non-empty `X-New-Second-Password` (`error.code` `4030`); the entry is not created |
 | `404 Not Found` | Database or parent folder not found |
 | `501 Not Implemented` | `totp` sent with `type` `encrypted_file` or `certificate` |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the entry is not created. Try again later |
 
 ### Example
 
@@ -806,7 +823,9 @@ Updates an existing entry. Include only the fields you want to update.
 | Header | Required | Description |
 |--------|----------|-------------|
 | `X-Second-Password` | Conditional | Base64-encoded. Required and verified if the entry has a second password (`has_second_pass: true`); a missing/incorrect value returns `403` with `error.code` = `4031` |
-| `X-New-Second-Password` | No | Base64-encoded. Set, change, or remove the second password. When changing, the correct current `X-Second-Password` must also be sent. Applied only if the request succeeds |
+| `X-New-Second-Password` | No | Base64-encoded. Set, change, or remove the second password. When changing, the correct current `X-Second-Password` must also be sent. Applied only if the request succeeds. *Server 20.0.0 and later:* a value that sets, changes or removes the second password is refused with `403` / `4030`, and nothing is written (see [Second Password Protection](#second-password-protection)) |
+
+`PUT` is not an update: on `/databases/{db}/entries` and `/databases/{db}/entries/{id}` it answers `405 Method Not Allowed` with `Allow: GET, POST, DELETE, PATCH` (*Server 20.0.0 and later*). `PUT` is used by [Upload Document or Certificate Content](#upload-document-content) alone.
 
 ### Request Body
 
@@ -896,9 +915,10 @@ Returns the compact representation of the updated entry.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields (body `error.code` = `400`), **or** a refused `totp` write (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions, a `totp` write on an entry that is sealed for you, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`) |
+| `403 Forbidden` | Insufficient permissions, a `totp` write on an entry that is sealed for you, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`); *Server 20.0.0 and later:* a protected entry, or an `X-New-Second-Password` that sets, changes or removes a second password (`4030`) |
 | `404 Not Found` | Database or entry not found |
 | `501 Not Implemented` | `totp` sent for an entry of type `encrypted_file` or `certificate` |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is written. Try again later |
 
 !!! tip "Detecting a wrong second password"
     Updating a second-password-protected entry requires a correct `X-Second-Password`; a wrong or missing one returns `403` with the JSON body `error.code` = `4031` (`PD_ERRCODE_INVALID_SECOND_PASS`), distinct from a generic access-denied `403` (which keeps `error.code` = `403`). Detect the condition by checking `HTTP status == 403 && body.error.code == 4031` and re-prompt the user for the second password; on a generic `403`, do not re-prompt. Always match the numeric `error.code`, never the localized message.
@@ -991,8 +1011,9 @@ No response body. Both modes answer alike.
 |--------|-------------|
 | `400 Bad Request` | `mode` is neither `recycle` nor `permanent`; nothing is deleted. Default message: `The "mode" parameter accepts only "recycle" or "permanent".` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the entry is being edited by another user (`error.code` `4035`) |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the entry is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) the entry is protected by a second password (`error.code` `4030`, see [Second Password Protection](#second-password-protection)); nothing is deleted |
 | `404 Not Found` | Database or entry not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is deleted. Try again later |
 
 !!! note "An entry someone is editing is not deleted"
     *Server 20.0.0 and later.* When the entry is checked out by another user, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the entry stays exactly as the request found it. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other user is done, on a plain `403` they cannot.
@@ -1077,8 +1098,9 @@ Returns the compact representation of the moved entry.
 |--------|-------------|
 | `400 Bad Request` | Invalid target folder |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) the entry is protected by a second password (`error.code` `4030`, see [Second Password Protection](#second-password-protection)); the entry stays where it is |
 | `404 Not Found` | Database, entry, or target folder not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the entry stays where it is. Try again later |
 
 ### Examples
 
@@ -1654,11 +1676,12 @@ Returns the compact representation of the entry. The `document` or `certificate`
 |--------|-------------|
 | `400 Bad Request` | Entry has no supported binary content (including `encrypted_file`), the certificate `part` is invalid, or a document request includes a nonempty `part`; *Server 20.0.0 and later:* also when the content cannot be stored, with a message that names why; nothing is written |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`), or the entry is being edited by another user (`error.code` `4035`, *Server 20.0.0 and later*); nothing is written |
+| `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`), or the entry is being edited by another user (`error.code` `4035`, *Server 20.0.0 and later*), or the entry is protected by a second password (`error.code` `4030`, *Server 20.0.0 and later*, see [Second Password Protection](#second-password-protection)); nothing is written |
 | `404 Not Found` | Database or entry not found, or the entry is in the recycle bin |
 | `409 Conflict` | Upload attempted through a link |
 | `411 Length Required` | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Refused before the body is read and before authentication; the connection is closed. A request that carries both headers answers `411`, not the `413` below (*Server 20.0.0 and later*) |
 | `413 Payload Too Large` | `Content-Length` exceeds 64 MB. The request is refused before the body is read |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The content could not be written to the database; nothing is written. Try again later |
 
 #### Example
 

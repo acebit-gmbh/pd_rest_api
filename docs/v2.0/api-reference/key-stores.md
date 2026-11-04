@@ -27,7 +27,7 @@ Path segments are case-sensitive, and one trailing slash is no segment. Any othe
 
 A wrong current password or recovery code is answered `403` and counted, both for the session and for the client's address, like a failed sign-in -- never against an account:
 
-- After repeated wrong passwords or codes, on any of these endpoints together, **the session ends**: the request that reached the limit is still answered, its token then answers `401`, and a new sign-in is needed. A request of that session already on its way is answered `429`.
+- After repeated wrong passwords or codes, on any of these endpoints together, **the session ends**, and with it every other REST session of the account: the request that reached the limit is still answered, its token then answers `401`, and a new sign-in is needed. A request of that session already on its way is answered `429`.
 - The address counts towards the server's IP lockout, as failed sign-ins do; a blocked address is answered `429` with a `Retry-After` header on every request. The super administrators' cooldown after failed sign-ins (see [Authentication](authentication.md)) answers these endpoints `429` as well.
 - A recovery code with a **typing error** -- one whose check characters do not match -- is answered `400` and is not counted: compare it with the code as it was written down.
 

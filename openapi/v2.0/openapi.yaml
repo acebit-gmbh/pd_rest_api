@@ -25,6 +25,22 @@ info:
     days) without a request. Earlier servers use 10 minutes. Long-lived API
     tokens do not expire on inactivity.
 
+    Server 20.0.0 and later: each completed sign-in (`login`,
+    `completeWebAuthnAuth`) starts a REST session of its own, and the
+    account's other REST sessions stay valid; a session token names its
+    session in the claim `sid`. Each session's inactivity period counts
+    from its own last request, and `logout` ends the calling session alone.
+    An account holds at most 32 REST sessions at once, client and admin
+    scope together; a sign-in beyond the limit ends the account's session
+    that has gone unused the longest. Disabling the account (a
+    super-administrator's excepted), a change of its password other than
+    with `changeMyPassword`, a change or removal of its directory binding
+    with `adminUpdateUser`, repeated wrong passwords or codes on the
+    key-store endpoints, a disconnect of the user in the Server Manager and
+    a restart of the server end every REST session of the account;
+    `changeMyPassword` ends the account's other REST sessions and keeps the
+    calling one.
+
     Server 20.0.0 and later: the server's API token policies
     (auth.api_tokens.allowed, auth.api_tokens.max_lifetime) are checked on
     every use of a long-lived API token, against the token's creation time;
@@ -91,7 +107,8 @@ info:
     they do not know. See the
     `#/components/responses` section for reusable response definitions
     (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `MethodNotAllowed`,
-    `LengthRequired`, `PayloadTooLarge`, `TooManyRequests`).
+    `LengthRequired`, `PayloadTooLarge`, `TooManyRequests`,
+    `DatabaseUnavailable`).
 
     The `error.code` field normally equals the HTTP status, but may carry an
     application sub-code (`>= 1000`) for a finer machine-readable reason while
@@ -111,7 +128,11 @@ info:
     authentication, the verification e-mail cannot be sent) and `4013`
     (`PD_ERRCODE_2FA_EMAIL_MISSING` -- e-mail two-factor authentication, no
     e-mail address), both with HTTP `401` from `POST /auth/login` (Server
-    20.0.0 and later); `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
+    20.0.0 and later); `4030` (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY` -- the
+    entry is protected by a second password and cannot be changed in this
+    version, or the request sets, changes or removes a second password with
+    `X-New-Second-Password`; nothing was written, Server 20.0.0 and later),
+    `4031` (`PD_ERRCODE_INVALID_SECOND_PASS` -- wrong or
     missing second password), `4032` (`PD_ERRCODE_LICENSE_LIMIT` -- the
     licensed number of users is reached, `POST /admin/users`, Server 20.0.0 and
     later), `4033` (`PD_ERRCODE_TOTP_READ_REQUIRED` -- a `totp` write in
@@ -173,7 +194,12 @@ info:
     - `400 Bad Request` -- malformed JSON body, unknown enum value, or an
       invalid/conflicting client identity.
     - `405 Method Not Allowed` -- includes an `Allow` header listing
-      supported methods (RFC 7231 §6.5.5).
+      supported methods (RFC 7231 §6.5.5). Server 20.0.0 and later: `HEAD`
+      on every route of this document answers `405` with
+      `Allow: GET, POST, PUT, PATCH, DELETE, OPTIONS`, before
+      authentication, and so do `/temp/` and `/shared/` paths; `HEAD` on a
+      `/v1.0/` path answers `410`, and `HEAD /file/<icon>` (outside this
+      document's base path) answers as `GET` does, without the body.
     - `403 Forbidden` -- a disabled client platform: error.code 4036 for
       Android, 403 for other platforms (Server 20.0.0 and later).
     - `403 Forbidden` -- a client version below the server's Minimum client
@@ -200,6 +226,17 @@ info:
       error with `error.code` `4131`.
     - `429 Too Many Requests` -- IP-lockout triggered by repeated failed
       logins. Includes a `Retry-After` header (seconds).
+    - `501 Not Implemented` -- Server 20.0.0 and later: every request for the
+      contents of a database that the server holds but has not converted to
+      the new format, with the message "This database is not available on
+      this server: it has not been converted to the new format."; the
+      database is still listed by `listDatabases`. A `501` keeps its own
+      message.
+    - `503 Service Unavailable` -- Server 20.0.0 and later: a change to a
+      database's contents that the server could not write to the database
+      file (`DatabaseUnavailable`); nothing was written. A change the
+      database refuses for what the request asks -- an id that exists
+      already, a move the folder tree does not allow -- answers `409`.
 
     ## Connections
 
@@ -319,7 +356,20 @@ paths:
               $ref: "#/components/schemas/LoginRequest"
       responses:
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            A client platform the server's Allowed client platforms policy
+            does not allow (`error.code` 4036 for Android, 403 for the
+            others), a client version below the Minimum client version policy
+            (4037), or a built-in administrator password to be replaced
+            (4038); see the `Forbidden` response. Server 20.0.0 and later:
+            also a login with `"scope": "admin"` by an account that holds no
+            server role (`error.code` 403), with every `auth` method, once the
+            credential is accepted and before a second factor is asked; no
+            token is issued, and it counts towards the IP lockout (429).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "200":
           description: Authentication successful
           headers:
@@ -385,6 +435,15 @@ paths:
             sspi before the password is checked, otherwise once the token or
             the Windows sign-in was accepted. It counts towards the IP lockout
             (429), not against the account.
+            Server 20.0.0 and later: the server's Second sign-in of the same
+            user policy (session.concurrent) is applied once the second factor
+            is verified, or once the credential is accepted where none is
+            asked. A login it refuses answers `401` with the policy's message,
+            which names the address of the other session, counts towards the
+            IP lockout (429) and issues no token and no `tfatoken`; a login
+            answered `459` or `460`, or refused for another reason, ends none
+            of the account's sessions. The policy weighs the account's
+            sessions over the classic protocol alone, never its REST sessions.
           headers:
             WWW-Authenticate:
               schema:
@@ -496,6 +555,9 @@ paths:
       tags:
         - Authentication
       summary: Invalidate the current access token
+      description: |
+        Ends the calling session. Server 20.0.0 and later: the account's other
+        REST sessions continue. A long-lived API token is not revoked.
       responses:
         "204":
           description: Logged out successfully
@@ -613,6 +675,9 @@ paths:
         (`PD_ERRCODE_ICON_ASSIGNMENT`), and nothing is written. Never `409`.
         Servers older than 20.0.0 store any value; detect support by the
         `icons` object on the database.
+
+        Server 20.0.0 and later: a non-empty `X-New-Second-Password` is
+        refused with `403` / `4030`, and the folder is not created.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
       requestBody:
@@ -647,6 +712,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/folders/{id}:
     parameters:
@@ -727,7 +794,9 @@ paths:
             New second password to set. Must be accompanied by the correct
             current `X-Second-Password`. From Server 20.0.0 it is applied only
             if the request succeeds; after any refusal the item is still under
-            its previous second password.
+            its previous second password. Server 20.0.0 and later: a value
+            that sets, changes or removes a second password is refused with
+            `403` / `4030`, and nothing is written.
           schema:
             type: string
       requestBody:
@@ -764,13 +833,18 @@ paths:
             second-password protected -- a wrong or missing
             `X-Second-Password`. The latter case returns `error.code` `4031`
             (`PD_ERRCODE_INVALID_SECOND_PASS`); a generic access-denied keeps
-            `error.code` `403`.
+            `error.code` `403`. Server 20.0.0 and later: an
+            `X-New-Second-Password` that sets, changes or removes a second
+            password returns `error.code` `4030`
+            (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`); nothing was written.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
     delete:
       operationId: deleteFolder
       tags:
@@ -813,6 +887,11 @@ paths:
             item inside it, is being edited by another user; nothing was
             deleted, in either `mode` (Server 20.0.0 and later). Offer to try
             again later.
+            `error.code` 4030 (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`, Server
+            20.0.0 and later): a delete that would destroy the folder --
+            `mode=permanent`, or any mode while the database keeps no recycle
+            bin -- while it holds an entry protected by a second password;
+            nothing was deleted.
             `error.code` 403: no permission to delete the folder.
           content:
             application/json:
@@ -820,6 +899,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   # ---------------------------------------------------------------------------
   # Entries
@@ -870,6 +951,10 @@ paths:
         sealed for you, that is a folder or that was deleted, then `400` for a
         link to itself or to another link. Earlier servers accepted a link to
         a link here, and the entry could then never be updated again.
+
+        Server 20.0.0 and later: a non-empty `X-New-Second-Password` is
+        refused with `403` / `4030`, and the entry is not created. `PUT` on
+        this path answers `405` with `Allow: GET, POST, DELETE, PATCH`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
       requestBody:
@@ -921,6 +1006,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/entries/{id}:
     parameters:
@@ -930,6 +1017,9 @@ paths:
       tags:
         - Entries
       summary: Get a full entry by ID
+      description: |
+        Server 20.0.0 and later: the id of an entry template answers `404` on
+        every `/entries/{id}` route, as an id the database does not hold.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
@@ -1027,6 +1117,14 @@ paths:
         the stored field values of the entry the link points at.
         Earlier servers kept a second-password change in effect after a
         rejected body.
+
+        Server 20.0.0 and later: an entry protected by a second password
+        cannot be changed -- this call answers `403` / `4030` for it once
+        `X-Second-Password` is verified, and so does an
+        `X-New-Second-Password` that sets, changes or removes a second
+        password; nothing is written. `PUT` on this path answers `405` with
+        `Allow: GET, POST, DELETE, PATCH`; `PUT` is taken by
+        `uploadDocumentContent` alone.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/EntryId"
@@ -1046,7 +1144,9 @@ paths:
             New second password to set. Must be accompanied by the correct
             current `X-Second-Password`. From Server 20.0.0 it is applied only
             if the request succeeds; after any refusal the item is still under
-            its previous second password.
+            its previous second password. Server 20.0.0 and later: a value
+            that sets, changes or removes a second password is refused with
+            `403` / `4030`, and nothing is written.
           schema:
             type: string
       requestBody:
@@ -1102,6 +1202,11 @@ paths:
             `encrypted_file` or `certificate` entry with legacy
             second-password protection that REST cannot verify; do not
             re-prompt for a second password.
+            `error.code` 4030 (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`, Server
+            20.0.0 and later): the entry is protected by a second password, or
+            `X-New-Second-Password` sets, changes or removes one; nothing was
+            written. Show the entry read-only, do not re-prompt for the second
+            password and do not retry.
           content:
             application/json:
               schema:
@@ -1114,6 +1219,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
     delete:
       operationId: deleteEntry
       tags:
@@ -1152,6 +1259,9 @@ paths:
             `error.code` 4035 (`PD_ERRCODE_ITEM_LOCKED`): the entry is being
             edited by another user; nothing was deleted, in either `mode`
             (Server 20.0.0 and later). Offer to try again later.
+            `error.code` 4030 (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`, Server
+            20.0.0 and later): the entry is protected by a second password;
+            nothing was deleted, in either `mode`.
             `error.code` 403: no permission to delete the entry.
           content:
             application/json:
@@ -1159,6 +1269,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/entries/{id}/move:
     parameters:
@@ -1190,6 +1302,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   # ---------------------------------------------------------------------------
   # Search
@@ -1278,7 +1392,11 @@ paths:
       tags:
         - Admin - Databases
       summary: Create a new database (admin)
-      description: Requires an admin-scoped session.
+      description: |
+        Requires an admin-scoped session. Answers `201` with the new database.
+        A name another database already has -- the name as it is stored,
+        ending in `.pdepot` (Server 20.0.0 and later) -- answers `409`, and
+        nothing is created.
       requestBody:
         required: true
         content:
@@ -1292,10 +1410,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Database"
+        "400":
+          description: |
+            Invalid or missing fields, or a name the database name rules
+            refuse; nothing is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A database with this name already exists; nothing is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/databases/{id}:
     parameters:
@@ -1324,7 +1456,10 @@ paths:
       tags:
         - Admin - Databases
       summary: Update a database (admin)
-      description: Requires an admin-scoped session.
+      description: |
+        Requires an admin-scoped session. A new name that another database
+        already has -- the name as it is stored, ending in `.pdepot` (Server
+        20.0.0 and later) -- answers `409`, and nothing is changed.
       parameters:
         - $ref: "#/components/parameters/DatabaseId"
       requestBody:
@@ -1340,12 +1475,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Database"
+        "400":
+          description: |
+            Invalid fields, or a name the database name rules refuse; nothing
+            is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another database has the new name; nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: |
+            Server 20.0.0 and later: the database has not been converted to
+            the new format; nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
     delete:
       operationId: adminDeleteDatabase
       tags:
@@ -3057,7 +3216,10 @@ paths:
         and later: the new password must also pass the server's account
         password policies that apply to the account, including the minimum
         age since the last change; a successful change ends an expiry that
-        `GET /me` reported as `must_change_pass`.
+        `GET /me` reported as `must_change_pass`. Server 20.0.0 and later: a
+        successful change ends the account's other REST sessions and keeps
+        the calling one; made with a long-lived API token, it ends all of
+        the account's REST sessions.
       requestBody:
         required: true
         content:
@@ -3928,6 +4090,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/entries/{entry_id}/content:
     parameters:
@@ -4077,6 +4241,9 @@ paths:
             `error.code` 4035 (`PD_ERRCODE_ITEM_LOCKED`): the entry is being
             edited by another user; nothing was written (Server 20.0.0 and
             later). Offer to try again later.
+            `error.code` 4030 (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`, Server
+            20.0.0 and later): the entry is protected by a second password and
+            cannot be changed; nothing was written.
           content:
             application/json:
               schema:
@@ -4093,6 +4260,8 @@ paths:
           $ref: "#/components/responses/LengthRequired"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/entries/{entry_id}/otp:
     parameters:
@@ -4354,6 +4523,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/icons/{icon_id}:
     parameters:
@@ -4473,11 +4644,25 @@ paths:
         afterwards; ask the user first. An item the caller may not see, or
         may not delete, stays in the bin, and the call answers `204` all the
         same.
+
+        All or nothing: the server weighs every item first and then destroys
+        all the items the caller may destroy in one change of the database,
+        so an error answer means that nothing was destroyed. An entry
+        protected by a second password, and a folder that holds one, stay in
+        the bin as an item the caller may not delete does.
       responses:
         "204":
           description: The items the caller can see and may delete were destroyed
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            The database accepts no changes at the moment (`error.code` 403);
+            nothing was destroyed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: |
             Database not found or not accessible to the caller; also the
@@ -4488,6 +4673,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/recyclebin/{id}:
     parameters:
@@ -4502,7 +4689,8 @@ paths:
       description: |
         Server 20.0.0 and later. Destroys that one item -- and, for a folder,
         everything that went down with it. It cannot be restored afterwards;
-        ask the user first.
+        ask the user first. An entry protected by a second password, and a
+        folder that holds one, answer `403` / `4030` and stay in the bin.
       responses:
         "204":
           description: Item destroyed
@@ -4514,6 +4702,8 @@ paths:
           $ref: "#/components/responses/RecycleBinItemNotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/recyclebin/{id}/restore:
     parameters:
@@ -4532,7 +4722,9 @@ paths:
 
         The caller needs the right to change the folder the item returns to,
         and gets `403` without it. The item keeps the id it had and is
-        addressable through the entries and folders routes again.
+        addressable through the entries and folders routes again. An entry
+        protected by a second password answers `403` / `4030` and stays in
+        the bin.
       responses:
         "204":
           description: Item restored
@@ -4544,6 +4736,8 @@ paths:
           $ref: "#/components/responses/RecycleBinItemNotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   # ---------------------------------------------------------------------------
   # Categories (Server 20.0.0 and later)
@@ -4986,8 +5180,17 @@ components:
         factor is asked, and it is not counted towards the IP lockout or against
         the account (Server 20.0.0 and later). Server 20.0.0 and later also
         answers 403 with error.code 403 to a change to a database that accepts
-        no changes at the moment: nothing is written, and reading the database
-        still works.
+        no changes at the moment, or to an item that the database keeps
+        read-only: nothing is written, and reading the database still works.
+        Server 20.0.0 and later answers 403 with error.code 4030
+        (`PD_ERRCODE_SECOND_PASSWORD_READ_ONLY`) to a change of an entry
+        protected by a second password -- `updateEntry`, `moveEntry`,
+        `uploadDocumentContent`, `deleteEntry`, `restoreRecycleBinItem`,
+        `purgeRecycleBinItem`, and destroying a folder that holds one -- and
+        to `X-New-Second-Password` on `createEntry`, `updateEntry`,
+        `createFolder` and `updateFolder`: nothing is written, and reading the
+        entry still works. Treat it as a read-only item: do not re-prompt for
+        the second password (that is 4031) and do not retry.
       content:
         application/json:
           schema:
@@ -5013,6 +5216,11 @@ components:
                 error:
                   code: 4038
                   message: "The password of the built-in administrator does not meet the server's password policies. Sign in with the Server Manager to set a new one, or run \"pd_keys password\" on the server."
+            secondPasswordReadOnly:
+              value:
+                error:
+                  code: 4030
+                  message: "Changing a second password, or an item protected by one, is not available in this version: the change is refused."
 
     NotFound:
       description: Resource not found
@@ -5040,6 +5248,21 @@ components:
             error:
               code: 404
               message: "The recycle bin of this database holds no item with the id specified."
+
+    DatabaseUnavailable:
+      description: |
+        Server 20.0.0 and later. The change could not be written to the
+        database file: nothing was written, and the database is as it was
+        before the request. Keep the user's input and try again later. Match
+        the status, never the message.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: 503
+              message: "The database cannot be changed at the moment. Try again later."
 
     MethodNotAllowed:
       description: |

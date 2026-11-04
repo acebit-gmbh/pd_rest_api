@@ -350,6 +350,7 @@ No response body.
     - Only users whose `auth_modes` include `"standard"` can change their password here. Users authenticating via OIDC, SSPI, IWA, or WebAuthn manage their password through the respective identity provider.
     - The new password must pass the server's password rules: from Server 20.0.0 the account password policies that apply to the account, the minimum age since the last change included; earlier servers apply the master-password rules of the client security policies where they are active. See [Password Rules](#password-rules).
     - After a successful password change, the `must_change_pass` flag is automatically cleared.
+    - *Server 20.0.0 and later:* a successful change ends the account's other REST sessions; the calling session continues. Made with a long-lived API token, it ends all of the account's REST sessions. See [Sessions](authentication.md#sessions).
 
 #### Example
 

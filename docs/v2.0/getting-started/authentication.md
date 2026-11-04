@@ -444,7 +444,7 @@ Retrieve the list of configured OIDC/Azure identity providers. No authentication
 
 **Endpoint:** `POST /v2.0/auth/logout`
 
-Always log out when done to free server resources:
+Always log out when done to free server resources. From Server 20.0.0 an account can hold several REST sessions at once, up to a limit: a logout ends the calling session alone, and a new sign-in does not end the earlier ones (see [Sessions](../api-reference/authentication.md#sessions)).
 
 === "curl"
 

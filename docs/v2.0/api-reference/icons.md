@@ -316,7 +316,7 @@ Any other key is ignored. The whole request body may be at most `65536` bytes.
 10. `400` / `4008` when what is left cannot be decoded, or decodes to a size other than the header declares
 11. The 16x16 rendition is built
 12. The name collision rule is applied; `403` / `4034` when a new icon would exceed `max_count` (removed icons included) or 8 MiB of stored icon data in this database - bringing back a removed name needs no new slot; `413` / `4131` when the stored record, with its final name, would exceed 65535 bytes
-13. Only now is the icon stored, in one step, and the outcome audited: `201`, or `200` for an identical icon
+13. Only now is the icon stored, in one step, and the outcome audited: `201`, or `200` for an identical icon; `503` when the change could not be written to the database (see [Error Codes](overview.md#error-codes))
 
 A refused or failed upload leaves nothing behind: no new icon, no half-written icon, no changed icon.
 

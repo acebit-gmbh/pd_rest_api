@@ -75,6 +75,9 @@ These endpoints are available in both `client` and `admin` sessions. They return
 !!! warning "Read-only for client scope"
     Only `GET` is supported under `/v2.0/databases/*`. Any attempt to create (`POST`), modify (`PATCH`), or delete (`DELETE`) a database on this path returns `405 Method Not Allowed`. Database management operations are **admin-only** and live under [`/v2.0/admin/databases`](#admin-endpoints) -- the session must be opened with `"scope": "admin"` at login.
 
+!!! note "A database not converted to the new format"
+    *Server 20.0.0 and later.* A database that the server holds but has not converted to the new format is listed and returned by the routes on this page like every other database. Every request for its contents -- children, entries, folders, search, categories, icons, recycle bin, a new or changed permission, and [Update Database](#update-database-admin) -- answers `501 Not Implemented` with the message "This database is not available on this server: it has not been converted to the new format." Keep the database in the list and tell the user that it cannot be opened on this server; match the status, not the message.
+
 ### List Databases
 
 ```
@@ -440,7 +443,7 @@ The same rules are enforced when renaming a database via `PATCH /v2.0/admin/data
 
 #### Response
 
-`201 Created`
+`201 Created`, with the new database object.
 
 ```json
 {
@@ -471,7 +474,7 @@ The same rules are enforced when renaming a database via `PATCH /v2.0/admin/data
 | `400 Bad Request` | Invalid or missing required fields |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Session does not have admin scope, or attempted to set restricted fields without database management permission |
-| `409 Conflict` | A database with this name already exists |
+| `409 Conflict` | A database with this name already exists -- *Server 20.0.0 and later:* the name as it is stored, ending in `.pdepot`; nothing is created |
 
 #### Example
 
@@ -631,7 +634,9 @@ Updates an existing database. Include only the fields you want to update.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Session does not have admin scope, or attempted to modify restricted fields without database management permission |
 | `404 Not Found` | Database not found |
-| `409 Conflict` | Database name conflict |
+| `409 Conflict` | Database name conflict: another database has the new name -- *Server 20.0.0 and later:* the name as it is stored, ending in `.pdepot`; nothing is changed |
+| `501 Not Implemented` | *Server 20.0.0 and later.* The database has not been converted to the new format; nothing is changed |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is changed. Try again later |
 
 #### Example
 

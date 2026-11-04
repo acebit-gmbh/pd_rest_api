@@ -54,6 +54,9 @@ Returned by the detail endpoint (`GET /v2.0/databases/{db}/folders/{id}`). Inclu
 
     To **change or remove** second password protection, send `X-New-Second-Password` together with the correct current `X-Second-Password` (to remove, set `X-New-Second-Password` to an empty string; both Base64-encoded).
 
+!!! warning "Second passwords in Server 20.0.0"
+    *Server 20.0.0 and later.* A second password protects entries. A folder that was protected by one on an earlier server has none of its own after the upgrade (`has_second_pass` is `false`): the entries it held keep theirs, and the folder can be renamed, moved and moved to the recycle bin like any other folder. Destroying a folder that holds an entry protected by a second password is refused, and so is `X-New-Second-Password` on [Create Folder](#create-folder) and [Update Folder](#update-folder): `403` with `error.code` `4030`, and nothing is written. See [Second Password Protection](entries.md#second-password-protection).
+
 ---
 
 ## Path / Breadcrumb
@@ -348,7 +351,7 @@ Creates a new folder within a database. Use the `parent` query parameter to plac
 
 | Header | Required | Description |
 |--------|----------|-------------|
-| `X-New-Second-Password` | No | Base64-encoded. Set a second password on the new folder |
+| `X-New-Second-Password` | No | Base64-encoded. Set a second password on the new folder. *Server 20.0.0 and later:* a non-empty value is refused with `403` / `4030` and the folder is not created |
 
 ```json
 {
@@ -385,8 +388,9 @@ Returns the compact representation of the created folder.
 |--------|-------------|
 | `400 Bad Request` | Invalid or missing required fields (`error.code` `400`), or `image_*` keys that do not name a usable icon (`error.code` `4007`, see [Assigning an icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) a non-empty `X-New-Second-Password` (`error.code` `4030`); the folder is not created |
 | `404 Not Found` | Database or parent folder not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the folder is not created. Try again later |
 
 ### Example
 
@@ -424,7 +428,7 @@ Updates an existing folder. Include only the fields you want to update.
 | Header | Required | Description |
 |--------|----------|-------------|
 | `X-Second-Password` | Conditional | Base64-encoded. Required **and verified** if the folder has a second password (`has_second_pass: true`); a wrong or missing value is rejected with `403` and `error.code` `4031` |
-| `X-New-Second-Password` | No | Base64-encoded. Set or change the second password (when set, the correct current `X-Second-Password` must also be sent). Applied only if the request succeeds |
+| `X-New-Second-Password` | No | Base64-encoded. Set or change the second password (when set, the correct current `X-Second-Password` must also be sent). Applied only if the request succeeds. *Server 20.0.0 and later:* a value that sets, changes or removes a second password is refused with `403` / `4030`, and nothing is written |
 
 ### Request Body
 
@@ -484,8 +488,9 @@ Returns the compact representation of the updated folder.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields (`error.code` `400`), or `image_*` keys that do not name a usable icon (`error.code` `4007`, see [Assigning an icon](#assigning-an-icon)) |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (`error.code` `403`), or a missing/incorrect `X-Second-Password` on a protected folder (`error.code` `4031`) |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), or a missing/incorrect `X-Second-Password` on a protected folder (`error.code` `4031`), or (*Server 20.0.0 and later*) an `X-New-Second-Password` that sets, changes or removes a second password (`error.code` `4030`) |
 | `404 Not Found` | Database or folder not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is written. Try again later |
 
 ### Example
 
@@ -548,8 +553,9 @@ No response body. Both modes answer alike.
 |--------|-------------|
 | `400 Bad Request` | `mode` is neither `recycle` nor `permanent`; nothing is deleted. Default message: `The "mode" parameter accepts only "recycle" or "permanent".` |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another user (`error.code` `4035`) |
+| `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) a delete that would destroy the folder -- `mode=permanent`, or any mode while the database keeps no recycle bin -- while it holds an entry protected by a second password (`error.code` `4030`) |
 | `404 Not Found` | Database or folder not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is deleted. Try again later |
 
 !!! note "A folder holding an item someone is editing is not deleted"
     *Server 20.0.0 and later.* When the folder itself, or any sub-folder or entry below it, is checked out by another user, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the whole folder stays exactly as the request found it, down to the last entry. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other user is done, on a plain `403` they cannot.
@@ -628,6 +634,7 @@ Returns the compact representation of the moved folder.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions |
 | `404 Not Found` | Database, folder, or target folder not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the folder stays where it is. Try again later |
 
 ### Example
 
