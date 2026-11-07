@@ -933,8 +933,7 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: |
-            Server 20.0.0 and later. The database cannot be cleaned up at the moment: the server's disk is too full. Nothing is
-            destroyed.
+            Server 20.0.0 and later. A backup is copying this database at the moment. Nothing is destroyed.
           content:
             application/json:
               schema:
@@ -1344,8 +1343,7 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: |
-            Server 20.0.0 and later. The database cannot be cleaned up at the moment: the server's disk is too full. Nothing is
-            destroyed.
+            Server 20.0.0 and later. A backup is copying this database at the moment. Nothing is destroyed.
           content:
             application/json:
               schema:
@@ -4903,8 +4901,7 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           description: |
-            Server 20.0.0 and later. The database cannot be cleaned up at the moment: the server's disk is too full. Nothing is
-            destroyed.
+            Server 20.0.0 and later. A backup is copying this database at the moment. Nothing is destroyed.
           content:
             application/json:
               schema:
@@ -4954,8 +4951,7 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           description: |
-            Server 20.0.0 and later. The database cannot be cleaned up at the moment: the server's disk is too full. Nothing is
-            destroyed.
+            Server 20.0.0 and later. A backup is copying this database at the moment. Nothing is destroyed.
           content:
             application/json:
               schema:

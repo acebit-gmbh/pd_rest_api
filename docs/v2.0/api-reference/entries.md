@@ -1047,7 +1047,7 @@ No response body. Both modes answer alike.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the entry is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) the entry is protected by a second password (`error.code` `4030`, see [Second Password Protection](#second-password-protection)); nothing is deleted |
 | `404 Not Found` | Database or entry not found |
-| `409 Conflict` | *Server 20.0.0 and later.* With `mode=permanent`: the database cannot be cleaned up at the moment, because the server's disk is too full. Nothing is deleted. Try again once space has been freed |
+| `409 Conflict` | *Server 20.0.0 and later.* With `mode=permanent`: a backup is copying this database at the moment. Nothing is deleted. Try again in a moment |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is deleted. Try again later |
 
 !!! note "An entry someone is editing is not deleted"

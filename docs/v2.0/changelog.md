@@ -17,7 +17,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 
 - REST API v1.0 is no longer served: `/v1.0/...` answers `410 Gone`
 - `PUT .../entries/{id}/content` answers `400` where the database has reached its size limit for documents or the server's disk is nearly full
-- a permanent delete can answer `409` where the server's disk is too full; the message says why, and nothing is deleted
+- a permanent delete can answer `409` while a backup is copying the database; the message says why, and nothing is deleted
 - REST clients declare their platform through `X-PD-Client` or login/WebAuthn-begin JSON; the server's **Allowed client platforms** policy applies at login, on OIDC discovery and on token requests, with `403` / `4036` when Android is not allowed; a client that declares no platform, including a long-lived API token sent without `X-PD-Client`, is checked as `web`
 - request bodies must be valid JSON; send `{}` when a request has no body fields
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
