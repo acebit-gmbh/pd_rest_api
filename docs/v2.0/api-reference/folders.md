@@ -557,6 +557,7 @@ No response body. Both modes answer alike.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) the folder holds an item you may not see or may not delete (`error.code` `403`, see the note below), **or** (*Server 20.0.0 and later*) a delete that would destroy the folder -- `mode=permanent`, or any mode while the database keeps no recycle bin -- while it holds an entry protected by a second password (`error.code` `4030`) |
 | `404 Not Found` | Database or folder not found |
+| `409 Conflict` | *Server 20.0.0 and later.* With `mode=permanent`: the database cannot be cleaned up at the moment, because the server's disk is too full. Nothing is deleted. Try again once space has been freed |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is deleted. Try again later |
 
 !!! note "A folder holding an item someone is editing is not deleted"

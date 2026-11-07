@@ -16,6 +16,8 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 **At a glance -- changes that can affect an existing client:**
 
 - REST API v1.0 is no longer served: `/v1.0/...` answers `410 Gone`
+- `PUT .../entries/{id}/content` answers `400` where the database has reached its size limit for documents or the server's disk is nearly full
+- a permanent delete can answer `409` where the server's disk is too full; the message says why, and nothing is deleted
 - REST clients declare their platform through `X-PD-Client` or login/WebAuthn-begin JSON; the server's **Allowed client platforms** policy applies at login, on OIDC discovery and on token requests, with `403` / `4036` when Android is not allowed; a client that declares no platform, including a long-lived API token sent without `X-PD-Client`, is checked as `web`
 - request bodies must be valid JSON; send `{}` when a request has no body fields
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
@@ -911,8 +913,10 @@ Server 20.0.0 answers the ids of entries and folders in lower case, such as `f1a
 
 `PUT /databases/{db}/entries/{id}/content`, for a document or a certificate file, also answers `400` when the server cannot store the content it received. The message names why, and nothing is written.
 
+This includes an upload that would take the database past 4 GiB, or would leave less than 1 GiB free on the disk that holds the databases; the entry keeps its content, and an empty upload is not refused.
+
 !!! warning "Behavior change for clients"
-    Show the message to the user, but match the status `400`, not the message, in code. Do not repeat the same upload unchanged.
+    Show the message to the user, but match the status `400`, not the message, in code. Do not repeat the same upload unchanged, unless the message says the disk was nearly full and space has been freed.
 
 #### Entry Templates Answer `404` on Entry Routes (Behavior Change)
 

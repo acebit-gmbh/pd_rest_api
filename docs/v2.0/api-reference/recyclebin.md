@@ -268,6 +268,7 @@ No response body.
 | `403` | `403` | You may not destroy this item, or the item is a folder that holds an item you may not see or may not delete; it stays in the bin |
 | `403` | `4030` | The item is an entry protected by a second password, or a folder that holds one; it stays in the bin (see [Second Password Protection](entries.md#second-password-protection)) |
 | `404` | `404` | The id is not in this database's recycle bin, or it is an item you may not see; the database does not exist or is not accessible to you; a server older than 20.0.0 |
+| `409` | `409` | *Server 20.0.0 and later.* The database cannot be cleaned up at the moment: the server's disk is too full; nothing is destroyed |
 | `405` | `405` | Method other than `DELETE` on this path (`Allow: DELETE`) |
 | `503` | `503` | The change could not be written to the database; nothing is destroyed. Try again later |
 
@@ -317,6 +318,7 @@ No response body. An empty bin answers `204` as well, so the call is safe to rep
 | `401` | `401` | Not authenticated |
 | `403` | `403` | The database accepts no changes at the moment; nothing was destroyed |
 | `404` | `404` | Database not found or not accessible to you. Also the answer of a server older than 20.0.0 |
+| `409` | `409` | *Server 20.0.0 and later.* The database cannot be cleaned up at the moment: the server's disk is too full; nothing is destroyed |
 | `405` | `405` | Method other than `GET` or `DELETE` (`Allow: GET, DELETE`) |
 | `503` | `503` | The change could not be written to the database; nothing was destroyed. Try again later |
 

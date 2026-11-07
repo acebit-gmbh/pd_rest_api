@@ -1047,6 +1047,7 @@ No response body. Both modes answer alike.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the entry is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) the entry is protected by a second password (`error.code` `4030`, see [Second Password Protection](#second-password-protection)); nothing is deleted |
 | `404 Not Found` | Database or entry not found |
+| `409 Conflict` | *Server 20.0.0 and later.* With `mode=permanent`: the database cannot be cleaned up at the moment, because the server's disk is too full. Nothing is deleted. Try again once space has been freed |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is deleted. Try again later |
 
 !!! note "An entry someone is editing is not deleted"
@@ -1676,6 +1677,8 @@ A valid UTF-8 `filename*` takes precedence over `filename`; otherwise the server
 
 Raw binary content of the file. Maximum size: **64 MiB per upload**. A certificate upload replaces only the selected part; the public and private files have independent limits. An explicit `Content-Length: 0` uploads empty content.
 
+*Server 20.0.0 and later:* a database takes new content until its size reaches 4 GiB, its documents included; deleted content counts until the database has been cleaned up. The server also keeps 1 GiB free on the disk that holds its databases. An upload that would take a database past that size, or the disk below that free space, is refused with `400`; the message names which. Nothing is written and the entry keeps its content. An empty upload is not refused.
+
 For a new certificate part, omitting the filename uses `public.crt` or `private.key`; replacing a part without a filename keeps its existing name. An uploaded empty file with a name has a descriptor with `size: 0`, whereas an absent certificate part is `null`.
 
 The body must state its size in a `Content-Length` header. The server refuses a request that carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`, with `411 Length Required`, while the request headers are being read - the body is never read and the connection is closed. `curl -T file`, `curl --data-binary @file` and `Invoke-WebRequest -InFile` send a length and are unaffected; `curl -T -` (stdin) and .NET `StreamContent` over a non-seekable stream do not. See the overview's [HTTP status codes](overview.md#http-status-codes) for the full rule and the client-side workarounds.
@@ -1711,7 +1714,7 @@ Returns the compact representation of the entry. The `document` or `certificate`
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Entry has no supported binary content (including `encrypted_file`), the certificate `part` is invalid, or a document request includes a nonempty `part`; *Server 20.0.0 and later:* also when the content cannot be stored, with a message that names why; nothing is written |
+| `400 Bad Request` | Entry has no supported binary content (including `encrypted_file`), the certificate `part` is invalid, or a document request includes a nonempty `part`; *Server 20.0.0 and later:* also when the content cannot be stored, with a message that names why, among them a database at its size limit for documents and a server disk that is nearly full; nothing is written |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`), or the entry is being edited by another user (`error.code` `4035`, *Server 20.0.0 and later*), or the entry is protected by a second password (`error.code` `4030`, *Server 20.0.0 and later*, see [Second Password Protection](#second-password-protection)); nothing is written |
 | `404 Not Found` | Database or entry not found, or the entry is in the recycle bin |

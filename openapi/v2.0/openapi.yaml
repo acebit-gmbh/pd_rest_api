@@ -931,6 +931,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Server 20.0.0 and later. The database cannot be cleaned up at the moment: the server's disk is too full. Nothing is
+            destroyed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           $ref: "#/components/responses/DatabaseUnavailable"
 
@@ -1334,6 +1342,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Server 20.0.0 and later. The database cannot be cleaned up at the moment: the server's disk is too full. Nothing is
+            destroyed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           $ref: "#/components/responses/DatabaseUnavailable"
 
@@ -4885,6 +4901,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: |
+            Server 20.0.0 and later. The database cannot be cleaned up at the moment: the server's disk is too full. Nothing is
+            destroyed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           $ref: "#/components/responses/DatabaseUnavailable"
 
@@ -4928,6 +4952,14 @@ paths:
           $ref: "#/components/responses/RecycleBinItemNotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: |
+            Server 20.0.0 and later. The database cannot be cleaned up at the moment: the server's disk is too full. Nothing is
+            destroyed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           $ref: "#/components/responses/DatabaseUnavailable"
 
