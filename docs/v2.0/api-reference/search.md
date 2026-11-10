@@ -43,7 +43,9 @@ Returns a paginated list of matching items. Each item is a **compact representat
             "category": "Infrastructure",
             "tags": "production,servers",
             "has_second_pass": false,
-            "updated_at": "2024-02-05T16:30:00.000Z"
+            "updated_at": "2024-02-05T16:30:00.000Z",
+            "entry_count": 8,
+            "folder_count": 2
         },
         {
             "type": "password",

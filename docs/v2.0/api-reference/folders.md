@@ -29,6 +29,8 @@ Returned by list/children endpoints and create/update responses.
 | `tags` | string | Yes | Tags (comma-separated) |
 | `has_second_pass` | boolean | No | Whether the folder is protected by a second password |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp (UTC, RFC 3339, trailing `Z`) |
+| `entry_count` | integer | No | Entries in this folder at any depth that the caller may see, links included. Items in the recycle bin do not count towards a live folder; a recycled folder in the recycle bin counts its own contents. *Server 20.0.0 and later:* the key is absent on earlier servers, so a client can test for it. |
+| `folder_count` | integer | No | Subfolders of this folder at any depth that the caller may see, by the same rule as `entry_count`. *Server 20.0.0 and later:* the key is absent on earlier servers. |
 
 ### Full Representation
 
@@ -162,7 +164,9 @@ The `path` array contains the ancestor chain from the database root down to the 
             "category": "",
             "tags": "",
             "has_second_pass": false,
-            "updated_at": "2024-02-05T16:30:00.000Z"
+            "updated_at": "2024-02-05T16:30:00.000Z",
+            "entry_count": 12,
+            "folder_count": 3
         },
         {
             "type": "folder",
@@ -174,7 +178,9 @@ The `path` array contains the ancestor chain from the database root down to the 
             "category": "Infrastructure",
             "tags": "cloud,aws,azure",
             "has_second_pass": false,
-            "updated_at": "2024-02-12T11:00:00.000Z"
+            "updated_at": "2024-02-12T11:00:00.000Z",
+            "entry_count": 4,
+            "folder_count": 0
         },
         {
             "type": "password",
@@ -284,7 +290,9 @@ Returns the **full representation** of a specific folder, including `comments` a
     "image_index": 3,
     "image_name": "",
     "comments": "All production server credentials are stored here.",
-    "updated_at": "2024-02-05T16:30:00.000Z"
+    "updated_at": "2024-02-05T16:30:00.000Z",
+    "entry_count": 12,
+    "folder_count": 3
 }
 ```
 
@@ -378,7 +386,9 @@ Returns the compact representation of the created folder.
     "category": "Web",
     "tags": "",
     "has_second_pass": false,
-    "updated_at": "2024-02-17T09:00:00.000Z"
+    "updated_at": "2024-02-17T09:00:00.000Z",
+    "entry_count": 0,
+    "folder_count": 0
 }
 ```
 
@@ -480,7 +490,9 @@ Returns the compact representation of the updated folder.
     "category": "Infrastructure",
     "tags": "production,servers",
     "has_second_pass": false,
-    "updated_at": "2024-02-17T12:00:00.000Z"
+    "updated_at": "2024-02-17T12:00:00.000Z",
+    "entry_count": 12,
+    "folder_count": 3
 }
 ```
 
@@ -630,7 +642,9 @@ Returns the compact representation of the moved folder.
     "category": "Infrastructure",
     "tags": "production,servers",
     "has_second_pass": false,
-    "updated_at": "2024-02-17T15:00:00.000Z"
+    "updated_at": "2024-02-17T15:00:00.000Z",
+    "entry_count": 12,
+    "folder_count": 3
 }
 ```
 

@@ -6734,6 +6734,24 @@ components:
           type: string
           format: date-time
           readOnly: true
+        entry_count:
+          type: integer
+          minimum: 0
+          readOnly: true
+          description: |
+            Entries in this folder at any depth that the caller may see,
+            links included. Items in the recycle bin do not count towards a
+            live folder; a recycled folder in the recycle bin counts its own
+            contents. Server 20.0.0 and later: the key is absent on earlier
+            servers, so a client can test for it.
+        folder_count:
+          type: integer
+          minimum: 0
+          readOnly: true
+          description: |
+            Subfolders of this folder at any depth that the caller may see,
+            by the same rule as `entry_count`. Server 20.0.0 and later: the
+            key is absent on earlier servers.
 
     Folder:
       description: |

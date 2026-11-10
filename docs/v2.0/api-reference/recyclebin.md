@@ -117,6 +117,8 @@ Beside the fields of a compact entry or folder, every row in `data` carries one 
             "tags": "",
             "has_second_pass": false,
             "updated_at": "2025-03-04T09:12:00.000Z",
+            "entry_count": 5,
+            "folder_count": 1,
             "deleted_by": "8c1d0f41-5b2a-4a6e-9f3d-2b7c8e5a1d04"
         },
         {

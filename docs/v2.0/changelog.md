@@ -948,6 +948,10 @@ See [Delete Folder](api-reference/folders.md#delete-folder).
 !!! warning "Behavior change for clients"
     After an error the bin is as it was: list it again before you tell the user what is left in it, and on `503` offer to try again later. A `204` does not mean that the bin is empty; list it to see what stayed.
 
+#### Folder Objects Carry `entry_count` and `folder_count`
+
+Every folder object -- `children`, search, `GET /databases/{db}/folders/{id}`, the answers of `POST`, `PATCH` and move, and the recycle bin -- carries two read-only integers right after `updated_at`: `entry_count` and `folder_count`, the entries (links included) and subfolders at any depth that the caller may see. The keys are absent on earlier servers, so their presence is a client's feature test.
+
 ### Shared Secrets
 
 #### Server Shared-Secret Policy Applied When a Secret Is Created (Behavior Change)

@@ -135,7 +135,9 @@ curl -k -X GET "https://YOUR_SERVER:8714/v2.0/databases/$DB/children?offset=0&li
       "category": "",
       "tags": "",
       "has_second_pass": false,
-      "updated_at": "2024-02-05T16:30:00.000Z"
+      "updated_at": "2024-02-05T16:30:00.000Z",
+      "entry_count": 12,
+      "folder_count": 3
     },
     {
       "type": "password",
