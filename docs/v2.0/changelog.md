@@ -1190,6 +1190,10 @@ Standard authenticator apps count on the same UTC time base. With a correctly se
 
 A `document` entry without an icon of its own reports `icon` `ico133.svg`, the document icon every other Password Depot client shows. Earlier servers reported `ico132.svg`, the icon of encrypted-file entries.
 
+#### Credit-Card `valid_thru` in `MM/YYYY` Form
+
+`GET` answers `credit_card.valid_thru` in the documented `MM/YYYY` form, whichever client saved the card, so a value read can be sent back unchanged in `PATCH` and the card keeps its month; an empty `valid_thru` stays empty.
+
 ### Documentation Corrections
 
 These correct the documentation only; the server's behavior is described as it has been.
