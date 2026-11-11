@@ -572,7 +572,7 @@ Dates are returned in **ISO 8601** format:
 }
 ```
 
-All entity timestamp fields are genuine UTC instants with the trailing `Z`, and inbound timestamp fields are interpreted as UTC.
+All entity timestamp fields are genuine UTC instants with the trailing `Z`, and inbound timestamp fields are interpreted as UTC. An entry's `expires_at`, `license.purchase_date` and `identity.birth_date` are calendar days instead: they are given as midnight UTC of the day, and a written value is read by its date part as written; see [Dates](entries.md#dates).
 
 A `null` value indicates the field is not set.
 

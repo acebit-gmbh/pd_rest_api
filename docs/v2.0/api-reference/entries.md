@@ -34,9 +34,18 @@ Returned by list/children and search endpoints.
 | `category` | string | Yes | Category label. *Server 20.0.0 and later:* saving an entry with a category the database's [category list](databases.md#list-categories) does not hold adds it there -- see [How a Category Is Created](databases.md#how-a-category-is-created) |
 | `tags` | string | Yes | Tags (comma-separated) |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp |
-| `expires_at` | string (ISO 8601) or null | No | Expiration date, or `null` if not set |
+| `expires_at` | string (ISO 8601) or null | No | The day the entry expires, given as midnight UTC of that day, or `null` if not set. See [Dates](#dates) |
 
-Timestamp fields (`updated_at`, `expires_at`) are true UTC instants with a trailing `Z` (RFC 3339); inbound `expires_at` is likewise interpreted as UTC.
+`updated_at` is a true UTC instant with a trailing `Z` (RFC 3339).
+
+### Dates
+
+`expires_at`, `license.purchase_date` and `identity.birth_date` each name a calendar day, not an instant. The server answers each as midnight UTC of its day, whatever the server's time zone: `"2029-12-31T00:00:00.000Z"` is 31 December 2029. Read the date part in UTC, and do not convert the value to local time before you show or compare it: in a time zone west of UTC that would show the day before.
+
+In a `POST` or `PATCH` body the server takes the date part of the value as written, in the value's own offset. `"2029-12-31"`, `"2029-12-31T00:00:00.000Z"`, `"2029-12-31T00:00:00+02:00"` and `"2029-12-31T23:30:00-05:00"` all store 31 December 2029; the time and the offset never move the date. `null` clears the date.
+
+- `expires_at`: a value that is not an ISO 8601 string answers `400`. A credit card's `expires_at` is the last day of the month its `valid_thru` names, the month the database stores: a card's `expires_at` written sets `valid_thru` to the month of the day written, and `expires_at` to the last day of that month; `null` empties `valid_thru`.
+- `license.purchase_date` and `identity.birth_date`: a string that is not an ISO 8601 date, `""` included, clears the field. Where the database holds a value in the field that names no date -- for example a text another application stored there -- `GET` answers `null`, and a `null` sent back leaves that value as it is; send `""` to clear it.
 
 ### Full Representation
 
@@ -94,7 +103,7 @@ The sub-object is present only in the **full representation**. Clients can gener
 | `card` | string | Yes | Card brand: `visa`, `master_card`, `discover`, `american_express`, `diners_club`, `jcb` |
 | `holder` | string | Yes | Cardholder name |
 | `number` | string | Yes | Card number (e.g., `"4111 1111 1111 1111"`) |
-| `valid_thru` | string | Yes | Expiration date in `MM/YYYY` format |
+| `valid_thru` | string | Yes | Expiration date in `MM/YYYY` format: a month from `01` to `12` and a year from `1950` to `2199`, or `""` for none. Any other value answers `400`. The entry's `expires_at` is the last day of that month |
 | `cvv` | string | Yes | CVV/CVC security code |
 | `phone` | string | Yes | Card hotline phone number |
 | `url` | string | Yes | Online banking/service URL |
@@ -133,7 +142,7 @@ The sub-object is present only in the **full representation**. Clients can gener
 | `url` | string | Yes | License management URL |
 | `user` | string | Yes | License management username |
 | `pass` | string | Yes | License management password |
-| `purchase_date` | string (ISO 8601) or null | Yes | Purchase date |
+| `purchase_date` | string (ISO 8601) or null | Yes | Purchase date, a calendar day given as midnight UTC; see [Dates](#dates) |
 | `order_number` | string | Yes | Order number |
 | `reg_email` | string | Yes | Registration email |
 
@@ -174,7 +183,7 @@ The sub-object is present only in the **full representation**. Clients can gener
 | `country` | string | Yes | Country |
 | `phone` | string | Yes | Phone number |
 | `website` | string | Yes | Website URL |
-| `birth_date` | string (ISO 8601) or null | Yes | Date of birth |
+| `birth_date` | string (ISO 8601) or null | Yes | Date of birth, a calendar day given as midnight UTC; see [Dates](#dates) |
 | `mobile` | string | Yes | Mobile phone number |
 | `fax` | string | Yes | Fax number |
 | `house` | string | Yes | House number |
@@ -479,11 +488,34 @@ This sub-object is present only in the full representation when the caller may r
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `name` | string | Yes | Field display name |
-| `value` | string | Yes | Field value |
+| `value` | string | Yes | Field value, always a string. A field of the type `date`, `decimal`, `number` or `boolean` carries it in that type's form; see [Custom Field Values](#custom-field-values) |
 | `input_id` | string | Yes | Input identifier |
 | `id` | string | No | *Server 20.0.0 and later.* The field's id; `""` for a field that has not been saved yet. Send it back to name the field a write changes (see [Writing Custom Fields](#writing-custom-fields)) |
 | `type` | string | New fields only | *Server 20.0.0 and later.* The field's type: `text`, `password`, `memo`, `date`, `number`, `boolean`, `decimal`, `email`, `url`, `iban`, `card_number` or `protected`. Read-only for a field the entry has; sets the type of a field a write adds (default `text`) |
 | `secret` | boolean | No | *Server 20.0.0 and later.* Whether the server stores the value as a secret. Ignored in a request |
+
+#### Custom Field Values
+
+*Server 20.0.0 and later.* `value` is always a JSON string. A field of one of these types carries it in the type's form, the form in which the database stores it:
+
+| `type` | Form of `value` | Example |
+|--------|-----------------|---------|
+| `date` | The calendar day `YYYY-MM-DD`; `""` for no date | `"2029-12-31"` |
+| `decimal` | Digits with `.` as the decimal separator and no grouping, optionally a leading `-` | `"0.50"`, `"-1234.5"` |
+| `number` | The integer's digits, optionally a leading `-`, also beyond 2^53 | `"42"`, `"9007199254740993"` |
+| `boolean` | `true` or `false` | `"true"` |
+
+The other types -- `text`, `password`, `memo`, `email`, `url`, `iban`, `card_number` and `protected` -- carry their text as it was saved. A value that does not fit its type's form, such as a date another application saved as free text, is kept as that text: `GET` returns it as it is, and sending it back unchanged keeps it.
+
+In a write, send the forms above. For compatibility the server also accepts a `decimal` with a decimal comma and grouping (`"0,50"`, `"1.234,5"`), a `boolean` as `1` or `0` and as `true` or `false` in any letter case, and a `date` as a day number counted from 30 December 1899 (`"47483"` is 31 December 2029); it stores each in the form above. A value that fits no form is stored as text. A `value` sent back exactly as `GET` returned it leaves the field as it was.
+
+```json
+"custom_fields": [
+    { "name": "Contract ends", "value": "2029-12-31", "input_id": "", "id": "c.0000a1b2", "type": "date", "secret": false },
+    { "name": "Monthly fee", "value": "9.90", "input_id": "", "id": "c.0000a1b3", "type": "decimal", "secret": false },
+    { "name": "Auto renewal", "value": "true", "input_id": "", "id": "c.0000a1b4", "type": "boolean", "secret": false }
+]
+```
 
 #### Writing Custom Fields
 
@@ -718,7 +750,7 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 | `custom_fields` | array of objects | No | Custom fields, for `password` and `custom` types (see [Custom Field Object](#custom-field-object)). *Server 20.0.0 and later:* refused with `400` for the other types; see [Writing Custom Fields](#writing-custom-fields) |
 | `<type>` | object | No | Type-specific data sub-object keyed by type name (see [Type-Specific Fields](#type-specific-fields)) |
 | `urls` | array of strings | No | Associated URLs |
-| `expires_at` | string (ISO 8601) or null | No | Expiration date |
+| `expires_at` | string (ISO 8601) or null | No | The day the entry expires: the date part of the value as written; `null` for none. See [Dates](#dates) |
 | `image_custom`, `image_index`, `image_name` | boolean, integer, string | No | The entry's icon: a [database icon](icons.md) or one of the 135 standard icons. Omit all three for the standard icon of the entry's type. Refused with `400` / `4007` when they do not name a usable icon; servers older than 20.0.0 store any value. See [Assigning an Icon](#assigning-an-icon). |
 | `totp` | object or null | No | One-time-code (TOTP) settings of the new entry, an object with the members `secret`, `algorithm`, `digits` and `period`. `secret` is **required** here and is write-only: it is never returned by any route. `algorithm` (`SHA1`, `SHA256` or `SHA512`), `digits` (`6` to `8`) and `period` (`15` to `120` seconds) default to `SHA1`, `6` and `30` when omitted. No other member is accepted, and `{}` is refused. `null` is accepted and does nothing, so a client may always send the key. Only `password`, `credit_card`, `license`, `banking` and `custom` entries can carry a code. Ignored by servers older than 20.0.0. See [One-Time Code Settings](#one-time-code-settings). |
 

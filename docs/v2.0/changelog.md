@@ -74,6 +74,9 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `recipient_ids` and `approver_ids` of a shared secret are matched as whole user and group ids, groups within groups included; an id that names no user or group, and the author among the approvers, answer `400`, and the author never approves or rejects their own secret
 - `PATCH` of a permission answers `404` for a `principal_id` that names no user or group, and a change of its `seal_status` needs the issuer, a manager of the database or seal permission on the items it names
 - `custom_fields` elements carry `id`, `type` and `secret`; a write matches each element to a field the entry has, by `id` first, and keeps that field's type; `custom_fields` on an entry other than `password` and `custom` answers `400`
+- an entry's `expires_at` names a calendar day and is answered as midnight UTC of that day, whatever the server's time zone; a write takes the date part as written, in its own offset
+- the `value` of a custom field of the type `date`, `decimal` or `boolean` is answered in the form the database stores, still as a string: `"2029-12-31"`, `"0.50"`, `"true"` / `"false"` (earlier a day number, the server's decimal separator and `"1"` / `"0"`); a write still accepts the earlier forms
+- `credit_card.valid_thru` is accepted only as `MM/YYYY`, a month from `01` to `12` and a year from `1950` to `2199`, or `""`; any other value answers `400`
 - `PATCH` of an entry needs read permission as well as update permission
 - `PATCH` and move of an entry or a folder answer `403` / `4035` while another user is editing the item
 - a folder is deleted, or destroyed from the recycle bin, only when the caller may see and delete everything inside it (`403` otherwise), and Empty Recycle Bin leaves such a folder in the bin
@@ -948,6 +951,15 @@ See [Delete Folder](api-reference/folders.md#delete-folder).
 !!! warning "Behavior change for clients"
     After an error the bin is as it was: list it again before you tell the user what is left in it, and on `503` offer to try again later. A `204` does not mean that the bin is empty; list it to see what stayed.
 
+#### `expires_at` Names a Calendar Day (Behavior Change)
+
+An entry's `expires_at` is a calendar day, the day the entry expires, and the server answers it as midnight UTC of that day on a server in any time zone: an entry that expires on 31 December 2029, and a credit card valid through `12/2029`, answer `"2029-12-31T00:00:00.000Z"`. Earlier servers answered the server's local midnight of that day as a UTC instant, `"2029-12-30T23:00:00.000Z"` on a server one hour east of UTC.
+
+A `POST` or `PATCH` takes the date part of `expires_at` as written, in the value's own offset: `"2029-12-31"`, `"2029-12-31T00:00:00.000Z"`, `"2029-12-31T00:00:00+02:00"` and `"2029-12-31T23:30:00-05:00"` all set 31 December 2029. `null` still clears it, and a value that is not ISO 8601 still answers `400`. On a credit card, whose expiry the database stores as the month of `valid_thru`, a written `expires_at` sets `valid_thru` to the month of that day and `expires_at` to the month's last day, and `null` empties `valid_thru`. See [Dates](api-reference/entries.md#dates).
+
+!!! warning "Behavior change for clients"
+    Show and compare `expires_at` by its date part read in UTC, never converted to local time. Send the day the user picked as `YYYY-MM-DD` or as midnight UTC of that day (`YYYY-MM-DDT00:00:00.000Z`), not as the user's local midnight converted to UTC: east of UTC that names the day before.
+
 #### Folder Objects Carry `entry_count` and `folder_count`
 
 Every folder object -- `children`, search, `GET /databases/{db}/folders/{id}`, the answers of `POST`, `PATCH` and move, and the recycle bin -- carries two read-only integers right after `updated_at`: `entry_count` and `folder_count`, the entries (links included) and subfolders at any depth that the caller may see. The keys are absent on earlier servers, so their presence is a client's feature test.
@@ -1194,10 +1206,23 @@ A `document` entry without an icon of its own reports `icon` `ico133.svg`, the d
 
 `GET` answers `credit_card.valid_thru` in the documented `MM/YYYY` form, whichever client saved the card, so a value read can be sent back unchanged in `PATCH` and the card keeps its month; an empty `valid_thru` stays empty.
 
+#### `license.purchase_date` and `identity.birth_date` Taken as Written
+
+A `POST` or `PATCH` takes the date part of `purchase_date` and `birth_date` as written, in the value's own offset, so `"2025-01-15T00:00:00+02:00"` stores 15 January 2025. A date before 1900 is stored and answered as that day. Where the database holds a value in one of these fields that names no date -- for example a text another application stored there -- `GET` answers `null`, and a `null` sent back leaves that value as it is: an entry read and saved again keeps it. `""` clears the field. See [Dates](api-reference/entries.md#dates).
+
+#### Custom Field Values in Their Type's Form
+
+The `value` of a custom field of the type `date`, `decimal` or `boolean` is answered in the form in which the database stores it, still as a string: a `date` as the calendar day `YYYY-MM-DD` (`"2029-12-31"`), a `decimal` with `.` as its separator and no grouping (`"0.50"`), a `boolean` as `true` or `false`. A `number` is its digits, and a value that does not fit its type's form is answered as the text stored. A write accepts these forms and also a decimal comma, `1` / `0` for a boolean and a date as a day number counted from 30 December 1899, and a `value` read and sent back unchanged leaves the field as it was. See [Custom Field Values](api-reference/entries.md#custom-field-values).
+
+#### Credit-Card `valid_thru` Checked as `MM/YYYY`
+
+A `POST` or `PATCH` accepts `credit_card.valid_thru` in the exact form `MM/YYYY` -- seven characters, a month from `01` to `12`, a `/` and a year from `1950` to `2199` -- or `""` for no expiry. Any other value answers `400` with nothing written, among them `"12/29"`, `"12-2029"` and a value with spaces around it.
+
 ### Documentation Corrections
 
 These correct the documentation only; the server's behavior is described as it has been.
 
+- **`license.purchase_date` and `identity.birth_date` are date-time strings.** The OpenAPI document gave them `format: date`. The server answers them as `YYYY-MM-DDT00:00:00.000Z`, as the entries reference shows, and the OpenAPI document now says `format: date-time`.
 - **`PUT /databases/{db}/entries/{id}/content` over 64 MB answers `413`, not `400`.** The server refuses a `Content-Length` above the limit before it reads the body. `400` is used when the entry has no supported binary content or the `part` parameter is invalid for its type. The OpenAPI document and the test suite already said `413`. A chunked body never reaches that size check: any `Transfer-Encoding` header is refused with `411` while the request headers are read, see [Chunked Request Bodies Answer `411 Length Required`](#chunked-request-bodies-answer-411-length-required-behavior-change).
 - **`Content-Type` is not required on that upload, and is not stored.** The server does not read it. The type reported by `document.type` (or a certificate file descriptor), and sent as `Content-Type` by `GET .../content`, is derived from the extension of the file name.
 - **The file name field is `document.name`.** The reference called it `content_name` in two places; v2.0 has no such field. `Content-Disposition` on the upload sets `document.name`, and the download sends it back.

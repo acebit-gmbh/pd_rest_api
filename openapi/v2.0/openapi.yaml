@@ -6902,6 +6902,17 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: |
+            The day the entry expires, a calendar day: answered as midnight
+            UTC of that day (`2029-12-31T00:00:00.000Z` is 31 December 2029),
+            whatever the server's time zone; read its date part in UTC. A
+            write takes the date part of the value as written, in its own
+            offset (`2029-12-31`, `2029-12-31T23:30:00-05:00`); `null` clears
+            it, and a value that is not ISO 8601 answers `400`. A credit
+            card's is the last day of the month its `valid_thru` names;
+            a card's `expires_at` written sets `valid_thru` to the month of
+            the day written, and `expires_at` to that month's last day;
+            `null` empties `valid_thru`.
         # Full representation only (for type = password / custom)
         login_id:
           type: string
@@ -7003,7 +7014,11 @@ components:
           description: 16-digit card number, space-separated
         valid_thru:
           type: string
-          description: Expiry date in MM/YYYY form
+          pattern: '^$|^(0[1-9]|1[0-2])/(19[5-9][0-9]|2[01][0-9]{2})$'
+          description: |
+            Expiry date in MM/YYYY form: a month from 01 to 12 and a year
+            from 1950 to 2199, or `""` for none. Any other value answers
+            `400`. The entry's `expires_at` is the last day of that month.
         cvv:
           type: string
         phone:
@@ -7039,8 +7054,15 @@ components:
           type: string
         purchase_date:
           type: string
-          format: date
+          format: date-time
           nullable: true
+          description: |
+            A calendar day, answered as midnight UTC of that day
+            (`2025-01-15T00:00:00.000Z`); read its date part in UTC. A write
+            takes the date part as written, in its own offset; `null` clears
+            the date, and so does a string that is not an ISO 8601 date. A
+            stored value that names no date is answered `null`, and a `null`
+            sent back keeps it; `""` clears it.
         order_number:
           type: string
         reg_email:
@@ -7077,8 +7099,10 @@ components:
           type: string
         birth_date:
           type: string
-          format: date
+          format: date-time
           nullable: true
+          description: |
+            A calendar day, by the same rules as `License.purchase_date`.
         mobile:
           type: string
         fax:
@@ -8236,6 +8260,17 @@ components:
           type: string
         value:
           type: string
+          description: |
+            The field's value, always a string. Server 20.0.0 and later: a
+            field of the type `date` carries the calendar day `YYYY-MM-DD`
+            (`""` for no date), `decimal` digits with `.` and no grouping
+            (`0.50`), `number` the integer's digits, `boolean` `true` or
+            `false`; the other types their text. A value that does not fit
+            its type's form is kept and returned as that text. A write also
+            accepts a decimal comma, `1` / `0` for a boolean and a date as a
+            day number counted from 30 December 1899, and stores each in the
+            form above; a value sent back as `getEntry` returned it leaves
+            the field as it was.
         input_id:
           type: string
           description: Associated HTML element ID or name of the field
