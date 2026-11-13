@@ -89,6 +89,21 @@ info:
     complete the version of its begin, a Negotiate retry the version of the
     leg that was challenged.
 
+    Server 20.0.0 and later: an app that syncs a database through the client
+    channel (tag `Client Channel`) declares the protocol it speaks as the
+    integer `client.protocol` in the client object of `/auth/login` or
+    `/auth/webauthn/begin`; this server speaks protocol 2. The sign-in's
+    last answer then carries `client_protocol` and the account's `id`, and
+    the session token the claim `client_protocol`. A value that is not a
+    JSON integer from 1 to 65535 answers 400 with `error.word`
+    `malformed`; a number the server does not speak answers 403 /
+    error.code 4039 with `error.word` `protocol not supported` and
+    `error.protocol` (`min`, `max`). Neither counts towards the IP lockout.
+    An admin-scope session, whether it declared a protocol or not, gets
+    403 `not permitted` on every channel route; any other session that
+    declared no protocol, every client-scope long-lived API token
+    included, gets 403 / error.code 4039 `protocol required` there.
+
     ## Pagination
 
     List endpoints support pagination via `offset` and `limit` query
@@ -103,8 +118,11 @@ info:
     `trust_device_possible` (Server 20.0.0 and later, see
     `TwoFactorChallengeResponse`), and the policy routes under
     `/admin/.../policy` carry their reply as `policy` (Server 20.0.0 and
-    later, see `PolicyReply`); clients must ignore members of `error`
-    they do not know. See the
+    later, see `PolicyReply`), and the client channel's routes carry
+    `word`, a stable English word that clients match instead of the
+    message, and `retry_after` in seconds where they ask the client to wait
+    (Server 20.0.0 and later, see `ChannelErrorResponse`); clients must
+    ignore members of `error` they do not know. See the
     `#/components/responses` section for reusable response definitions
     (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `MethodNotAllowed`,
     `LengthRequired`, `PayloadTooLarge`, `TooManyRequests`,
@@ -148,10 +166,13 @@ info:
     on OIDC discovery or on authenticated requests, Server 20.0.0 and later),
     `4037` (`PD_ERRCODE_CLIENT_OUTDATED` -- the client's declared version
     is below the server's Minimum client version policy, at login or on
-    authenticated requests, Server 20.0.0 and later) and `4038`
+    authenticated requests, Server 20.0.0 and later), `4038`
     (`PD_ERRCODE_ADMIN_PASSWORD_RULES` -- `login` of the built-in
     administrator: its password, set with the server's key tool, does not
     meet the server's account password policies, Server 20.0.0 and later)
+    and `4039` (`PD_ERRCODE_PROTOCOL` -- at sign-in a `client.protocol`
+    the server does not speak, on a client channel route a client-scope
+    session that declared none, Server 20.0.0 and later)
     with HTTP `403`;
     `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
     `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
@@ -312,6 +333,8 @@ tags:
     description: Read-only group directory available to all authenticated callers
   - name: Secrets
     description: Shared-secret links (client scope)
+  - name: Client Channel
+    description: The sync connection of the Password Depot apps -- open a database for sync, pull and push its changes, reconcile, editing hints, a record's history and a document's content in chunks (client scope, a sign-in that declared client.protocol; Server 20.0.0 and later)
   - name: Admin - Databases
     description: Database management (admin scope required)
   - name: Admin - Permissions
@@ -5062,6 +5085,702 @@ paths:
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
 
+  # ---------------------------------------------------------------------------
+  # Client channel (Server 20.0.0 and later): the sync connection of the apps
+  # ---------------------------------------------------------------------------
+  /databases/{db}/session:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    post:
+      operationId: channelOpenDatabase
+      tags:
+        - Client Channel
+      summary: Open a database for sync, or close it
+      description: |
+        Server 20.0.0 and later. Opens the database `db` for sync in this
+        REST session with the app's `writer` id and field key, or opens it
+        again with new ones; `{"end": true}` closes it and answers `{}`.
+        Every other channel route but the editing hint needs the database
+        opened so (`409` `no session` otherwise). The body is at most 4096
+        bytes, names `field_key` once and holds no `\u` escape, else `400`
+        `malformed`; the server keeps the key in memory only and clears the
+        request body when the request ends. A member of the answer that is
+        absent or `null` announces nothing: an app offers no feature it
+        does not announce. See Client Channel in the API reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelSessionRequest"
+      responses:
+        "200":
+          description: The database is open for sync; `{}` where the request closed it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSessionResponse"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/sync:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    get:
+      operationId: channelPull
+      tags:
+        - Client Channel
+      summary: Pull the database's records and their changes
+      description: |
+        Server 20.0.0 and later. Without `since` a first pull: every record
+        the user may see; with `since` the changes since that cursor, with
+        `withdrawn` naming the records the user no longer sees. An answer
+        is one part of at most 4 MiB, or one record; `next` fetches the
+        following part, and the completing part carries `cursor`. A cursor
+        the server cannot continue from is answered
+        `{"reconcile": true, ...}` instead of a part: read the manifest.
+        The query is read as it stands, without decoding; a parameter given
+        twice answers `400` `malformed`. See Client Channel in the API
+        reference.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: The cursor of the last completed pull or reconcile; absent for a first pull
+          schema:
+            type: string
+        - name: next
+          in: query
+          required: false
+          description: The `next` of the previous part; good once
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One part of the pull, or a reconcile
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChannelPullPart"
+                  - $ref: "#/components/schemas/ChannelReconcile"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+    post:
+      operationId: channelPush
+      tags:
+        - Client Channel
+      summary: Push changes in batches
+      description: |
+        Server 20.0.0 and later. Each batch is applied whole or not at all,
+        in one change of the database, and answered `accepted`, `merged`,
+        `rejected` or `deferred`; read an outcome you do not know as
+        `merged`. A batch whose answer was lost is pushed again: the server
+        answers it from its receipts and writes nothing again. At most 64
+        batches (`413` `too large`, nothing applied) and 16 MiB of body
+        (`413` before the body is read, without `word`). A base
+        cursor the server cannot continue from is answered
+        `{"reconcile": true, ...}` and nothing is applied. The records and
+        units follow the Password Depot record format. See Client Channel
+        in the API reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelPushRequest"
+      responses:
+        "200":
+          description: The outcome of every batch, or a reconcile
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChannelPushResponse"
+                  - $ref: "#/components/schemas/ChannelReconcile"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/manifest:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    get:
+      operationId: channelReadManifest
+      tags:
+        - Client Channel
+      summary: Every record the user may see, for a reconcile
+      description: |
+        Server 20.0.0 and later. Every record the user may see, each with
+        its version vector and the user's access, in parts as a pull; the
+        completing part carries `cursor`. Reconcile on `reconcile`, on a new
+        `incarnation`, on a differing `access_gen` and below `horizon`. See
+        Client Channel in the API reference.
+      parameters:
+        - name: next
+          in: query
+          required: false
+          description: The `next` of the previous part; good once
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One part of the manifest, or a reconcile
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChannelManifestPart"
+                  - $ref: "#/components/schemas/ChannelReconcile"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/sync/fetch:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    post:
+      operationId: channelFetch
+      tags:
+        - Client Channel
+      summary: Records by id
+      description: |
+        Server 20.0.0 and later. The records a manifest or a push answer
+        showed the app to lack: 1 to 1000 ids. `missing` names the ids that
+        do not exist or that the user may not see, `later` the ids the
+        answer did not reach within 4 MiB. See Client Channel in the API
+        reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelFetchRequest"
+      responses:
+        "200":
+          description: The records, and the ids missing or left for later
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelFetchResponse"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/entries/{entry_id}/editing:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/EntryIdPath"
+    post:
+      operationId: channelEditingHint
+      tags:
+        - Client Channel
+      summary: Set, renew or end an editing hint on an entry
+      description: |
+        Server 20.0.0 and later. Advisory, locks nothing: tells the other
+        users' connected Windows clients that the user is editing the entry.
+        Renew every 60 seconds; a hint lapses 180 seconds after its last
+        renewal. Needs no opened database. At most 20 per 10 seconds per
+        REST session (`429` `rate limited`). An entry the user may not see,
+        one that does not exist and a folder answer `404` `not visible`.
+        See Client Channel in the API reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelEditingRequest"
+      responses:
+        "200":
+          description: Done; the body is `{}`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelEmptyObject"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/entries/{entry_id}/history:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/EntryIdPath"
+    get:
+      operationId: channelListEntryHistory
+      tags:
+        - Client Channel
+      summary: A record's history list
+      description: |
+        Server 20.0.0 and later. The record's history items, newest first,
+        metadata only: no value travels. Answered where the user has read
+        access to the record now; every other id is answered in the
+        `missing` form, as one that does not exist. `entries` and `folders`
+        name one route: the record's class is not judged by them. At most 20
+        history requests per 10 seconds per REST session (`429`
+        `rate limited`). See Client Channel in the API reference.
+      parameters:
+        - $ref: "#/components/parameters/ChannelHistoryFromQuery"
+      responses:
+        "200":
+          $ref: "#/components/responses/ChannelHistoryListed"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+    post:
+      operationId: channelShowEntryHistory
+      tags:
+        - Client Channel
+      summary: Several old versions of a record, with their values
+      description: |
+        Server 20.0.0 and later. The history items the body names, 1 to 1000
+        ids, each at most once, their values sealed under the field key; the
+        answer of `GET .../history/{item}` for several items. See Client
+        Channel in the API reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelHistoryShowRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ChannelHistoryShown"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/entries/{entry_id}/history/{item}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/EntryIdPath"
+      - $ref: "#/components/parameters/ChannelHistoryItemPath"
+    get:
+      operationId: channelGetEntryHistoryItem
+      tags:
+        - Client Channel
+      summary: One old version of a record, with its values
+      description: |
+        Server 20.0.0 and later. One history item, as `POST .../history`
+        answers it. See Client Channel in the API reference.
+      responses:
+        "200":
+          $ref: "#/components/responses/ChannelHistoryShown"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/folders/{folder_id}/history:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/FolderIdPath"
+    get:
+      operationId: channelListFolderHistory
+      tags:
+        - Client Channel
+      summary: A record's history list (the same route under folders)
+      description: |
+        Server 20.0.0 and later. As `channelListEntryHistory`: `entries`
+        and `folders` name one route. See Client Channel in the API
+        reference.
+      parameters:
+        - $ref: "#/components/parameters/ChannelHistoryFromQuery"
+      responses:
+        "200":
+          $ref: "#/components/responses/ChannelHistoryListed"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+    post:
+      operationId: channelShowFolderHistory
+      tags:
+        - Client Channel
+      summary: Several old versions of a record (the same route under folders)
+      description: |
+        Server 20.0.0 and later. As `channelShowEntryHistory`. See Client
+        Channel in the API reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelHistoryShowRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ChannelHistoryShown"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/folders/{folder_id}/history/{item}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - $ref: "#/components/parameters/FolderIdPath"
+      - $ref: "#/components/parameters/ChannelHistoryItemPath"
+    get:
+      operationId: channelGetFolderHistoryItem
+      tags:
+        - Client Channel
+      summary: One old version of a record (the same route under folders)
+      description: |
+        Server 20.0.0 and later. As `channelGetEntryHistoryItem`. See Client
+        Channel in the API reference.
+      responses:
+        "200":
+          $ref: "#/components/responses/ChannelHistoryShown"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /databases/{db}/blobs/{blob}:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+      - name: blob
+        in: path
+        required: true
+        description: The content's id, 8-4-4-4-12 hexadecimal digits in either letter case
+        schema:
+          type: string
+          format: uuid
+    put:
+      operationId: channelUploadChunk
+      tags:
+        - Client Channel
+      summary: Upload one chunk of a document's content
+      description: |
+        Server 20.0.0 and later. The request body is exactly one chunk frame
+        as the app sealed it, 52 to 1 048 628 bytes; the query declares the
+        upload. The first chunk fixes `chunks`, `chunk_size` and `size`. The
+        answer lists the chunks the upload holds; push the record that names
+        the content once `complete` is true. Uploads and downloads together
+        at most 64 a second per REST session. See Client Channel in the API
+        reference.
+      parameters:
+        - name: chunk
+          in: query
+          required: true
+          description: The index of the chunk this frame carries, below `chunks`
+          schema:
+            type: integer
+            minimum: 0
+        - name: chunks
+          in: query
+          required: true
+          description: The number of chunks, max(1, ceil(size / chunk_size))
+          schema:
+            type: integer
+            minimum: 1
+        - name: chunk_size
+          in: query
+          required: true
+          description: The chunk size in bytes
+          schema:
+            type: integer
+            minimum: 65536
+            maximum: 1048576
+        - name: size
+          in: query
+          required: true
+          description: The size of the whole content before encryption, at most the session's `blobs.max_size`
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 67108864
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: The chunks the upload holds after this request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelBlobHeld"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+    get:
+      operationId: channelDownloadChunks
+      tags:
+        - Client Channel
+      summary: Download chunks of a document's content
+      description: |
+        Server 20.0.0 and later. The stored chunk frames of the content, by
+        the entry `record` that names it, from `chunk` on, at most `count`
+        within 1 MiB and at least one; `data` holds them in base64url. Where
+        the user may not read the entry, the entry does not name the content
+        or the server does not hold it whole, the answer is the `missing`
+        form. See Client Channel in the API reference.
+      parameters:
+        - name: record
+          in: query
+          required: true
+          description: The id of the entry that names the content
+          schema:
+            type: string
+            format: uuid
+        - name: chunk
+          in: query
+          required: true
+          description: The first chunk wanted
+          schema:
+            type: integer
+            minimum: 0
+        - name: count
+          in: query
+          required: true
+          description: A hint, the number of chunks wanted
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The frames, or the `missing` form
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelBlobFrames"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
 # =============================================================================
 # Components
 # =============================================================================
@@ -5291,6 +6010,27 @@ components:
       in: path
       required: true
       description: Folder ID -- path parameter used by sub-resources under /databases/{db}/folders/{folder_id}
+      schema:
+        type: string
+        format: uuid
+
+    ChannelHistoryItemPath:
+      name: item
+      in: path
+      required: true
+      description: Server 20.0.0 and later. A history item's id, as the history list names it
+      schema:
+        type: string
+        format: uuid
+
+    ChannelHistoryFromQuery:
+      name: from
+      in: query
+      required: false
+      description: |
+        Server 20.0.0 and later. The `next` of the previous answer, to list
+        the rest; an id the record's list does not hold answers `409`
+        `part expired`
       schema:
         type: string
         format: uuid
@@ -5621,6 +6361,146 @@ components:
               code: 429
               message: "Your IP address has been blocked. Please contact your PD server administrator or try again later."
 
+    # --- Client channel (Server 20.0.0 and later) ---
+    ChannelBadRequest:
+      description: |
+        `error.word` `malformed`: the request, a parameter or a member is
+        not of its form; on a push also `protocol mismatch`. A defect of the
+        app: do not retry. A `400` without `word` comes from the checks
+        before the channel.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+          example:
+            error:
+              code: 400
+              message: "The request is not in a form this server accepts."
+              word: "malformed"
+
+    ChannelForbidden:
+      description: |
+        `error.word` `protocol required` with `error.code` 4039: a
+        client-scope session that declared no `client.protocol`;
+        `not permitted`: a session of the admin scope, whether it declared
+        a protocol or not; `not authorised`: an upload of a user who may
+        change nothing in the database. Without `word`: a `POST` or
+        `PUT` on a mirror server, and the client platform and minimum
+        version policies (`error.code` 4036, 4037).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+          example:
+            error:
+              code: 4039
+              message: "This request needs an application that states its protocol. Please update the application."
+              word: "protocol required"
+
+    ChannelNotFound:
+      description: |
+        `error.word` `not found`: the database does not exist, or the user
+        may not open it -- one answer for every cause; the database is closed
+        in the REST session. `not visible`: an editing hint for an entry the
+        user may not see. A `404` without `word` is a route this server does
+        not know: hide the feature.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+          example:
+            error:
+              code: 404
+              message: "The database was not found."
+              word: "not found"
+
+    ChannelConflict:
+      description: |
+        `error.word` `no session` (open the database first),
+        `writer not declared`, `writer of another principal`,
+        `in use by an older client`, `too many sessions`,
+        `cursor of another database` or `part expired`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+          example:
+            error:
+              code: 409
+              message: "Please open the database for synchronisation first."
+              word: "no session"
+
+    ChannelPayloadTooLarge:
+      description: |
+        `error.word` `too large`: a push of more than 64 batches, an
+        upload above `blobs.max_size` or one whose `size` would take the
+        database past 4 GiB, its documents included. A body above its
+        bound -- a push 16 MiB, a chunk 1 048 628 bytes, every other
+        channel route 1 MB -- is refused before it is read, without `word`,
+        labelled `text/html`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+
+    ChannelTooManyRequests:
+      description: |
+        `error.word` `rate limited` (a rate bound, or too many requests of
+        the REST session waiting for their turn) or `quota` (an upload past
+        the user's quota), with `Retry-After` and `error.retry_after`. A
+        `429` without `word` is the IP lockout after failed sign-ins.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+          description: Seconds to wait
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+          example:
+            error:
+              code: 429
+              message: "Too many requests. Please try again later."
+              word: "rate limited"
+              retry_after: 1
+
+    ChannelFailed:
+      description: |
+        `error.word` `failed`: a failure on the server. Back off and try
+        again.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+
+    ChannelUnavailable:
+      description: |
+        `error.word` `not served` (the database or its history cannot be
+        served at the moment, or the server's disk for uploads is nearly
+        full) or `busy` (the server does not take requests at the moment, a
+        heavy task holds the database, or the request waited 10 seconds for
+        its turn). Back off and try again.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+
+    ChannelHistoryListed:
+      description: The record's history items, or the `missing` form
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelHistoryList"
+
+    ChannelHistoryShown:
+      description: The history items with their values, or the `missing` form
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelHistoryShow"
+
     # --- Policy routes (Server 20.0.0 and later) ---
     PolicyRead:
       description: |
@@ -5917,6 +6797,18 @@ components:
           minimum: 0
           maximum: 9223372036854775807
           description: Optional client build; must be a JSON integer, not a string.
+        protocol:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: |
+            Server 20.0.0 and later. The protocol of the client channel the
+            app speaks; this server speaks 2. Digits alone -- no sign,
+            fraction, exponent or leading zero; another value, `null` or the
+            member twice answers 400 with `error.word` `malformed`, a number
+            the server does not speak 403 / error.code 4039 with
+            `error.protocol`. The sign-in's last answer then carries
+            `client_protocol` and `id`. Not read from X-PD-Client.
       example:
         platform: android
         version: "20.0.0"
@@ -6080,6 +6972,21 @@ components:
             succeeds either way.
           allOf:
             - $ref: "#/components/schemas/PolicyBundle"
+        id:
+          type: string
+          description: |
+            Server 20.0.0 and later, only where the sign-in declared
+            `client.protocol`: the account's id as the server holds it,
+            letter case included; `GET /me` answers the same text. Written
+            after the trusted-device members and before `policy`.
+        client_protocol:
+          type: integer
+          description: |
+            Server 20.0.0 and later, only where the sign-in declared
+            `client.protocol`: the protocol the server admitted for the
+            session's client channel. A sign-in answer without it from a
+            server asked for a protocol means that the server serves no
+            channel.
 
     # --- The client policy bundle (Server 20.0.0 and later) ---
     PolicyBundle:
@@ -8372,9 +9279,12 @@ components:
                 authenticated requests, Server 20.0.0 and later), `4037`
                 (`PD_ERRCODE_CLIENT_OUTDATED` -- the client's declared version is
                 below the server's Minimum client version policy, Server 20.0.0
-                and later) and `4038` (`PD_ERRCODE_ADMIN_PASSWORD_RULES` -- `login`
+                and later), `4038` (`PD_ERRCODE_ADMIN_PASSWORD_RULES` -- `login`
                 of the built-in administrator: its password, set with the server's
                 key tool, does not meet the server's account password policies,
+                Server 20.0.0 and later) and `4039` (`PD_ERRCODE_PROTOCOL` -- a
+                client protocol the server does not speak at sign-in, or a client
+                channel route of a client-scope session that declared none,
                 Server 20.0.0 and later) with HTTP `403`;
                 `4041` (`PD_ERRCODE_NO_ONE_TIME_CODE` -- the entry has no one-time code) and
                 `4042` (`PD_ERRCODE_ICON_NOT_FOUND` -- `getDatabaseIcon`: no usable icon with
@@ -8389,6 +9299,23 @@ components:
               description: Human-readable error message
             policy:
               $ref: "#/components/schemas/PolicyReply"
+            word:
+              type: string
+              description: |
+                Server 20.0.0 and later, on a client channel route and on a
+                client protocol refused at sign-in: a stable English word,
+                never localized; match it, never `message`. See
+                `ChannelErrorResponse`.
+            protocol:
+              type: object
+              description: |
+                Server 20.0.0 and later, with error.code 4039 at sign-in: the
+                lowest and the highest client protocol the server speaks.
+              properties:
+                min:
+                  type: integer
+                max:
+                  type: integer
 
     TwoFactorChallengeResponse:
       type: object
@@ -9858,3 +10785,606 @@ components:
         recovery_confirmed:
           type: boolean
           description: Present after a reset only, `true` - the recovery code the reset used is confirmed
+    # --- The client channel (Server 20.0.0 and later) ---
+    ChannelErrorResponse:
+      type: object
+      description: |
+        The error object of the client channel: the published error object
+        with `word` and, where the client is asked to wait, `retry_after`.
+        The HTTP status is authoritative; read an unknown `word` as a wait
+        (back off 1 second doubling to 60, `Retry-After` honoured), and an
+        answer without `word` by its status. See Client Channel in the API
+        reference.
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              description: The HTTP status, or 4039 for `protocol required`
+            message:
+              type: string
+              description: Human-readable, localized
+            word:
+              type: string
+              description: |
+                Stable English, never localized: `malformed`,
+                `protocol mismatch`, `not signed in`, `not permitted`,
+                `protocol required`, `not authorised`, `not found`,
+                `not visible`, `no session`, `writer not declared`,
+                `writer of another principal`, `in use by an older client`,
+                `too many sessions`, `cursor of another database`,
+                `part expired`, `too large`, `quota`, `rate limited`,
+                `failed`, `not in this version`, `not served`, `busy`
+            retry_after:
+              type: integer
+              minimum: 1
+              description: Seconds to wait, as the `Retry-After` header says
+
+    ChannelAccess:
+      type: object
+      description: The user's access to a record
+      properties:
+        level:
+          type: string
+          description: "`view`, `use`, `read` or `edit`; read an unknown word as `view`"
+        caps:
+          type: array
+          items:
+            type: string
+          description: |
+            The user's capabilities on the record, each once, in this order:
+            `create`, `delete`, `share`, `protect`, `manage`, `own`; ignore
+            an unknown word
+        own_permissions:
+          type: boolean
+          description: The record carries permissions of its own
+        until:
+          type: integer
+          format: int64
+          description: Where a permission that gives the access ends, that instant in milliseconds since 1970-01-01 UTC
+
+    ChannelVersionVector:
+      type: object
+      description: A record's version vector, by `writer` id, as the record format defines it
+      additionalProperties:
+        type: integer
+        format: int64
+
+    ChannelRecord:
+      type: object
+      description: A record as a pull and a fetch deliver it; `body` follows the Password Depot record format
+      properties:
+        id:
+          type: string
+          format: uuid
+        vv:
+          $ref: "#/components/schemas/ChannelVersionVector"
+        level:
+          type: integer
+        access:
+          $ref: "#/components/schemas/ChannelAccess"
+        body:
+          type: object
+          additionalProperties: true
+
+    ChannelPushRecord:
+      description: A record as a push answer delivers it, written in the order id, generation, vv, level, access, body, token
+      allOf:
+        - $ref: "#/components/schemas/ChannelRecord"
+        - type: object
+          properties:
+            generation:
+              type: integer
+              format: int64
+              description: The generation of the change that wrote this version
+            token:
+              type: string
+              description: The record token; send it as the `token` of the record's next unit
+
+    ChannelSessionRequest:
+      type: object
+      description: |
+        Opens the database for sync (`writer`, `field_key_epoch`,
+        `field_key`) or closes it (`{"end": true}`, without `field_key`).
+        At most 4096 bytes, `field_key` once, no `\u` escape anywhere.
+      properties:
+        writer:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: An id the app draws for this opening of the database, 8 random bytes in lower-case hexadecimal
+        field_key_epoch:
+          type: integer
+          enum: [1]
+        field_key:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+          description: 32 random bytes in base64url without padding, the spare bits of the last character zero; kept in memory only, never logged
+        notify:
+          type: boolean
+          description: Accepted, with no effect over REST
+        end:
+          type: boolean
+          enum: [true]
+          description: Closes the database in this REST session; answered `{}`
+
+    ChannelSessionResponse:
+      type: object
+      description: |
+        The answer of a database opened for sync, written in this order; a
+        request that closed the database is answered `{}`.
+      properties:
+        incarnation:
+          type: string
+          description: The id of the database's current store, 16 bytes in base64url
+        generation:
+          type: integer
+          format: int64
+        writable:
+          type: boolean
+        db_id:
+          type: string
+          format: uuid
+        root:
+          type: string
+          format: uuid
+          description: The id of the database's root record, the parent every top-level record names
+        floor:
+          type: integer
+          format: int64
+          description: The floor the server holds for this `writer` id; absent where it holds nothing for it
+        recycle_bin:
+          type: object
+          properties:
+            max_items:
+              type: integer
+              minimum: 0
+              maximum: 10000
+            manage:
+              type: boolean
+        usage:
+          type: object
+          description: |
+            The usage policies as they apply to the user on this database, by
+            setting id; a function whose setting is absent or of another type
+            is not allowed
+          additionalProperties: true
+        blobs:
+          type: object
+          properties:
+            max_size:
+              type: integer
+              format: int64
+            push:
+              type: boolean
+        release_secret:
+          type: string
+          nullable: true
+          enum: [null]
+          description: Reserved; always `null`
+
+    ChannelReconcile:
+      type: object
+      description: The answer to a cursor the server cannot continue from; read the manifest
+      properties:
+        reconcile:
+          type: boolean
+          enum: [true]
+        incarnation:
+          type: string
+        generation:
+          type: integer
+          format: int64
+
+    ChannelPullPart:
+      type: object
+      properties:
+        incarnation:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        horizon:
+          type: integer
+          format: int64
+        access_gen:
+          type: integer
+          format: int64
+          description: Compare for equality only; on a difference, reconcile
+        complete:
+          type: boolean
+        next:
+          type: string
+          description: Only where `complete` is false; good once
+        cursor:
+          type: string
+          description: Only in the completing part
+        access_next:
+          type: integer
+          format: int64
+          description: Only in the completing part, where a permission starts or ends ahead; milliseconds since 1970-01-01 UTC
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelRecord"
+        withdrawn:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    ChannelManifestPart:
+      type: object
+      properties:
+        incarnation:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        horizon:
+          type: integer
+          format: int64
+        access_gen:
+          type: integer
+          format: int64
+        complete:
+          type: boolean
+        next:
+          type: string
+        cursor:
+          type: string
+        access_next:
+          type: integer
+          format: int64
+        manifest:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              vv:
+                $ref: "#/components/schemas/ChannelVersionVector"
+              access:
+                $ref: "#/components/schemas/ChannelAccess"
+
+    ChannelFetchRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+            format: uuid
+
+    ChannelFetchResponse:
+      type: object
+      properties:
+        incarnation:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        access_gen:
+          type: integer
+          format: int64
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelRecord"
+        missing:
+          type: array
+          items:
+            type: string
+            format: uuid
+        later:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    ChannelPushRequest:
+      type: object
+      description: The units follow the Password Depot record format
+      properties:
+        base:
+          type: string
+          description: The stored cursor
+        seen:
+          type: integer
+          format: int64
+        merge:
+          type: string
+          enum: [merge-1]
+        protocol:
+          type: integer
+          description: The protocol the sign-in declared
+        level:
+          type: integer
+          description: The record-format level the app is built on, 1
+        writer:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+        floor:
+          type: integer
+          format: int64
+        batches:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            properties:
+              id:
+                description: Chosen by the app, unique in the push, echoed
+              units:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              tokens:
+                type: array
+                items:
+                  type: string
+
+    ChannelPushResponse:
+      type: object
+      properties:
+        generation:
+          type: integer
+          format: int64
+        contiguous:
+          type: boolean
+        floor:
+          type: integer
+          format: int64
+        batches:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                description: The batch's id as the push sent it
+              outcome:
+                type: string
+                description: "`accepted`, `merged`, `rejected` or `deferred`; read an unknown word as `merged`"
+              reason:
+                type: string
+                description: A rejected batch's reason where one applies to the batch; a deferred batch's reason. An unknown reason of a deferred batch is a wait
+              units:
+                type: array
+                description: A rejected batch, every unit
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    reason:
+                      type: string
+                    detail:
+                      type: string
+              records:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChannelPushRecord"
+              withdrawn:
+                type: array
+                items:
+                  type: string
+                  format: uuid
+              later:
+                type: array
+                items:
+                  type: string
+                  format: uuid
+              receipts:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              history:
+                type: array
+                items: {}
+              drop:
+                type: array
+                items:
+                  type: string
+              filed:
+                type: array
+                items:
+                  type: string
+              clock_anomaly:
+                type: array
+                items:
+                  type: string
+
+    ChannelEditingRequest:
+      type: object
+      required: ["on"]
+      properties:
+        "on":
+          type: boolean
+          description: true sets or renews the hint, false ends it
+        entry:
+          type: string
+          format: uuid
+          description: Optional; the entry of the path
+
+    ChannelEmptyObject:
+      type: object
+      description: "`{}`"
+
+    ChannelHistoryList:
+      type: object
+      properties:
+        incarnation:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        access_gen:
+          type: integer
+          format: int64
+        record:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              origin:
+                type: string
+                format: uuid
+              cause:
+                type: string
+              change:
+                type: array
+                items: {}
+                description: Who made the change, when and through which app, in the record format's stamp form
+              by:
+                type: string
+              client:
+                type: string
+              note:
+                type: string
+              author:
+                type: string
+              at:
+                type: integer
+                format: int64
+              at.legacy_local:
+                type: integer
+                format: int64
+              groups:
+                type: array
+                items:
+                  type: string
+              conflict:
+                type: string
+                description: "`filed` or `acknowledged`, on an item of the cause `conflict`"
+              level:
+                type: integer
+        complete:
+          type: boolean
+        next:
+          type: string
+          format: uuid
+          description: Where items remain; send it as `from`
+        missing:
+          type: array
+          description: The `missing` form, for a record whose history the user may not read
+          items:
+            type: string
+            format: uuid
+
+    ChannelHistoryShowRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        record:
+          type: string
+          format: uuid
+          description: Optional; the record of the path
+
+    ChannelHistoryShow:
+      type: object
+      properties:
+        incarnation:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        access_gen:
+          type: integer
+          format: int64
+        record:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              level:
+                type: integer
+              body:
+                type: object
+                additionalProperties: true
+        missing:
+          type: array
+          items:
+            type: string
+            format: uuid
+        later:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    ChannelBlobHeld:
+      type: object
+      properties:
+        held:
+          type: array
+          description: The chunks the upload holds, as ascending ranges [first, last]
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: integer
+        complete:
+          type: boolean
+
+    ChannelBlobFrames:
+      type: object
+      properties:
+        incarnation:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        access_gen:
+          type: integer
+          format: int64
+        record:
+          type: string
+          format: uuid
+        blob:
+          type: string
+          format: uuid
+        chunks:
+          type: integer
+        frames:
+          type: array
+          description: The length of each frame in `data`, in order
+          items:
+            type: integer
+        data:
+          type: string
+          description: The frames, concatenated, in base64url without padding; absent where `frames` is empty
+        missing:
+          type: array
+          description: The `missing` form
+          items:
+            type: string
+            format: uuid

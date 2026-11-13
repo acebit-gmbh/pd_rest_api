@@ -39,7 +39,7 @@ The platform is required when the header is supplied. Accepted values are `web`,
 
 `client` must be a JSON object. `client.platform` is a required string, at most 32 characters, containing one of the platform names above. `client.version` is an optional string with the same limit as the header value. `client.build` is an optional JSON integer with the same range as the header value. `null` is not accepted for `client`, `client.platform`, `client.version` or `client.build`; leave out a value you do not send. If the header and body both declare a platform, they must agree; if both declare a version, the header's is the one used. WebAuthn complete ignores a `client` member in its body, and OIDC discovery is a `GET` without a body. A WebAuthn challenge retains the platform and the version declared at begin through the header or body; complete may omit the header and use that platform, but a conflicting platform returns `400`. A disabled platform is refused with `403` first, whether the challenge stored it or the header of the complete request declares it. The Negotiate handshake also retains the declared platform and version across retries that have no JSON body.
 
-Unknown platforms, malformed identity values, unknown header parameters, duplicate recognized identity members and conflicting header/body platforms return `400 Bad Request`, as does an `X-PD-Client` header that is sent more than once, is empty, or contains a comma or a character outside printable ASCII. Send the header once, with a single identity. None of these `400`s counts towards the IP lockout (`429`). Extra members of the `client` object are ignored. Do not send the build as a JSON string.
+Unknown platforms, malformed identity values, unknown header parameters, duplicate recognized identity members and conflicting header/body platforms return `400 Bad Request`, as does an `X-PD-Client` header that is sent more than once, is empty, or contains a comma or a character outside printable ASCII. Send the header once, with a single identity. None of these `400`s counts towards the IP lockout (`429`). `client.protocol` declares the protocol of the [client channel](channel.md) (*Server 20.0.0 and later*; see [Client Protocol](#client-protocol)); other members of the `client` object are ignored. Do not send the build as a JSON string.
 
 ### Platform Policy and Sessions
 
@@ -109,6 +109,56 @@ A client below the minimum receives **HTTP `403` with `error.code: 4037`** and a
 
 Treat it as a request to update the application: show the message, do not retry, and do not report it as incorrect credentials. Refused on a request of an established session, end the session with `POST /auth/logout`, which is not checked, before you discard its token. It does not count towards the IP lockout (`429`) or against the account. The server log names the policy setting, the scope, the version required and the version declared, and so does the audit record of a refused sign-in; a refused request of an established session is recorded in the server log alone. Branch on the numeric status and code.
 
+### Client Protocol
+
+*Server 20.0.0 and later.* An app that syncs a database through the [client channel](channel.md) declares the protocol it speaks when it signs in: the integer `protocol` in the `client` object of `POST /auth/login`, or of `POST /auth/webauthn/begin` for a passkey sign-in:
+
+```json
+{
+    "user": "example-user",
+    "pass": "example-password",
+    "client": {
+        "platform": "ios",
+        "version": "20.0.0",
+        "protocol": 2
+    }
+}
+```
+
+This server speaks protocol `2`. A successful sign-in that declared it answers the account's `id` and `client_protocol`, the number the server admitted, after `access_token` and the trusted-device fields (see [Success Response](#success-response)); its session token carries the number as the claim `client_protocol` (see [Token Structure](#token-structure)), and the session may use the channel's routes. A sign-in that declares no protocol works as before and answers neither member; where it is of the client scope, its session gets `403` with `error.code` `4039` and the word `protocol required` on every channel route, and every other route works for it as before. A long-lived API token never declares one: one of the client scope is answered so too.
+
+- **The form.** `protocol` is a JSON integer from 1 to 65535, written as digits alone: no sign, fraction, exponent or leading zero. Any other value, `null` included, and `protocol` given twice answer `400`:
+
+    ```json
+    {
+        "error": {
+            "code": 400,
+            "message": "The sign-in request states its protocol in a form this server does not accept.",
+            "word": "malformed"
+        }
+    }
+    ```
+
+- **A number this server does not speak** answers `403` with `error.code` `4039`, the word `protocol not supported` and, in `error.protocol`, the lowest and the highest number the server speaks:
+
+    ```json
+    {
+        "error": {
+            "code": 4039,
+            "message": "This version of the application uses protocol 3, which this server does not support (it supports 2 to 2). Please update the application or the server.",
+            "word": "protocol not supported",
+            "protocol": {"min": 2, "max": 2}
+        }
+    }
+    ```
+
+    An app that knows several numbers declares its highest. Refused so, it reads `error.protocol`, signs in again with the highest number both know, and tells the user to update only where there is none.
+- **When it is checked.** Before the user name, password, token or passkey is looked at. Neither refusal counts towards the IP lockout (`429`) or against the account; the server log and the audit record of the refused sign-in name the reason.
+- **Two steps.** A passkey sign-in declares in the body of `POST /auth/webauthn/begin`; the answer of `POST /auth/webauthn/complete`, whose body declares nothing, carries `id` and `client_protocol`. A Negotiate sign-in declares in its first request, and the retry after the challenge, which usually has no body, keeps that number. A `POST /auth/login` repeated with a second-factor code is a sign-in of its own and declares again.
+- **Not in `X-PD-Client`.** The header takes no protocol: a parameter it does not know answers `400`.
+- **An earlier server** answers a sign-in that declares a protocol without `client_protocol`: it serves no channel, and an app sends no channel request there.
+- **The `admin` scope.** A sign-in of the `admin` scope may declare a protocol, but every channel route answers its session `403` with the word `not permitted`, whether it declared one or not; so it answers a long-lived API token of the `admin` scope.
+
 ---
 
 ## Login
@@ -132,7 +182,7 @@ Authenticates a user and returns an access token for subsequent API requests.
 | `tfacode` | string | No | 6-digit two-factor authentication code |
 | `trust_device` | boolean | No | *Server 20.0.0 and later.* With a `tfacode`, asks the server to trust this device and return a `tfatoken`. Default `false`; `null` means absent. See [Trusted Devices](#trusted-devices) |
 | `tfatoken` | string | No | *Server 20.0.0 and later.* Trusted-device token from an earlier login, sent instead of `tfacode`; at most 128 characters. `null` and `""` mean absent. See [Trusted Devices](#trusted-devices) |
-| `client` | object | No | Client platform, version and build; see [Client Identity](#client-identity-and-supported-clients). When the header also declares a platform they must agree |
+| `client` | object | No | Client platform, version and build; see [Client Identity](#client-identity-and-supported-clients). When the header also declares a platform they must agree. *Server 20.0.0 and later:* also `protocol`, the protocol of the [client channel](channel.md); see [Client Protocol](#client-protocol) |
 | `idp` | string | Conditional | Identity Provider ID from `/auth/oidc` (required for `oidc`) |
 | `id_token` | string | Conditional | Identity token obtained from the OIDC/Azure flow (required for `oidc` and `azure`) |
 
@@ -253,11 +303,11 @@ On success, the server returns a JWT access token (same format as all other logi
 }
 ```
 
-With the client scope the answer also carries the user's [client policy bundle](client-policy.md) as `policy`, after `access_token`, as `/auth/login` does (*Server 20.0.0 and later*). A passkey sign-in involves no second factor, so this response never carries a `tfatoken`, and the WebAuthn endpoints do not read one (see [Trusted Devices](#trusted-devices)).
+Where the begin step's `client` declared a `protocol`, the answer carries `id` and `client_protocol` after `access_token` (*Server 20.0.0 and later*; see [Client Protocol](#client-protocol)). With the client scope the answer also carries the user's [client policy bundle](client-policy.md) as `policy`, after those members, as `/auth/login` does (*Server 20.0.0 and later*). A passkey sign-in involves no second factor, so this response never carries a `tfatoken`, and the WebAuthn endpoints do not read one (see [Trusted Devices](#trusted-devices)).
 
 **Required fields (Step 1):** `user`
 
-**Optional fields (Step 1):** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients))
+**Optional fields (Step 1):** `scope`, `client` (see [Client Identity](#client-identity-and-supported-clients) and [Client Protocol](#client-protocol))
 
 !!! warning "Prerequisites"
     - The server must allow passkey sign-in: from Server 20.0.0 its **Allowed sign-in methods** policy must include *Passkeys (WebAuthn)* (`webauthn`) for the account, as it does by default; earlier servers enable WebAuthn in the server options. Where the value enforced at server scope (earlier servers: the server option) leaves it out, Step 1 answers `400` "This method of authentication is not supported..." for every user name; on Server 20.0.0 and later this answer counts towards the failed-login limit (`429`).
@@ -519,10 +569,12 @@ When the request carried `"trust_device": true` and made the device trusted (Ser
 | `access_token` | string | Bearer token for authenticating subsequent requests. Use it via the `Authorization: Bearer <token>` header. |
 | `tfatoken` | string | Only when this request made the device trusted. Send it as `tfatoken` on later logins instead of `tfacode`. Opaque, not a JWT, and never a Bearer credential. Returned only this once. |
 | `tfatoken_expires_at` | string (UTC, ISO 8601) | Present with `tfatoken`: when the server stops accepting the token under the trusted-device period in force at issue. Advisory: the server can stop accepting it earlier, and accepts it for longer if the period is raised. |
+| `id` | string | *Server 20.0.0 and later.* Only where the sign-in declared `client.protocol`: the account's id as the server holds it, letter case included; `GET /me` answers the same text. See [Client Protocol](#client-protocol). |
+| `client_protocol` | integer | *Server 20.0.0 and later.* Only where the sign-in declared `client.protocol`: the protocol the server admitted for the session's [client channel](channel.md). |
 | `policy` | object | *Server 20.0.0 and later.* Only with the client scope: the [client policy bundle](client-policy.md) of the signed-in user for the session the login opened, after the members above. Absent from an admin-scope login; such a session reads its account's bundle with [`GET /me/policy`](client-policy.md#get-own-policy-bundle). Also absent where the server cannot issue the bundle at that moment (a mirror server before its main server's configuration and policies have arrived is one such case); the sign-in still succeeds, and `GET /me/policy` answers `500` for as long as the server cannot issue it. See [In the Sign-In Answer](client-policy.md#in-the-sign-in-answer). |
 
 !!! info "Simplified Response"
-    Unlike v1.0, the login response has no `client_id` -- the Bearer token alone identifies the session. Besides `access_token` it carries the trusted-device fields above, only when the login asked for them with `trust_device`, and with the client scope the user's `policy`. Ignore members you do not know.
+    Unlike v1.0, the login response has no `client_id` -- the Bearer token alone identifies the session. Besides `access_token` it carries the trusted-device fields above, only when the login asked for them with `trust_device`, `id` and `client_protocol` only when it declared `client.protocol`, and with the client scope the user's `policy`. Ignore members you do not know.
 
 With `auth: "negotiate"` (*Server 20.0.0 and later*), the `200` can also carry the header `WWW-Authenticate: Negotiate <token>` with the server's final SPNEGO token, for clients that authenticate the server; see [`negotiate`](#negotiate). The body is the same as with every other method.
 
@@ -618,6 +670,7 @@ The access token is a standard [JWT](https://datatracker.ietf.org/doc/html/rfc75
 | `client_version` | -- | string | *Server 20.0.0 and later.* The client version the sign-in declared, in `X-PD-Client` or the login body, as it was sent; absent where the sign-in declared none. Every request made with the token is checked against the server's **Minimum client version** policy with this version; see [Minimum Client Version](#minimum-client-version). Long-lived API tokens do not carry it |
 | `client_declared` | -- | boolean | *Server 20.0.0 and later.* `true` where the sign-in named its platform, in `X-PD-Client` or the `client` object of the login or WebAuthn-begin body, so that `client_platform` is the client's own declaration; absent where it named none and `client_platform` is the `web` the server gave it. The server reads it for `session.declared` of the [client policy bundle](client-policy.md#session). Long-lived API tokens do not carry it |
 | `sid` | Session ID | string | *Server 20.0.0 and later.* An opaque value that names the REST session the sign-in started. The token is accepted only while that session lasts; see [Sessions](#sessions). Long-lived API tokens do not carry it |
+| `client_protocol` | -- | integer | *Server 20.0.0 and later.* The protocol the sign-in declared in `client.protocol` and the server admitted; absent where it declared none, and then every [client channel](channel.md) route answers a client-scope session `403` with `error.code` `4039`. See [Client Protocol](#client-protocol). Long-lived API tokens do not carry it |
 
 **Telling the two token types apart on the client side:**
 
@@ -640,6 +693,10 @@ An Android client that the server's **Allowed client platforms** policy does not
 **403 -- Client version below the minimum** *(`error.code` `4037`)*
 
 A client whose declared version is below the server's **Minimum client version** policy, or that declares no version where a minimum applies, receives `403` with `error.code: 4037` and a message naming the version required, at login and on later requests of its session. The `web` platform is never refused. See [Minimum Client Version](#minimum-client-version).
+
+**400 and 403 -- Client protocol refused** *(`error.code` `400`, `4039`)*
+
+*Server 20.0.0 and later.* A `client.protocol` that is not a JSON integer from 1 to 65535, or one given twice, receives `400` with the word `malformed`; a number this server does not speak receives `403` with `error.code: 4039`, the word `protocol not supported` and `error.protocol` with `min` and `max`. Neither counts towards the IP lockout (`429`). See [Client Protocol](#client-protocol).
 
 **403 -- Built-in administrator password to be replaced** *(`error.code` `4038`)*
 

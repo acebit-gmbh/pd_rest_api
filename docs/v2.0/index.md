@@ -81,6 +81,7 @@ v2.0 groups its endpoints by resource, separated into client and admin scopes:
 | [Entries](api-reference/overview.md#entries) | Entry CRUD, move, and document/certificate content |
 | [Recycle Bin](api-reference/recyclebin.md) | List, restore and destroy deleted entries and folders (Server 20.0.0 and later) |
 | [Database Icons](api-reference/icons.md) | List, fetch and upload the icons stored in a database (Server 20.0.0 and later) |
+| [Client Channel](api-reference/channel.md) | The sync connection of the Password Depot apps: open a database, pull and push its changes, read a record's history, move a document's content in chunks (Server 20.0.0 and later) |
 | [Search](api-reference/overview.md#search) | Search within a database |
 | [Secrets](api-reference/secrets.md) | Create, list, get, delete own secrets; approve, reject, revoke |
 

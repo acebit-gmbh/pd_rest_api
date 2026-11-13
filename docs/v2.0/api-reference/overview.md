@@ -47,6 +47,8 @@ The token expires after a period of inactivity, and each successful request rese
 
 From Server 20.0.0, maintained native clients must also send `X-PD-Client` on every request, for example `android; version=20.0.0; build=123`. The server checks its **Allowed client platforms** policy for that platform at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated requests; new sessions retain the login platform. An Android client the policy does not allow receives `403` with `error.code: 4036`; other platforms it does not allow receive a plain `403`. The server's **Minimum client version** policy compares the declared `version` at login and on authenticated requests, for every platform but `web`: a client below it receives `403` with `error.code: 4037`. The header is allowed in CORS preflight. See [Client Identity and Supported Clients](authentication.md#client-identity-and-supported-clients) for valid platforms, the optional login-body identity and compatibility behavior.
 
+From Server 20.0.0, an app that syncs a database through the [client channel](channel.md) also declares the protocol it speaks, as `client.protocol` in the login or WebAuthn-begin body; the sign-in's answer then carries `client_protocol` and the account's `id`. A number the server does not speak answers `403` with `error.code: 4039`. See [Client Protocol](authentication.md#client-protocol).
+
 From Server 20.0.0, the server's **Allowed network addresses** policy is checked at login and again on every authenticated request, against the address the request comes from; a request from an address it does not allow answers `401`. See [Address Restrictions](authentication.md#address-restrictions).
 
 ## Request Format
@@ -136,8 +138,9 @@ On error, the server returns a JSON object with a nested `error` object:
 |-------|------|-------------|
 | `error.code` | integer | HTTP status code, or an application sub-code (see below) |
 | `error.message` | string | Human-readable error description |
+| `error.word` | string | *Server 20.0.0 and later.* On the [client channel](channel.md#words) and on a [client protocol](authentication.md#client-protocol) refused at sign-in: a stable English word for the reason, never localized, for example `no session` or `protocol not supported`. Match it, never `message`. Absent from every other answer |
 
-Some responses add members to `error`. `459` and `460` from `POST /auth/login` carry the boolean `error.trust_device_possible` (Server 20.0.0 and later; see [Trusted Devices](authentication.md#trusted-devices)). The [policy routes](policies.md#errors) carry their reply object as `error.policy` on the answers the policies decide (Server 20.0.0 and later). Clients must ignore members of `error` they do not know.
+Some responses add members to `error`. `459` and `460` from `POST /auth/login` carry the boolean `error.trust_device_possible` (Server 20.0.0 and later; see [Trusted Devices](authentication.md#trusted-devices)). The [policy routes](policies.md#errors) carry their reply object as `error.policy` on the answers the policies decide (Server 20.0.0 and later). The [client channel](channel.md#the-error-object) carries `error.word` and, where it asks a client to wait, `error.retry_after` in seconds beside a `Retry-After` header; a sign-in refused `4039` carries `error.word` and `error.protocol` with the lowest and highest protocol the server speaks (Server 20.0.0 and later). Clients must ignore members of `error` they do not know.
 
 !!! note "Difference from v1.0"
     v1.0 used a flat format: `{"code": 404, "error": "..."}`. v2.0 uses a nested structure: `{"error": {"code": 404, "message": "..."}}`.
@@ -166,12 +169,13 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
     | `4036` | `403` | `PD_ERRCODE_ANDROID_DISABLED` | The Android client is disabled on this server; applies at login, on OIDC discovery (`GET /auth/oidc`) and on authenticated requests |
     | `4037` | `403` | `PD_ERRCODE_CLIENT_OUTDATED` | The version the client declares is below the server's **Minimum client version** policy, or it declares none where a minimum applies; at login and on authenticated requests of a session, never for the `web` platform or a long-lived API token |
     | `4038` | `403` | `PD_ERRCODE_ADMIN_PASSWORD_RULES` | Login of the built-in administrator with `auth: standard`: the right password, set with the server's key tool, does not meet the server's account password policies; replace it in the Server Manager or with `pd_keys password`. Not counted towards the IP lockout or against the account |
+    | `4039` | `403` | `PD_ERRCODE_PROTOCOL` | At sign-in, a `client.protocol` the server does not speak (`error.word` `protocol not supported`, the numbers it speaks in `error.protocol`); on a [client channel](channel.md) route, a client-scope session that declared no protocol (`error.word` `protocol required`). Not counted towards the IP lockout or against the account |
     | `4041` | `404` | `PD_ERRCODE_NO_ONE_TIME_CODE` | The entry has no one-time code; a `404` for an entry that does not exist keeps `error.code = 404` |
     | `4042` | `404` | `PD_ERRCODE_ICON_NOT_FOUND` | `GET /databases/{db}/icons/{icon_id}`: no usable icon with that id in this database; a `404` for a database that does not exist keeps `error.code = 404` |
     | `4091` | `409` | `PD_ERRCODE_IDENTITY_LINKED` | `POST /admin/users` or `PATCH /admin/users/{id}`: another account already holds the identity in `idp` and `idp_user_id`; nothing was created or changed. A name conflict keeps `error.code = 409` |
     | `4131` | `413` | `PD_ERRCODE_ICON_TOO_LARGE` | `POST /databases/{db}/icons`: too many bytes, too many pixels, or too large a stored record |
 
-    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4030`, `4032` to `4038`, `4041`, `4042`, `4091` and `4131` are new. `4030` belongs to [Second Password Protection](entries.md#second-password-protection): treat it as "this item is read-only" -- show the item read-only, offer no action that sets a second password, do not ask for the second password again (that is `4031` alone) and do not retry. `4091` belongs to [Directory Binding](users.md#directory-binding) and is the first sub-code of the `409` family. `4035` belongs to [Delete Entry](entries.md#delete-entry), [Delete Folder](folders.md#delete-folder), [Update Entry](entries.md#update-entry), [Move Entry](entries.md#move-entry), [Update Folder](folders.md#update-folder), [Move Folder](folders.md#move-folder) and [Upload Document or Certificate Content](entries.md#upload-document-content). `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
+    *Changed in Server 20.0.0.* `4001` to `4008`, `4012`, `4013`, `4030`, `4032` to `4039`, `4041`, `4042`, `4091` and `4131` are new. `4039` belongs to [Client Protocol](authentication.md#client-protocol) and the [client channel](channel.md): update the app, or sign in again with a protocol the server speaks; do not retry the same request. `4030` belongs to [Second Password Protection](entries.md#second-password-protection): treat it as "this item is read-only" -- show the item read-only, offer no action that sets a second password, do not ask for the second password again (that is `4031` alone) and do not retry. `4091` belongs to [Directory Binding](users.md#directory-binding) and is the first sub-code of the `409` family. `4035` belongs to [Delete Entry](entries.md#delete-entry), [Delete Folder](folders.md#delete-folder), [Update Entry](entries.md#update-entry), [Move Entry](entries.md#move-entry), [Update Folder](folders.md#update-folder), [Move Folder](folders.md#move-folder) and [Upload Document or Certificate Content](entries.md#upload-document-content). `4007`, `4008`, `4034`, `4042` and `4131` belong to [Database Icons](icons.md#sub-codes); `4131` is the first sub-code of the `413` family. Earlier servers answer the two e-mail two-factor conditions with `401` and `error.code` `401`. `4001` to `4006` (see [One-Time Code Settings](entries.md#one-time-code-settings)) are the first sub-codes of the `400` family: a client that recognised a bad request by `error.code == 400` must widen that test to the HTTP status.
 
 ## Error Codes
 
@@ -179,7 +183,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 |:----:|------|-------------|
 | `400` | Bad Request | Invalid request body, missing required fields, or malformed parameters |
 | `401` | Unauthorized | Invalid credentials, expired token, or missing `Authorization` header |
-| `403` | Forbidden | Insufficient permissions, a disabled client platform, a client version below the server's minimum, a built-in administrator password that does not meet the account password policies, or (*Server 20.0.0 and later*) a change to a database that accepts no changes at the moment or to an item that the database keeps read-only, with `error.code: 403` - reading it still works; Android disabled uses `error.code: 4036`, an outdated client `error.code: 4037`, a built-in administrator password to be replaced `error.code: 4038`, a change of an item protected by a second password `error.code: 4030` (*Server 20.0.0 and later*) |
+| `403` | Forbidden | Insufficient permissions, a disabled client platform, a client version below the server's minimum, a built-in administrator password that does not meet the account password policies, or (*Server 20.0.0 and later*) a change to a database that accepts no changes at the moment or to an item that the database keeps read-only, with `error.code: 403` - reading it still works; Android disabled uses `error.code: 4036`, an outdated client `error.code: 4037`, a built-in administrator password to be replaced `error.code: 4038`, a change of an item protected by a second password `error.code: 4030`, a client protocol the server does not speak at sign-in, or a [client channel](channel.md) route of a client-scope session that declared none, `error.code: 4039` (*Server 20.0.0 and later*) |
 | `404` | Not Found | The requested resource (database, entry, folder, user, etc.) does not exist. *Server 20.0.0 and later:* also, in a client-scope session, every route under `/v2.0/databases/{db_id}` of a database an administrator has disabled (see [Disabled Databases](databases.md#disabled-databases)) |
 | `409` | Conflict | Resource conflict (e.g., duplicate name, concurrent modification); a directory identity another account holds uses `error.code: 4091` |
 | `410` | Gone | A `/v1.0/` path on Server 20.0.0 or later: REST API v1.0 was removed |
@@ -190,7 +194,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
 | `459` | TFA Not Activated | Two-factor authentication needs initial setup (the path of a QR code image, relative to the server's address, is returned in `error.message`) |
 | `460` | TFA Code Required | A valid 6-digit 2FA code, or a trusted-device token the server accepts, must be provided to complete login |
 | `500` | Internal Server Error | Unexpected server-side error |
-| `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0. *Server 20.0.0 and later:* also every request for the contents of a database that the server holds but has not converted to the new format, with the message "This database is not available on this server: it has not been converted to the new format."; the database is still listed by `GET /v2.0/databases`. A `501` keeps its own message. Match the status, not the message |
+| `501` | Not Implemented | Operation unsupported for this entry type; for example, one-time codes on `encrypted_file` or `certificate`. These entry types otherwise support REST access from Server 20.0.0. *Server 20.0.0 and later:* also every request for the contents of a database that the server holds but has not converted to the new format, with the message "This database is not available on this server: it has not been converted to the new format."; the database is still listed by `GET /v2.0/databases`. A `501` keeps its own message. Match the status, not the message. *Server 20.0.0 and later:* also a [client channel](channel.md#features-not-served) request this server does not serve, with `error.word` `not in this version`: hide the feature |
 | `503` | Service Unavailable | A [policy change](policies.md#update-server-policy) cannot be made at the moment and was not made, or cannot be previewed at the moment; the same request may succeed later. *Server 20.0.0 and later:* also a change to a database's contents that the server could not write to the database file, with `error.code: 503` and the message "The database cannot be changed at the moment. Try again later."; nothing was written. A change the database refuses for what the request asks (an id that exists already, a move the folder tree does not allow) answers `409` |
 
 ## HTTP Methods
@@ -456,6 +460,24 @@ All paths below are relative to the base URL (`/v2.0/`).
 |--------|------|-------------|:-----:|
 | `GET` | [`/groups`](groups.md#list-groups) | List all groups (compact) | Any |
 | `GET` | [`/groups/{id}`](groups.md#get-group) | Get group details (compact) | Any |
+
+### Client Channel
+
+*Server 20.0.0 and later.* The sync connection of the Password Depot apps; a session whose sign-in declared [`client.protocol`](authentication.md#client-protocol). See [Client Channel](channel.md).
+
+| Method | Path | Description | Scope |
+|--------|------|-------------|:-----:|
+| `POST` | [`/databases/{db}/session`](channel.md#open-a-database) | Open a database for sync, or close it | Client |
+| `GET` | [`/databases/{db}/sync`](channel.md#pull-changes) | Pull records and their changes | Client |
+| `POST` | [`/databases/{db}/sync`](channel.md#push-changes) | Push changes in batches | Client |
+| `GET` | [`/databases/{db}/manifest`](channel.md#read-the-manifest) | Every record the user may see, for a reconcile | Client |
+| `POST` | [`/databases/{db}/sync/fetch`](channel.md#fetch-records) | Records by id | Client |
+| `POST` | [`/databases/{db}/entries/{id}/editing`](channel.md#editing-hint) | Set, renew or end an editing hint | Client |
+| `GET` | [`/databases/{db}/entries/{id}/history`](channel.md#history-list) | A record's history list (also under `folders`) | Client |
+| `GET` | [`/databases/{db}/entries/{id}/history/{item}`](channel.md#history-items) | One old version (also under `folders`) | Client |
+| `POST` | [`/databases/{db}/entries/{id}/history`](channel.md#history-items) | Several old versions (also under `folders`) | Client |
+| `PUT` | [`/databases/{db}/blobs/{blob}`](channel.md#upload-a-chunk) | Upload one chunk of a document's content | Client |
+| `GET` | [`/databases/{db}/blobs/{blob}`](channel.md#download-chunks) | Download chunks of a document's content | Client |
 
 ### Databases (Admin)
 

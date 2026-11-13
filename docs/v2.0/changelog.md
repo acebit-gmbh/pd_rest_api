@@ -80,6 +80,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `PATCH` of an entry needs read permission as well as update permission
 - `PATCH` and move of an entry or a folder answer `403` / `4035` while another user is editing the item
 - a folder is deleted, or destroyed from the recycle bin, only when the caller may see and delete everything inside it (`403` otherwise), and Empty Recycle Bin leaves such a folder in the bin
+- `client.protocol` in the login or WebAuthn-begin body declares the protocol of the new client channel, the apps' sync connection under `/databases/{db}/`: the sign-in's answer then carries `client_protocol` and the account's `id`, a value that is not an integer from 1 to 65535 answers `400`, and a number the server does not speak `403` / `4039`
 
 ### Breaking Changes
 
@@ -199,6 +200,18 @@ A refused upload answers `400` / `4008` (`PD_ERRCODE_ICON_IMAGE`: `data` is not 
 `warning` replaces REST API v1.0's `warnmsg`, `warnlvl` and `warnverify`, as a value that is read-only now. v1.0's `serverrqrd` has no counterpart: a REST caller is always connected to the server. See [Conditional Access Warning](api-reference/entries.md#conditional-access-warning).
 
 **Client guidance:** take the warning from the entry's row, which carries it before the entry is fetched, and show it before opening the entry (the full `GET /databases/{db}/entries/{id}`), before `/otp`, before the `/content` download, before opening the entry's URL, and before any fill or sign-in - not before listing, search, move, delete or restore. Once per opening of the entry is sufficient; the Windows client asks at each access. Treat a `level` you do not recognise as `verify`. A missing key means a server older than 20.0.0: show nothing. `null` and a missing key mean the same, so no capability marker exists or is needed.
+
+#### Client Channel
+
+The client channel is the sync connection of the Password Depot apps: an app opens a database for sync, pulls its records and their changes, pushes its own changes in batches, reads a record's history on demand and moves a document's content in chunks. Its routes lie under `/databases/{db}/`, beside the per-object routes, which stay as they are for every caller.
+
+- **The sign-in declares the protocol.** `client.protocol`, an integer, in the `client` object of `POST /auth/login` and of `POST /auth/webauthn/begin`. This server speaks protocol `2`. The sign-in's last answer then carries `client_protocol` and the account's `id`, and the session token the claim `client_protocol`. A value that is not a JSON integer from 1 to 65535 answers `400` with `error.word` `malformed`; a number the server does not speak answers `403` with the new `error.code` `4039`, `error.word` `protocol not supported` and the numbers it speaks in `error.protocol`. Neither counts towards the IP lockout. A sign-in without `client.protocol` works as before.
+- **The routes.** `POST .../session` opens a database for sync, with the app's field key in `field_key`, or closes it; `GET .../sync` pulls since a cursor, in parts; `POST .../sync` pushes batches; `GET .../manifest` and `POST .../sync/fetch` reconcile; `POST .../entries/{id}/editing` sets an editing hint; `GET` and `POST` on `.../{entries|folders}/{id}/history`, and `GET .../history/{item}`, read a record's history; `PUT` and `GET` on `.../blobs/{blob}` upload and download a document's content in chunks.
+- **One state per REST session.** Each REST session opens its databases itself and is served one request at a time: a request waits for its turn at most 10 seconds (`503` `busy`), and a fifth request waiting answers `429` `rate limited`. Nothing is sent that the app did not ask for: an app learns of changes by pulling.
+- **Errors carry a word.** A refused channel request answers the published error object with `error.word`, a stable English word, and `error.retry_after` where it asks the app to wait. A client-scope session that declared no protocol gets `403` / `4039` `protocol required` on every channel route, and a session of the `admin` scope `403` `not permitted`, whether it declared one or not. A channel route reserved for a later feature answers `501` with the word `not in this version`: an app hides that feature.
+- **The database gate.** A channel request is admitted where the user holds the use permission on the database, the permission by which `GET /databases` lists it; otherwise `404` `not found`, one answer for every cause. A database in which nothing is permitted to the user opens empty.
+
+**Client guidance:** a web client or a script needs none of this: the per-object routes stay as they are. An app that syncs a database declares `client.protocol`, keeps what it receives in memory only, changes the database's contents by pushes alone, and reads an answer without `word` by its status. See [Client Channel](api-reference/channel.md) and [Client Protocol](api-reference/authentication.md#client-protocol).
 
 ### Authentication and Sessions
 
