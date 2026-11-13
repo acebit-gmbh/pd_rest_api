@@ -165,6 +165,7 @@ Send `field_key` once, as a member of the body's object, and write no `\u` escap
     "usage.print.allowed": true
   },
   "blobs": {"max_size": 67108864, "push": true},
+  "audit": {"audit.log_secret_access": true, "audit.reason.delete": false},
   "release_secret": null
 }
 ```
@@ -182,6 +183,7 @@ The example is indented for reading; the server writes the answer compactly, in 
 | `recycle_bin` | object | The recycle bin as it applies to the user: `max_items`, the number of top-level items the bin keeps, `0` to `10000` (`0`: a deletion does not stay in the bin, so delete as "delete permanently" does); `manage`, `true` where the user manages this database's bin and may reach every item in it, `false` where only the items the user deleted. Either way the user's permissions on an item's place decide too. An app that receives no `recycle_bin` offers no command of the bin |
 | `usage` | object | The usage policies as they apply to the user on this database, by setting id: `usage.autofill.channels` and `usage.export.channels` as arrays of words, `usage.print.allowed`, `usage.clipboard.allowed` and `usage.attachments.external_open` as booleans. **Fail closed:** a function whose setting the object does not hold, or holds in another type, is not allowed. Ignore a setting id or a word you do not know. The values hold until the database is opened again |
 | `blobs` | object | What the server serves of a document's content: `max_size`, the largest size an upload may declare, in bytes; `push`, `true` where a push may name new content and the database takes changes now. Without `blobs` send no chunk request and push no reference to content; where `push` is `false` upload no chunk and push no reference to content |
+| `audit` | object | The database's audit settings by setting id, as booleans: `audit.log_secret_access`, `true` where an administrator asks that each use of a password or another protected value in this database be recorded; `audit.reason.delete`, `true` where an administrator asks for a reason with each deletion of an entry. **Fail closed:** where the server cannot read a database's audit settings it answers `true` for both. For information: no request on this connection depends on them. Ignore a setting id you do not know |
 | `release_secret` | null | Reserved; always `null` |
 
 **Features added later** are announced by a member of this answer: where the member is absent or `null`, the app offers nothing of that feature and sends none of its requests. `recycle_bin` and `blobs` are such members. A member shapes what an app offers, never what the server allows: the server judges every request as ever.

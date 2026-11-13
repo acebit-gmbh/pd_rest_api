@@ -10957,6 +10957,19 @@ components:
               format: int64
             push:
               type: boolean
+        audit:
+          type: object
+          description: |
+            The database's audit settings by setting id, as booleans; for
+            information only. Where the server cannot read a database's audit
+            settings it answers `true` for both
+          properties:
+            audit.log_secret_access:
+              type: boolean
+            audit.reason.delete:
+              type: boolean
+          additionalProperties:
+            type: boolean
         release_secret:
           type: string
           nullable: true
