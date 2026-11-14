@@ -5781,6 +5781,125 @@ paths:
         "503":
           $ref: "#/components/responses/ChannelUnavailable"
 
+  /databases/{db}/lease:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+      - $ref: "#/components/parameters/DatabaseIdPath"
+    post:
+      operationId: channelLease
+      tags:
+        - Client Channel
+      summary: Ask for, or renew, the lease of an offline copy
+      description: |
+        Server 20.0.0 and later, where the session answer carries `offline`.
+        Issues the lease of an offline copy of the database to the `writer`
+        id the database was opened with, or renews the one it holds: the
+        lease says until when the copy may be opened offline, which ways of
+        unlocking it was issued for, which records it may not use offline,
+        and it carries the policy bundle the copy applies while no session
+        is open. The body is at most 4096 bytes and states every way the
+        copy can be unlocked; a body above that bound sent to this route is
+        refused before it is read, with `413` and no `word`. Each issue,
+        each renewal and each refusal by a `403` word is recorded in the
+        audit trail. A server that serves no offline copies answers `501`
+        `not in this version`; a mirror server refuses the request with
+        `403` before the token, as every POST. See Client Channel in the
+        API reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelLeaseRequest"
+      responses:
+        "200":
+          description: The lease, issued or renewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelLeaseResponse"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "501":
+          $ref: "#/components/responses/ChannelNotInThisVersion"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
+  /audit/outbox:
+    parameters:
+      - $ref: "#/components/parameters/ClientIdentityHeader"
+    post:
+      operationId: channelReportOfflineUse
+      tags:
+        - Client Channel
+      summary: Report what was looked at, printed or exported in an offline copy
+      description: |
+        Server 20.0.0 and later, where the session answer carries `offline`.
+        Reports what was done in an offline copy, so that the server records
+        it as it records such a use made online: the database is named in
+        the body as `db`, since this route names none, and the database must
+        be open for sync in this REST session. The body is at most 262144
+        bytes; a body above that bound sent to this route is refused before
+        it is read, with `413` and no `word`. Each event is answered
+        `recorded`, `known` or `malformed`, in the order of the request and
+        with the `writer` and `counter` it was sent with; where the server
+        could not record the request it answers `503` `not served` and the
+        app sends every event of it again. A server that serves no offline
+        copies answers `501` `not in this version`; a mirror server refuses
+        the request with `403` before the token, as every POST, and records
+        nothing. See Client Channel in the API reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelOutboxRequest"
+      responses:
+        "200":
+          description: One entry per event, in the order of the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelOutboxResponse"
+        "400":
+          $ref: "#/components/responses/ChannelBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ChannelForbidden"
+        "404":
+          $ref: "#/components/responses/ChannelNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/ChannelConflict"
+        "413":
+          $ref: "#/components/responses/ChannelPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/ChannelTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ChannelFailed"
+        "501":
+          $ref: "#/components/responses/ChannelNotInThisVersion"
+        "503":
+          $ref: "#/components/responses/ChannelUnavailable"
+
 # =============================================================================
 # Components
 # =============================================================================
@@ -6478,10 +6597,21 @@ components:
     ChannelUnavailable:
       description: |
         `error.word` `not served` (the database or its history cannot be
-        served at the moment, or the server's disk for uploads is nearly
-        full) or `busy` (the server does not take requests at the moment, a
-        heavy task holds the database, or the request waited 10 seconds for
-        its turn). Back off and try again.
+        served at the moment, the server's disk for uploads is nearly full,
+        or no lease of an offline copy can be issued now) or `busy` (the
+        server does not take requests at the moment, a heavy task holds the
+        database, or the request waited 10 seconds for its turn). Back off
+        and try again.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChannelErrorResponse"
+
+    ChannelNotInThisVersion:
+      description: |
+        `error.word` `not in this version`: this server does not serve the
+        request. The app hides the feature and sends it no more to this
+        server, until a session answer announces it.
       content:
         application/json:
           schema:
@@ -10933,6 +11063,15 @@ components:
           type: integer
           format: int64
           description: The floor the server holds for this `writer` id; absent where it holds nothing for it
+        top:
+          type: integer
+          format: int64
+          description: |
+            The highest change counter the server holds for this `writer`
+            id; absent where it holds nothing for it, and absent where the
+            answer carries no `offline`. An app that keeps an offline copy
+            compares it with its copy's own highest counter before its
+            first push of the session
         recycle_bin:
           type: object
           properties:
@@ -10970,6 +11109,53 @@ components:
               type: boolean
           additionalProperties:
             type: boolean
+        offline:
+          type: object
+          nullable: true
+          description: |
+            The offline copy of this database as it applies to the user,
+            present where the server serves offline copies and `null` where
+            it cannot say at the moment; absent on a server that serves
+            none and on a mirror server. Read an `offline` that is not an
+            object, that lacks one of its members or whose member is not of
+            its type as absent, and keep no copy
+          properties:
+            allowed:
+              type: boolean
+              description: The user may keep an offline copy of this database
+            max_age:
+              type: integer
+              format: int64
+              description: How long a copy stays usable offline, in seconds
+            unlock:
+              type: array
+              description: The ways a copy may be unlocked
+              items:
+                type: string
+                enum: [fido2-prf, os-protected, password]
+            second_factor:
+              type: boolean
+              description: A copy must be unlocked by a password and a second factor together
+            sign_in:
+              type: string
+              enum: [standard, windows, azure, oidc]
+              description: |
+                The kind of the account, by which a copy may have the
+                Windows account as its only way in; never for `standard`.
+                A word the app does not know reads as `standard`
+            lease:
+              type: string
+              enum: [live, revoked]
+              description: |
+                The state of this `writer` id's copy at the server; absent
+                where the server holds no copy of it
+        server:
+          type: string
+          pattern: "^srv:[0-9a-f]{32}$"
+          description: |
+            The server's own id, the same text as the `server` of a lease
+            and of the policy bundle; written only in an answer that
+            carries an `offline` object
         release_secret:
           type: string
           nullable: true
@@ -11125,6 +11311,14 @@ components:
         floor:
           type: integer
           format: int64
+        offline_since:
+          type: integer
+          format: int64
+          description: |
+            Only where the session answer carried `offline`: the time of
+            the last completed pull before the work this push carries was
+            done with no session open, in milliseconds. The server notes
+            the work in its audit trail and decides nothing by it
         batches:
           type: array
           maxItems: 64
@@ -11401,3 +11595,247 @@ components:
           items:
             type: string
             format: uuid
+
+    ChannelLeaseRequest:
+      type: object
+      description: |
+        The request of a lease of an offline copy; at most 4096 bytes. A
+        member the route does not know is ignored, in the body and in
+        `device`.
+      required:
+        - slots
+        - device
+      properties:
+        slots:
+          type: array
+          minItems: 1
+          maxItems: 8
+          description: |
+            Every way the copy can be unlocked, each way an array of its
+            words in the order `password`, `fido2-prf`, `os-protected`:
+            ["os-protected"], ["password"], ["fido2-prf"],
+            ["password", "fido2-prf"] or ["password", "os-protected"].
+            Another word, another order, a word twice in one way or three
+            factors answers `400` `malformed`
+          items:
+            type: array
+            minItems: 1
+            maxItems: 2
+            items:
+              type: string
+              enum: [password, fido2-prf, os-protected]
+        device:
+          type: object
+          required:
+            - label
+            - platform
+          properties:
+            label:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: The computer's name as the user sees it
+            platform:
+              type: string
+              enum: [windows, android, ios, macos, linux]
+        replaces:
+          type: string
+          description: |
+            Only in the one request that follows a new `writer` id drawn
+            over an existing copy: the `id` of the lease that copy held, 16
+            bytes in base64url
+
+    ChannelLeaseResponse:
+      type: object
+      description: |
+        The lease, issued or renewed. Every later member of this answer
+        stands beside `lease`, never inside it.
+      properties:
+        lease:
+          type: object
+          description: The members are written in this order
+          properties:
+            id:
+              type: string
+              description: The lease's id, 16 bytes in base64url; a renewal of the same copy keeps it
+            server:
+              type: string
+              pattern: "^srv:[0-9a-f]{32}$"
+            database:
+              type: string
+              format: uuid
+            principal:
+              type: string
+              description: "`u:` and the account's id: the copy opens for that account alone"
+            writer:
+              type: string
+              pattern: "^[0-9a-f]{16}$"
+            incarnation:
+              type: string
+            generation:
+              type: integer
+              format: int64
+            issued:
+              type: integer
+              format: int64
+              description: The server's time at this issue or renewal, in milliseconds
+            expires:
+              type: integer
+              format: int64
+              description: |
+                The end of the lease, in milliseconds: the earliest of
+                `issued` plus the access limit that applies to the user and
+                the earliest moment ahead at which the user's access can
+                narrow
+            slots:
+              type: array
+              description: The `slots` of the request, as stated
+              items:
+                type: array
+                items:
+                  type: string
+            left_out:
+              type: array
+              description: |
+                The ids of the records the copy may not use while no
+                session is open; absent where there is none
+              items:
+                type: string
+                format: uuid
+            bundle:
+              type: object
+              description: |
+                The policy bundle for this user, issued with the lease:
+                what the copy applies while no session is open. Keep it
+                exactly as sent
+              additionalProperties: true
+
+    ChannelOutboxRequest:
+      type: object
+      description: |
+        What was looked at, printed or exported in an offline copy; at most
+        262144 bytes. A member a list does not name is ignored; a member of
+        a list is either absent or of its type, and `null` is not an absent
+        member.
+      required:
+        - db
+        - events
+      properties:
+        db:
+          type: string
+          format: uuid
+          description: |
+            The database the events belong to, compared without regard to
+            letter case; a body without it answers `400` `malformed`
+            before the database is looked up
+        events:
+          type: array
+          minItems: 1
+          maxItems: 256
+          description: |
+            In ascending order of `writer`, by its text, and then
+            `counter`, each pair once; more events answer `413` `too
+            large`, another order or a pair twice `400` `malformed`, and
+            nothing of such a request is recorded
+          items:
+            type: object
+            required:
+              - writer
+              - counter
+              - event
+              - channel
+              - records
+            properties:
+              writer:
+                type: string
+                pattern: "^[0-9a-f]{16}$"
+              counter:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 9007199254740991
+                description: |
+                  That `writer` id's own count of the events it reported,
+                  counted apart from its change counter; with `writer` the
+                  event's id, which the answer repeats
+              event:
+                type: string
+                enum: [reveal, copy, print, export]
+              channel:
+                type: string
+                enum: [show, auto_type, browser, internal_browser, mobile_autofill, clipboard, print, file, save_as, copy_to_database, sync]
+                description: |
+                  How it was done: for `reveal` `show`, `auto_type`,
+                  `browser`, `internal_browser` or `mobile_autofill`; for
+                  `copy` `clipboard`; for `print` `print`; for `export`
+                  `file`, `save_as`, `copy_to_database` or `sync`
+              records:
+                type: array
+                minItems: 1
+                maxItems: 256
+                description: |
+                  The records it was done to, each once; exactly one for a
+                  `reveal` and a `copy`
+                items:
+                  type: string
+                  format: uuid
+              field:
+                type: array
+                minItems: 2
+                maxItems: 2
+                description: |
+                  For a `reveal` and a `copy`: the value's group id and
+                  member name, 1 to 128 printable ASCII characters each.
+                  Absent for a `print` and an `export`
+                items:
+                  type: string
+              vid:
+                type: string
+                description: |
+                  For a `reveal` and a `copy`: the id of that value's
+                  version as the record holds it, 16 bytes in base64url
+              time:
+                type: integer
+                format: int64
+                minimum: 1
+                maximum: 253402300799999
+                description: |
+                  The copy's own time of the event, in milliseconds;
+                  absent for an event made while the session was open
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 512
+                description: The reason the user gave, where the app asked for one
+              lease:
+                type: string
+                description: |
+                  The `id` of the lease in force when it happened; absent
+                  where there was none
+
+    ChannelOutboxResponse:
+      type: object
+      description: |
+        One entry per event, in the order of the request. An `outcome` the
+        app does not know is a wait for that event.
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              writer:
+                type: string
+                description: As the request sent it
+              counter:
+                type: integer
+                format: int64
+                description: As the request sent it
+              outcome:
+                type: string
+                enum: [recorded, known, malformed]
+                description: |
+                  `recorded`, the server has recorded this event; `known`,
+                  it had already recorded it; `malformed`, the event
+                  cannot be read and is not recorded. The app drops every
+                  answered event

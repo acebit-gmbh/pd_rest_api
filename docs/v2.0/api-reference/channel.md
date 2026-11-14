@@ -19,6 +19,8 @@ The per-object routes (folders, entries, search and the others) stay as they are
 | [`GET /v2.0/databases/{db}/entries/{id}/history/{item}`](#history) and [`POST /v2.0/databases/{db}/entries/{id}/history`](#history), and the same under `folders` | Old versions of a record, with their values |
 | [`PUT /v2.0/databases/{db}/blobs/{blob}`](#upload-a-chunk) | Upload one chunk of a document's content |
 | [`GET /v2.0/databases/{db}/blobs/{blob}`](#download-chunks) | Download the chunks of a document's content |
+| [`POST /v2.0/databases/{db}/lease`](#ask-for-a-lease) | Ask for, or renew, the lease of an offline copy of the database |
+| [`POST /v2.0/audit/outbox`](#report-what-was-done-in-a-copy) | Report what was looked at, printed or exported in an offline copy |
 | [`GET /v2.0/databases`](databases.md#list-databases) | The databases the user may open: the channel uses the published list |
 
 !!! note "Records"
@@ -156,6 +158,7 @@ Send `field_key` once, as a member of the body's object, and write no `\u` escap
   "db_id": "3f2a9c1e-5b7d-4e8f-a012-3456789abcde",
   "root": "9b0e4d6a-2c1f-4e3b-8a5d-7f6e5d4c3b2a",
   "floor": 36,
+  "top": 37,
   "recycle_bin": {"max_items": 1000, "manage": false},
   "usage": {
     "usage.attachments.external_open": true,
@@ -166,6 +169,9 @@ Send `field_key` once, as a member of the body's object, and write no `\u` escap
   },
   "blobs": {"max_size": 67108864, "push": true},
   "audit": {"audit.log_secret_access": true, "audit.reason.delete": false},
+  "offline": {"allowed": true, "max_age": 604800, "unlock": ["fido2-prf", "os-protected", "password"],
+              "second_factor": false, "sign_in": "standard", "lease": "live"},
+  "server": "srv:<32 lower-case hexadecimal digits>",
   "release_secret": null
 }
 ```
@@ -180,10 +186,13 @@ The example is indented for reading; the server writes the answer compactly, in 
 | `db_id` | string | The database's own id, in lower case. Compare it with the `{db}` you opened before the first pull; where they differ, open nothing |
 | `root` | string | The id of the database's root record: every top-level folder and entry names it as its parent, also where the user sees no record yet |
 | `floor` | integer | The floor the server holds for this `writer` id, as a push answer names it (see [Push Changes](#push-changes)); absent where the server holds nothing for that id yet. For diagnostics only |
+| `top` | integer | The highest change counter the server holds for this `writer` id; absent where the server holds nothing for that id yet, and absent where the answer carries no `offline`. An app that keeps an [offline copy](#offline-copies) compares it with the highest counter of its own copy before its first push of the session: a `top` above it means that the copy has gone back in time -- a restored disk, a snapshot of a virtual machine, a copied profile -- and the app opens the database again with a new `writer` id and asks for a lease that names the old one in `replaces`, before it pushes anything |
 | `recycle_bin` | object | The recycle bin as it applies to the user: `max_items`, the number of top-level items the bin keeps, `0` to `10000` (`0`: a deletion does not stay in the bin, so delete as "delete permanently" does); `manage`, `true` where the user manages this database's bin and may reach every item in it, `false` where only the items the user deleted. Either way the user's permissions on an item's place decide too. An app that receives no `recycle_bin` offers no command of the bin |
 | `usage` | object | The usage policies as they apply to the user on this database, by setting id: `usage.autofill.channels` and `usage.export.channels` as arrays of words, `usage.print.allowed`, `usage.clipboard.allowed` and `usage.attachments.external_open` as booleans. **Fail closed:** a function whose setting the object does not hold, or holds in another type, is not allowed. Ignore a setting id or a word you do not know. The values hold until the database is opened again |
 | `blobs` | object | What the server serves of a document's content: `max_size`, the largest size an upload may declare, in bytes; `push`, `true` where a push may name new content and the database takes changes now. Without `blobs` send no chunk request and push no reference to content; where `push` is `false` upload no chunk and push no reference to content |
 | `audit` | object | The database's audit settings by setting id, as booleans: `audit.log_secret_access`, `true` where an administrator asks that each use of a password or another protected value in this database be recorded; `audit.reason.delete`, `true` where an administrator asks for a reason with each deletion of an entry. **Fail closed:** where the server cannot read a database's audit settings it answers `true` for both. For information: no request on this connection depends on them. Ignore a setting id you do not know |
+| `offline` | object | Present where the server serves [offline copies](#offline-copies), `null` where it cannot say at the moment; absent on a server that serves none and on a mirror server. It announces the two routes of that section and `offline_since` on a push, and its members say what applies to the user on this database: `allowed`, a boolean, `true` where the user may keep a copy; `max_age`, how long a copy stays usable offline, in seconds; `unlock`, the ways a copy may be unlocked, as an array of the words `fido2-prf`, `os-protected` and `password`; `second_factor`, a boolean, `true` where a copy must be unlocked by a password and a second factor together; `sign_in`, the kind of the account -- `standard`, `windows`, `azure` or `oidc` --, by which a copy may have the Windows account as its only way in (never for `standard`); `lease`, the state of this `writer` id's copy at the server, `live` or `revoked`, absent where the server holds no copy of it. **Fail closed:** read an `offline` that is not an object, that lacks one of these members or whose member is not of its type as absent, and keep no copy. Ignore a member, and a word of `unlock`, that you do not know; a `sign_in` word you do not know reads as `standard`, and a `lease` word you do not know reads as `offline` absent |
+| `server` | string | The server's own id, `srv:` and 32 lower-case hexadecimal digits: the same text as the `server` of a lease and of the policy bundle. Written only in an answer that carries an `offline` object, and read in that form alone -- an announced `offline` without it reads as absent. A copy needs it before its first lease, to tell the servers apart whose sign-ins the device notes |
 | `release_secret` | null | Reserved; always `null` |
 
 **Features added later** are announced by a member of this answer: where the member is absent or `null`, the app offers nothing of that feature and sends none of its requests. `recycle_bin` and `blobs` are such members. A member shapes what an app offers, never what the server allows: the server judges every request as ever.
@@ -408,6 +417,7 @@ Sends the app's pending changes as batches. Each batch is applied whole or not a
 | `level` | integer | The record-format level the app is built on: `1` |
 | `writer` | string | The `writer` id the database was opened with; another one answers `409` with the word `writer not declared` |
 | `floor` | integer | The counter just below the app's oldest pending change |
+| `offline_since` | integer | Optional, and only where the answer of [Open a Database](#open-a-database) carried `offline`: the time of the last completed pull before the work this push carries was done with no session open, in milliseconds. Send it with the first push of work done offline (see [Offline Copies](#offline-copies)); the server notes the work in its audit trail and decides nothing by it |
 | `batches` | array | At most 64 batches. Each has an `id` of the app's choosing, unique in the push and echoed in the answer, its `units` and, where it moves a folder to the recycle bin or destroys one, the `tokens` of the records below it |
 
 A unit's `kind` is `record` (a change of an existing record, with `sparse: true`), `create` or `purge` (a record destroyed from the recycle bin); its `id`, `vv`, `level`, `body` and `token` follow the record format. **A pushed group is the whole version:** what an app leaves out of it, it removes, so "ignore what you do not know" holds for the members of messages, not for a record's `body` -- an app keeps what it does not know inside a group it rewrites, or does not edit that record.
@@ -457,7 +467,7 @@ Push a deferred batch again at the [backoff](#words). A push with more than 64 b
 
 ### Errors
 
-`400` `malformed`, `400` `protocol mismatch`, `404` `not found`, `409` `no session`, `409` `writer not declared`, `409` `writer of another principal`, `409` `cursor of another database`, `413` `too large`, `500` `failed`, `503` `not served`, `503` `busy`.
+`400` `malformed`, `400` `protocol mismatch`, `403` `revoked` (an administrator revoked this offline copy: nothing is applied; see [Offline Copies](#offline-copies)), `404` `not found`, `409` `no session`, `409` `writer not declared`, `409` `writer of another principal`, `409` `cursor of another database`, `413` `too large`, `500` `failed`, `503` `not served`, `503` `busy`.
 
 ---
 
@@ -645,6 +655,245 @@ Errors: `400` `malformed` (a parameter missing, twice or not of its form), `404`
 
 ---
 
+## Offline Copies
+
+*Server 20.0.0 and later, where the answer of [Open a Database](#open-a-database) carries `offline`.* An offline copy
+is the server database kept on the device, so that the user can go on working while the server cannot be reached. The
+server decides who may keep one, how long it stays usable, how it must be unlocked and which records it may not use
+offline; it says so in `offline` and in the lease it issues. A server that serves no offline copies carries no
+`offline` in that answer and answers `501` with the word `not in this version` on the requests of this section.
+
+**The rule for an app.** Keep a copy only if you do both: ask for a lease, stating every way your copy can be
+unlocked, and report every reveal, copy, print and export made in the copy as described below. An app that does not do
+both ignores `offline`, `top` and `server`, sends no request of this section, and keeps what it holds of a server
+database in memory alone, as every app of the channel does without `offline`.
+
+**What an app that keeps a copy does.** After a completed pull it asks for a lease; it keeps the lease's `bundle` as
+it is and applies it while no session is open; it renews the lease before half its period has passed, and once it has
+expired for a lease the server cut short; it sends `offline_since` with the first push of the work done offline; it
+reports what was done in the copy at the next connection, before it pushes and pulls again. `offline.allowed` `false`
+and `offline.lease` `revoked` are the two answers that remove a copy: the app sends what the copy still holds, tells
+the user and removes it. A copy opens offline only for the user it was made for.
+
+### Ask for a Lease
+
+```
+POST /v2.0/databases/{db}/lease
+```
+
+Asks for the lease of an offline copy of `{db}`, or renews the one this `writer` id holds. It needs the database
+opened in this REST session.
+
+#### Request Body
+
+`Content-Type: application/json`, at most 4096 bytes.
+
+```json
+{
+  "slots": [["password", "fido2-prf"], ["password", "os-protected"]],
+  "device": {"label": "LAPTOP-0042", "platform": "windows"},
+  "replaces": "Mq3c8vYxR0e1n2Zp4TqLwA"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|:--------:|-------------|
+| `slots` | array | Yes | Every way the copy can be unlocked, at the first lease and at every renewal: an array of 1 to 8 arrays, each holding the words of one way in the order `password`, `fido2-prf`, `os-protected` -- one of `["os-protected"]` (the Windows account alone), `["password"]`, `["fido2-prf"]`, `["password", "fido2-prf"]` and `["password", "os-protected"]`. Every way of two factors holds `password`; the account's sign-in password is never one of them. A copy may hold more ways than it states -- two security keys are one way -- and a way stated twice is not refused. Another word, another order, a word twice in one way, three factors, or a missing `slots`: `400` `malformed`. State what your copy really does: the server judges the ways by this statement |
+| `device` | object | Yes | `label`, the computer's name as the user sees it, 1 to 64 printable characters; `platform`, one of `windows`, `android`, `ios`, `macos`, `linux`. The server shows both in its list of offline copies and decides nothing by them |
+| `replaces` | string | No | Only in the one lease request that follows a new `writer` id drawn over an existing copy (see `top` under [Open a Database](#open-a-database)): the `id` of the lease that copy held, 16 bytes in base64url. The old copy's entry at the server is then closed and linked to the new lease. A `replaces` that names a revoked copy of the same user and database answers `403` `revoked` |
+
+A member the route does not know is ignored, in the body and in `device`. The database is the route's, the `writer`
+id the one the database was opened with.
+
+#### Response
+
+`200 OK`:
+
+```json
+{
+  "lease": {
+    "id": "Mq3c8vYxR0e1n2Zp4TqLwA",
+    "server": "srv:<32 lower-case hexadecimal digits>",
+    "database": "3f2a9c1e-5b7d-4e8f-a012-3456789abcde",
+    "principal": "u:A11CE000-0000-4000-8000-000000000001",
+    "writer": "a1b2c3d4e5f60718",
+    "incarnation": "q0uL0n3fZ8kq3m7c1yVb2A",
+    "generation": 5120,
+    "issued": 1790726400000,
+    "expires": 1791331200000,
+    "slots": [["password", "fido2-prf"], ["password", "os-protected"]],
+    "left_out": ["6f1c3a2e-0d4b-4c71-9a2e-5b8f0c1d2e3f"],
+    "bundle": {"type": "pd-policy-bundle", "v": 1, "...": "..."}
+  }
+}
+```
+
+The example is indented for reading; the server writes the answer compactly, in the order shown. Every later member
+of this answer stands beside `lease`, never inside it.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | The lease's id, 16 bytes in base64url: the copy's entry at the server, which a `replaces` names. A renewal of the same copy keeps it |
+| `server` | string | The server's own id, the same text as `server` under [Open a Database](#open-a-database) |
+| `database` | string | The database's own id, in lower case, as `db_id` there |
+| `principal` | string | `u:` and the account's `id`: the copy opens for that account alone |
+| `writer` | string | The `writer` id the database was opened with |
+| `incarnation`, `generation` | string, integer | The database's store and change number at this issue, as the session answer carries them. A copy whose lease names an older `incarnation` still opens offline until the lease ends; the app asks for a new lease after it has reconciled |
+| `issued` | integer | The server's time at this issue or renewal, in milliseconds: the one server time the app receives, and what `expires` is counted from. Keep it as the copy's time of last contact |
+| `expires` | integer | The end of the lease, in milliseconds: the earliest of `issued` plus the access limit that applies to the user and the earliest moment ahead at which the user's access to the database can narrow. It may be minutes away. An open copy does not lock when it passes `expires` while the session is open; offline, the copy is not opened after it |
+| `slots` | array | The `slots` of the request, as stated: what the lease was issued for |
+| `left_out` | array | The ids of the records the copy may not use while no session is open: entries an administrator marked as needing the server, and folders whose offline use is not allowed -- a folder stands for everything below it. Absent where there is none |
+| `bundle` | object | The policy bundle for this user, issued with the lease: what the copy applies while no session is open, the ways to unlock it, the access limit and the database's audit settings among it. Keep it exactly as sent; its own end is `expires`. The usage policies stay those of the last session answer |
+
+#### When to Ask
+
+- Right after the database was opened with a `writer` id drawn over an existing copy, with `replaces`, and before
+  anything is pushed or applied to that copy: wait for this one answer.
+- After a completed pull, never inside one, where the copy holds no lease; where its lease names another
+  `incarnation`; where less than half of the lease's period is left; where `offline` resolves to other unlock ways,
+  another second-factor requirement or another access limit than the lease's `bundle`; where the device's clock reads
+  more than 10 minutes behind the copy's last contact with the server (once per session); or where `offline` carries
+  no `lease` although the copy holds one.
+- Check these at every completed pull, at half of the held lease's period, right after its `expires`, and once an hour
+  while the app is connected. Keep at most one request in flight per database and send none sooner than a minute
+  after the last answer. A lease the server cut short -- one whose `expires` is earlier than the access limit would
+  make it -- is renewed once its `expires` has passed, not before. An answer of `400` `malformed` or `413`
+  `too large` is a defect of the app: do not send that request again in this session.
+
+Each issue, each renewal and each refusal by a `403` word is recorded in the server's audit trail.
+
+#### Errors
+
+| Status | Word | When |
+|--------|------|------|
+| `400` | `malformed` | The body, `slots`, `device` or `replaces` as above |
+| `403` | `revoked` | An administrator revoked this copy, or `replaces` names a revoked one: remove the copy without pushing, after reporting what it holds. The same computer may make a new copy at the user's next online open |
+| `403` | `offline not allowed` | The user may keep no copy of this database: report what the copy holds, tell the user and remove it |
+| `403` | `second factor required` | A second factor is required and no stated way holds one beside `password` |
+| `403` | `unlock method not allowed` | A stated way is not allowed for this user, or the Windows account alone was stated for an account that may not use it |
+| `404` | `not found` | The [database gate](#the-database-gate) |
+| `409` | `no session` | The database is not opened in this REST session |
+| `413` | `too large` | A body above 4096 bytes. Sent to `/v2.0/databases/{db}/lease`, with or without one trailing slash, such a body is refused before it is read, with `413` and no `word` |
+| `429` | `rate limited` | The rate below; nothing is recorded |
+| `500` | `failed` | A failure on the server |
+| `501` | `not in this version` | This server serves no offline copies |
+| `503` | `not served` | No lease at the moment -- the server cannot say what applies to the user, its clock is in question, the copy would pass the number of copies the user may hold of this database, or the lease could not be written. A wait: the copy keeps the lease it holds |
+| `503` | `busy` | The server does not take requests at the moment, or the request waited out its turn |
+
+On a [mirror server](overview.md#http-status-codes) this request is refused with `403` before the token, as every
+`POST` is: keep the copy and ask the principal server, which holds the copies.
+
+### Report What Was Done in a Copy
+
+```
+POST /v2.0/audit/outbox
+```
+
+Reports what was looked at, printed or exported in an offline copy, so that the server records it as it records such
+a use made online. The route names no database: the body carries the database's id as `db`.
+It needs the database opened in this REST session.
+
+#### Request Body
+
+`Content-Type: application/json`, at most 262144 bytes (256 KiB).
+
+```json
+{
+  "db": "3f2a9c1e-5b7d-4e8f-a012-3456789abcde",
+  "events": [
+    {"writer": "a1b2c3d4e5f60718", "counter": 17, "event": "reveal", "channel": "show",
+     "records": ["6f1c3a2e-0d4b-4c71-9a2e-5b8f0c1d2e3f"], "field": ["credential", "pass"],
+     "vid": "<16 bytes in base64url>", "time": 1790812345678,
+     "reason": "Router reset for the branch office", "lease": "Mq3c8vYxR0e1n2Zp4TqLwA"}
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|:--------:|-------------|
+| `db` | string | Yes | The database's id: 36 characters, hexadecimal digits of either case and the four hyphens in their places, no braces and no blanks. A body without such a `db` answers `400` `malformed` before the database is looked up |
+| `events` | array | Yes | 1 to 256 events, in ascending order of `writer` -- by its text -- and then `counter`, each pair once. More events answer `413` `too large`, counted before any event is read. `400` `malformed`: `events` absent, no array or empty, an element that is not an object or that has no `writer` string or no `counter` integer, another order, or a pair twice. Nothing of such a request is recorded |
+
+Every event's members:
+
+| Field | Type | Required | Description |
+|-------|------|:--------:|-------------|
+| `writer` | string | Yes | A `writer` id of the copy: 16 lower-case hexadecimal digits |
+| `counter` | integer | Yes | That `writer` id's own count of the events it reported, from `1` to `9007199254740991`, counted apart from its change counter. `writer` and `counter` are the event's id: the answer repeats both as they were sent |
+| `event` | string | Yes | `reveal`, `copy`, `print` or `export` |
+| `channel` | string | Yes | How it was done: for `reveal` one of `show`, `auto_type`, `browser`, `internal_browser`, `mobile_autofill`; for `copy` `clipboard`; for `print` `print`; for `export` one of `file`, `save_as`, `copy_to_database`, `sync` |
+| `records` | array | Yes | The ids of the records it was done to, 1 to 256, each in lower case with its four hyphens, each once; exactly one for a `reveal` and a `copy`. Something done to more records is one event per 256 records |
+| `field` | array | For `reveal` and `copy` | The value's group id and member name, two strings of 1 to 128 printable ASCII characters. Absent for `print` and `export` |
+| `vid` | string | For `reveal` and `copy` | The id of that value's version as the record holds it, 16 bytes in base64url. Absent for `print` and `export` |
+| `time` | integer | No | The copy's own time of the event, in milliseconds; absent for an event made while the session was open |
+| `reason` | string | No | The reason the user gave, where your app asked for one, 1 to 512 printable characters. The server shows it as text |
+| `lease` | string | No | The `id` of the lease in force when it happened; absent where there was none |
+
+Write the body in JSON with any escape; a member name holds the characters `a` to `z`, `0` to `9`, `_`, `.`, `:` and
+`-` alone, no member name stands twice, every number is a whole number, and a member of the lists above is either
+absent or of its type -- `null` is not an absent member. A body against any of this answers `400` `malformed`. A
+member the server does not know it ignores.
+
+#### Response
+
+`200 OK`, one entry per event, in the order of the request, each with the `writer` and the `counter` the request sent:
+
+```json
+{"events": [{"writer": "a1b2c3d4e5f60718", "counter": 17, "outcome": "recorded"}]}
+```
+
+| `outcome` | Meaning | What the app does |
+|-----------|---------|-------------------|
+| `recorded` | The server has recorded this event | Drop it |
+| `known` | The server had already recorded this event | Drop it |
+| `malformed` | The event cannot be read, and is not recorded | Drop it: a defect of the app |
+
+Drop every answered event in one step, a `malformed` one included. An `outcome` you do not know is a wait for that
+event: keep it and send it again at the [backoff](#words).
+
+#### What to Report and When
+
+- One event for each print and each export made in the copy while no session was open, and, where the database's
+  `audit.log_secret_access` applies to the record, one for each reveal and each copy of a value. Where your app asks
+  the user for a reason, as it does online, send it in `reason`.
+- An event made while a session is open, behind an announced `offline`, is sent at once.
+- Report before you push and pull again, and before you remove a revoked copy or a copy that is no longer allowed.
+  A wait on this route holds back neither the pull nor a lease nor a later push.
+- Keep every event until it is answered. There is no bound on what a copy holds back; the user's confirmed removal of
+  the copy is the only thing that drops unanswered events, and the notice of such a removal says how many are left.
+- Where the server could not record the request, it answers `503` `not served`: keep every event of the request and
+  send it again at the backoff.
+
+#### Errors
+
+`400` `malformed`, `404` `not found` (the [gate](#the-database-gate)), `409` `no session`, `413` `too large` (more
+than 256 events, or a body above 256 KiB -- sent to `/v2.0/audit/outbox` or `/v2.0/audit/outbox/` such a body is
+refused before it is read, with `413` and no `word`), `429` `rate limited` (the rates below, nothing recorded),
+`500` `failed`, `501` `not in this version`, `503` `not served` (the server could not record the request: keep
+every event and send it again), `503` `busy`. On a [mirror server](overview.md#http-status-codes) this request is
+refused with `403` before the token, as every `POST` is, and nothing is recorded there: send it to the principal
+server.
+
+### Records in the Audit Trail
+
+The audit trail (`GET /admin/audit`) holds the records an offline copy writes, with the signed-in account as the
+actor and the database as the target; on a REST connection the channel is `rest`:
+
+| Kind | What it records |
+|:----:|-----------------|
+| `972` | A lease was issued: a new offline copy -- the computer, its system and until when the copy may be opened offline |
+| `973` | A lease was renewed: the same copy, the new end |
+| `974` | A lease was refused by one of the `403` words above. Waits and defects of the app are not recorded |
+| `975` | An administrator revoked an offline copy |
+| `976` | An administrator removed an offline copy from the server's list |
+| `977` | An offline copy reported what was done in it: one record per event, with the records, the value, the lease and the reason of the event. Its `changed_at` is the time the app reported for the event, empty for an event made while the session was open |
+| `978` | The changes made in an offline copy reached the server: once per session, at its first push that carries `offline_since` and commits a change, with the period of the work and the number of changes |
+
+Each of these records carries `changed_at` as every record of this server does: empty where the record was written
+when the event happened, and the time of the event where it was written later.
+
+---
+
 ## Errors
 
 ### The Error Object
@@ -677,6 +926,10 @@ A refused channel request answers the published [error object](overview.md#error
 | `not permitted` | `403` | A session of the `admin` scope | Sign in with the client scope |
 | `protocol required` | `403` / `4039` | A client-scope session that declared no protocol | Sign in with `client.protocol` |
 | `not authorised` | `403` | An upload of a user who may change nothing in the database | Nothing |
+| `revoked` | `403` | An administrator revoked this [offline copy](#offline-copies) | Report what the copy holds, then remove it without pushing; a new copy may be made at the next online open |
+| `offline not allowed` | `403` | The user may keep no offline copy of this database | Report what the copy holds, tell the user, remove the copy |
+| `second factor required` | `403` | A second factor is required for an offline copy and no stated way holds one | Ask the user for a second factor and state the ways again |
+| `unlock method not allowed` | `403` | A stated way to unlock an offline copy is not allowed for this user | Ask the user for an allowed way and state the ways again |
 | `not found` | `404` | The [database gate](#the-database-gate) | Open the database again at the backoff; see Access lost |
 | `not visible` | `404` | An editing hint for an entry the user may not see | Nothing |
 | `no session` | `409` | The database is not opened in this REST session | Open it, then send the request again |
@@ -691,7 +944,7 @@ A refused channel request answers the published [error object](overview.md#error
 | `rate limited` | `429` | A rate bound, or too many requests of the REST session waiting | After `retry_after` |
 | `failed` | `500` | A failure on the server | Backoff |
 | `not in this version` | `501` | A request this server does not serve | Hide the feature (below) |
-| `not served` | `503` | The database or its history cannot be served at the moment, or the server's disk for uploads is nearly full | Backoff |
+| `not served` | `503` | The database or its history cannot be served at the moment, the server's disk for uploads is nearly full, or no lease can be issued now | Backoff |
 | `busy` | `503` | The server does not take requests at the moment, a heavy task holds the database, or the request waited out its turn | Backoff |
 
 **Backoff:** 1 second, doubling to 60 seconds, `Retry-After` honoured. **An unknown word is a wait:** a `word` you do not know, under any status, reads as a wait at the backoff; the pending changes stay as they are.
@@ -726,11 +979,13 @@ On a channel request the app knows, `501` with the word `not in this version` me
 | A fetch, history items | At most 1000 ids |
 | Open databases | At most 64 per REST session |
 | REST sessions | At most 32 per account (see [Sessions](authentication.md#sessions)) |
-| A request body | A push at most 16 MiB, an uploaded chunk at most 1 048 628 bytes, every other channel route at most 1 MB -- above it `413` before the body is read, without `word`; the body of [Open a Database](#open-a-database) at most 4096 bytes (`400` `malformed`) |
+| A request body | A push at most 16 MiB, an uploaded chunk at most 1 048 628 bytes, a report of an offline copy at most 256 KiB, a lease request at most 4096 bytes, every other channel route at most 1 MB -- above it `413` before the body is read, without `word`; the body of [Open a Database](#open-a-database) at most 4096 bytes (`400` `malformed`) |
 | Waiting for the turn | At most 10 seconds (`503` `busy`); at most 4 requests waiting (`429` `rate limited`, `retry_after` `1`) |
 | Editing hints | 20 per 10 seconds per REST session; renewed every 60 seconds, lapsing after 180 seconds |
 | History | 20 list and item requests together per 10 seconds per REST session |
 | Chunks | 64 uploads and downloads together per second per REST session; a frame 52 to 1 048 628 bytes; a chunk size 64 KiB to 1 MiB; a content at most 64 MiB; at most 1 MiB of frames per download |
 | Uploads | Per user, 128 MiB in at most 256 uploads on a database and 256 MiB on the server, each counted at its declared size and at least one chunk; an upload lives 24 hours after its last chunk and at most 72 hours after its first |
 | A database's size | At most 4 GiB, its documents included |
+| A lease | `expires` at most 999 days after `issued`; per user and database at most 32 copies usable at once and 256 in all, beyond which a lease answers `503` `not served`; 6 lease requests per 10 minutes per user and database, over all connections and REST sessions (`429` `rate limited`) |
+| Reports of an offline copy | At most 256 events and 256 KiB per request; 20 requests per 10 seconds per user, over all connections and REST sessions; 20 000 events per user and day (UTC), counted whatever each event is answered, beyond which `429` `rate limited` carries the time to the next midnight UTC and nothing of the request is recorded |
 | Client label | `rest/<version>`, at most 64 characters |
