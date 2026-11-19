@@ -109,7 +109,7 @@ Enabling the database again (`"disabled": false`) gives its users back what thei
 
 - In a client-scope session [List Databases](#list-databases) leaves it out, and `total` does not count it.
 - In a client-scope session every route under `/v2.0/databases/{db_id}` -- [Get Database](#get-database), children, folders, entries, search, categories, icons and the recycle bin -- answers `503 Service Unavailable` with `error.code` `503` and the message "This database is not available at the moment. Try again later." The routes of the [client channel](channel.md) under it answer `503` with the word `not served` and the channel's own message instead (see [The Database Gate](channel.md#the-database-gate)).
-- In an admin-scope session the routes of its contents, [Update Database (Admin)](#update-database-admin) and the database's [permissions](permissions.md) answer the same `503`, and nothing is changed. [List All Databases (Admin)](#list-all-databases-admin) lists it.
+- In an admin-scope session [Get Database (Admin)](#get-database-admin), the routes of its contents, [Update Database (Admin)](#update-database-admin) and the database's [permissions](permissions.md) answer the same `503`, and nothing is changed. [List All Databases (Admin)](#list-all-databases-admin) lists it.
 - A shared secret cannot be created for one of its entries (`503`), and the HTTPS page of a shared secret of one of its entries answers `503` with the same message, its warning page and its content alike. The secret itself is not changed: once the database is available, its page opens as before, within its own expiry, open count and approval; see [Access URLs](secrets.md#access-urls).
 
 The database is not gone and the user has not lost access: keep what the app holds of it and the user's unsaved input, try again later, and list the databases again; it is listed again once it is available. Match the status, never the message.
@@ -591,6 +591,7 @@ Returns the **full representation** of a specific database, including size, entr
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Session does not have admin scope |
 | `404 Not Found` | Database not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](#databases-not-available-at-the-moment)). Try again later |
 
 #### Example
 
