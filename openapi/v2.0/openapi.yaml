@@ -11335,6 +11335,43 @@ components:
             setting id; a function whose setting is absent or of another type
             is not allowed
           additionalProperties: true
+        shared_secrets:
+          type: object
+          description: |
+            What the server applies when a shared secret of an entry of this
+            database is created; absent on a mirror server
+          properties:
+            approval:
+              type: string
+              enum: [required, not_required, unset]
+              description: |
+                `required`: the server sets approval on every shared secret
+                created in the database; `not_required`: the policy says that
+                approval is not required, and nothing is forced; `unset`: the
+                user chooses. Read an unknown word as `unset`
+            quorum:
+              type: integer
+              minimum: 0
+              description: |
+                The least number of approvals the server sets on a secret
+                created with approval; `0` where it sets none
+            approvers:
+              type: array
+              maxItems: 256
+              description: |
+                The users and groups designated to approve the database's
+                shared secrets, the user who opened the database left out;
+                name them in `approver_ids` by their ids without the prefix
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    pattern: "^[ug]:.+$"
+                    description: "`u:` and a user's id, or `g:` and a group's id"
+                  name:
+                    type: string
+                    description: The user's full name, else the user name, or the group's name
         blobs:
           type: object
           properties:
