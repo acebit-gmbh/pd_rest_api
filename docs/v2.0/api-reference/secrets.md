@@ -139,6 +139,7 @@ The `open_uuid` and `approve_uuid` are returned in the full representation, but 
 - **Matching.** A caller is a recipient or an approver when the list names the caller's own id or a group the caller belongs to, also through groups within groups. A disabled group, and membership through one, counts for nobody. An id matches only as a whole id, without regard to letter case.
 - **Known ids only.** [Create Secret](#create-secret) and [Update Secret (Admin)](#update-secret-admin) answer `400 Bad Request` with the message "A recipient or an approver of the shared link is no user or group of this server." when either list holds an id that names no user or group of the server.
 - **The author approves nothing.** The same two routes answer `400` with the message "The author of a shared link cannot approve it." when `approver_ids` names the author, and [Approve Secret](#approve-secret) and [Reject Secret](#reject-secret) answer `403` to the author, whatever the lists say.
+- **Approvers of the database.** Each approver `approver_ids` names must be one of the approvers of the secret's database: one of its `db_supervisors` (see [Databases](databases.md)), or, where its `include_server_supervisors` is `true`, a user or a group the server's policy setting `shared_secret.approvers` lists, or a member of such a group, also through groups within groups (a disabled group counts for nobody). [Create Secret](#create-secret) answers `400 Bad Request` with the message "An approver of the shared link is not one of the approvers of this database." when an approver is none of them. [Update Secret (Admin)](#update-secret-admin) applies the rule to the approvers its body adds to the secret's `approver_ids`, and to every approver where it moves the secret to another database (`database_id`); the approvers a secret names already are not checked again against the approvers of the database, and can still approve it.
 
 A request answered `400` creates nothing, and an update answered `400` leaves the secret as it was. The messages can be localized: match the status, never the message.
 
@@ -286,7 +287,7 @@ Creates a new shared secret for an entry. The caller must have **share permissio
 | `quorum_m` | integer | No | Total approvers (default: `2`) |
 | `require_2fa` | boolean | No | Require 2FA to open (default: `false`) |
 | `recipient_ids` | array of UUIDs | No | User/group IDs who can open the secret. *Server 20.0.0 and later:* each must name a user or a group of the server (`400` otherwise) |
-| `approver_ids` | array of UUIDs | No | User/group IDs designated as approvers. *Server 20.0.0 and later:* each must name a user or a group of the server, and the author may not be among them (`400` otherwise) |
+| `approver_ids` | array of UUIDs | No | User/group IDs designated as approvers. *Server 20.0.0 and later:* each must name a user or a group of the server and be one of the approvers of the database, and the author may not be among them (`400` otherwise; see [Recipients and Approvers](#recipients-and-approvers)) |
 
 !!! note
     The `database_name`, `entry_path`, `entry_user`, and `entry_type` fields are auto-populated from the referenced entry if not provided in the request.
@@ -350,7 +351,7 @@ Returns the full representation of the created secret. The `status` is set to `"
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields, or entry is protected by a second password, or (*Server 20.0.0 and later*) `recipient_ids` or `approver_ids` holds an id that names no user or group of the server, or `approver_ids` names the author -- see [Recipients and Approvers](#recipients-and-approvers) |
+| `400 Bad Request` | Invalid or missing required fields, or entry is protected by a second password, or (*Server 20.0.0 and later*) `recipient_ids` or `approver_ids` holds an id that names no user or group of the server, or `approver_ids` names the author or someone who is not one of the approvers of the database -- see [Recipients and Approvers](#recipients-and-approvers) |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (no share permission on the entry), also for an entry of a database an administrator has disabled (*Server 20.0.0 and later*) |
 | `404 Not Found` | Database or entry not found |
@@ -489,7 +490,7 @@ Updates an existing secret. **Admin scope only.** Include only the fields you wa
 
 `include_totp` can be changed here as well. When it is omitted, the stored value is kept; a new value applies the next time the secret is opened.
 
-*Server 20.0.0 and later.* The secret as the request would leave it must name users and groups of the server in `recipient_ids` and `approver_ids`, and not its author among the approvers (see [Recipients and Approvers](#recipients-and-approvers)); otherwise the request answers `400` and the secret stays as it was.
+*Server 20.0.0 and later.* The secret as the request would leave it must name users and groups of the server in `recipient_ids` and `approver_ids`, and not its author among the approvers; each approver the request adds to `approver_ids` - each approver where it changes `database_id` - must be one of the approvers of the database the request leaves the secret in (see [Recipients and Approvers](#recipients-and-approvers)); otherwise the request answers `400` and the secret stays as it was. The approvers the secret names already are not checked again against the approvers of the database.
 
 ### Path Parameters
 
@@ -517,7 +518,7 @@ Returns the full representation of the updated secret.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields, or (*Server 20.0.0 and later*) an id in `recipient_ids` or `approver_ids` that names no user or group of the server, or the author in `approver_ids`; the secret is not changed |
+| `400 Bad Request` | Invalid fields, or (*Server 20.0.0 and later*) an id in `recipient_ids` or `approver_ids` that names no user or group of the server, or the author in `approver_ids`, or an approver the request adds (every approver where it changes `database_id`) who is not one of the approvers of the database; the secret is not changed |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (requires Server Administrator role) |
 | `404 Not Found` | Secret not found |

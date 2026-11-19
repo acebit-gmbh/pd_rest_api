@@ -3389,7 +3389,9 @@ paths:
           description: |
             Invalid or missing fields, or an entry protected by a second password. Server 20.0.0 and later: also an id
             in `recipient_ids` or `approver_ids` that names no user or group
-            of the server, or the author in `approver_ids`; nothing is created.
+            of the server, the author in `approver_ids`, or an approver who is
+            not one of the approvers of the secret's database; nothing is
+            created.
           content:
             application/json:
               schema:
@@ -3430,8 +3432,11 @@ paths:
         Requires an admin-scoped session. Server 20.0.0 and later: the secret
         as the request would leave it must name users and groups of the
         server in `recipient_ids` and `approver_ids`, and not its author
-        among the approvers; otherwise the answer is `400` and the secret
-        stays as it was.
+        among the approvers; each approver the request adds to
+        `approver_ids`, and every approver where it changes `database_id`,
+        must be one of the approvers of the database the request leaves the
+        secret in; otherwise the answer is `400` and the secret stays as it
+        was.
       parameters:
         - $ref: "#/components/parameters/SecretId"
       requestBody:
@@ -3451,7 +3456,9 @@ paths:
           description: |
             Invalid or missing fields. Server 20.0.0 and later: also an id
             in `recipient_ids` or `approver_ids` that names no user or group
-            of the server, or the author in `approver_ids`; nothing is changed.
+            of the server, the author in `approver_ids`, or an approver the
+            request adds (every approver where it changes `database_id`) who
+            is not one of the approvers of the database; nothing is changed.
           content:
             application/json:
               schema:
@@ -4046,7 +4053,9 @@ paths:
           description: |
             Invalid or missing fields, or an entry protected by a second password. Server 20.0.0 and later: also an id
             in `recipient_ids` or `approver_ids` that names no user or group
-            of the server, or the author in `approver_ids`; nothing is created.
+            of the server, the author in `approver_ids`, or an approver who is
+            not one of the approvers of the secret's database; nothing is
+            created.
           content:
             application/json:
               schema:
@@ -7620,10 +7629,15 @@ components:
               items:
                 type: string
                 format: uuid
-              description: User IDs designated as database supervisors
+              description: |
+                User IDs designated as database supervisors, the database's
+                own approvers of shared secrets.
             include_server_supervisors:
               type: boolean
-              description: Whether server-level supervisors can also act on this database
+              description: |
+                Whether the server's approvers - the users and groups the
+                policy setting `shared_secret.approvers` lists - can also be
+                named as approvers of this database's shared secrets.
 
     # --- Recycle bin ---
     DatabaseRecycleBinCapability:
@@ -9409,7 +9423,17 @@ components:
         `400` for an id that names no user or group ("A recipient or an
         approver of the shared link is no user or group of this server.")
         and for the author in `approver_ids` ("The author of a shared link
-        cannot approve it."); nothing is created or changed. The author
+        cannot approve it."); nothing is created or changed. Each approver
+        must also be one of the approvers of the secret's database: its
+        `db_supervisors` and, where its `include_server_supervisors` is
+        `true`, the users and groups the policy setting
+        `shared_secret.approvers` lists and the members of those groups,
+        also through groups within groups; otherwise `createSecret` and
+        `adminCreateSecret` answer `400` ("An approver of the shared link is
+        not one of the approvers of this database."), and so does
+        `adminUpdateSecret` for an approver its body adds, and for every
+        approver where it changes `database_id`; the approvers a secret
+        names already can still approve it. The author
         never approves or rejects their own secret (`403`). The HTTPS page
         of a link whose entry belongs to a database an administrator has
         disabled answers as for a link that does not exist; the secret
@@ -9471,7 +9495,9 @@ components:
               description: |
                 User or group IDs of designated approvers, never the author.
                 Server 20.0.0 and later: each must name a user or a group of
-                the server.
+                the server; each approver a request adds (every approver
+                where an update changes `database_id`) must be one of the
+                approvers of the secret's database.
             approved_by:
               type: array
               items:
