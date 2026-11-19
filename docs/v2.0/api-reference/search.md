@@ -95,6 +95,7 @@ Returns a paginated list of matching items. Each item is a **compact representat
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions to access this database |
 | `404 Not Found` | Database or folder not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 ### Example
 

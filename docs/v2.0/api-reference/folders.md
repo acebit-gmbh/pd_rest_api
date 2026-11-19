@@ -103,7 +103,7 @@ The primary navigation endpoint for explorer-style browsing. Returns both **fold
 GET /v2.0/databases/{db}/children
 ```
 
-Returns a paginated list of all items (folders and entries) at the root level of a database.
+Returns a paginated list of all items (folders and entries) at the root level of a database. *Server 20.0.0 and later:* only the items the user may see are listed; a user whose permissions open the database and give nothing inside it gets an empty list (`200`).
 
 ### Folder Children
 
@@ -224,6 +224,7 @@ The `path` array contains the ancestor chain from the database root down to the 
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions to access this database |
 | `404 Not Found` | Database or folder not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 ### Examples
 
@@ -303,6 +304,7 @@ Returns the **full representation** of a specific folder, including `comments` a
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), or a missing/incorrect `X-Second-Password` on a protected folder (`error.code` `4031`) |
 | `404 Not Found` | Database or folder not found |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 ### Example
 
@@ -400,7 +402,7 @@ Returns the compact representation of the created folder.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) a non-empty `X-New-Second-Password` (`error.code` `4030`); the folder is not created |
 | `404 Not Found` | Database or parent folder not found |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the folder is not created. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; the folder is not created. Try again later |
 
 ### Example
 
@@ -504,7 +506,7 @@ Returns the compact representation of the updated folder.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), or a missing/incorrect `X-Second-Password` on a protected folder (`error.code` `4031`), or (*Server 20.0.0 and later*) an `X-New-Second-Password` that sets, changes or removes a second password (`error.code` `4030`), or (*Server 20.0.0 and later*) the folder is being edited by another user (`error.code` `4035`) |
 | `404 Not Found` | Database or folder not found |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is written. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; nothing is written. Try again later |
 
 ### Example
 
@@ -570,7 +572,7 @@ No response body. Both modes answer alike.
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the folder, or something inside it, is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) the folder holds an item you may not see or may not delete (`error.code` `403`, see the note below), **or** (*Server 20.0.0 and later*) a delete that would destroy the folder -- `mode=permanent`, or any mode while the database keeps no recycle bin -- while it holds an entry protected by a second password (`error.code` `4030`) |
 | `404 Not Found` | Database or folder not found |
 | `409 Conflict` | *Server 20.0.0 and later.* With `mode=permanent`: a backup is copying this database at the moment. Nothing is deleted. Try again in a moment |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is deleted. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; nothing is deleted. Try again later |
 
 !!! note "A folder holding an item someone is editing is not deleted"
     *Server 20.0.0 and later.* When the folder itself, or any sub-folder or entry below it, is checked out by another user, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the whole folder stays exactly as the request found it, down to the last entry. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other user is done, on a plain `403` they cannot.
@@ -656,7 +658,7 @@ Returns the compact representation of the moved folder.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), or (*Server 20.0.0 and later*) the folder is being edited by another user (`error.code` `4035`); the folder stays where it is |
 | `404 Not Found` | Database, folder, or target folder not found |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the folder stays where it is. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; the folder stays where it is. Try again later |
 
 ### Example
 

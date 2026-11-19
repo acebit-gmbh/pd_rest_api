@@ -665,6 +665,7 @@ Returns the **full representation** of a specific entry, including the password,
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry, read directly or through a link (body `error.code` = `403`), **or** a missing/incorrect `X-Second-Password` for a protected entry (body `error.code` = `4031`) |
 | `404 Not Found` | Database or entry not found, **or** the entry is in the recycle bin, **or** (*Server 20.0.0 and later*) the id is an entry template's |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 !!! note "Entry templates are not addressable"
     *Server 20.0.0 and later.* The id of an entry template -- one of the templates a database keeps for new entries -- answers `404 Not Found` on this endpoint and on every other `/entries/{id}` route (`PATCH`, `DELETE`, `/move`, `/content`, `/otp`), exactly as an id the database does not hold.
@@ -821,7 +822,7 @@ Returns the compact representation of the created entry (without `pass`). When t
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) a non-empty `X-New-Second-Password` (`error.code` `4030`); the entry is not created |
 | `404 Not Found` | Database or parent folder not found |
 | `501 Not Implemented` | `totp` sent with `type` `encrypted_file` or `certificate` |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the entry is not created. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; the entry is not created. Try again later |
 
 ### Example
 
@@ -984,7 +985,7 @@ Returns the compact representation of the updated entry.
 | `403 Forbidden` | Insufficient permissions -- *Server 20.0.0 and later:* read as well as update permission on the entry --, a `totp` write on an entry that is sealed for you, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`); *Server 20.0.0 and later:* a protected entry, or an `X-New-Second-Password` that sets, changes or removes a second password (`4030`); the entry is being edited by another user (`4035`) |
 | `404 Not Found` | Database or entry not found |
 | `501 Not Implemented` | `totp` sent for an entry of type `encrypted_file` or `certificate` |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is written. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; nothing is written. Try again later |
 
 !!! tip "Detecting a wrong second password"
     Updating a second-password-protected entry requires a correct `X-Second-Password`; a wrong or missing one returns `403` with the JSON body `error.code` = `4031` (`PD_ERRCODE_INVALID_SECOND_PASS`), distinct from a generic access-denied `403` (which keeps `error.code` = `403`). Detect the condition by checking `HTTP status == 403 && body.error.code == 4031` and re-prompt the user for the second password; on a generic `403`, do not re-prompt. Always match the numeric `error.code`, never the localized message.
@@ -1080,7 +1081,7 @@ No response body. Both modes answer alike.
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** the entry is being edited by another user (`error.code` `4035`), **or** (*Server 20.0.0 and later*) the entry is protected by a second password (`error.code` `4030`, see [Second Password Protection](#second-password-protection)); nothing is deleted |
 | `404 Not Found` | Database or entry not found |
 | `409 Conflict` | *Server 20.0.0 and later.* With `mode=permanent`: a backup is copying this database at the moment. Nothing is deleted. Try again in a moment |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is deleted. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; nothing is deleted. Try again later |
 
 !!! note "An entry someone is editing is not deleted"
     *Server 20.0.0 and later.* When the entry is checked out by another user, both modes answer `403` with `error.code` `4035` (`PD_ERRCODE_ITEM_LOCKED`) and the message "The item is being edited by another user."; the entry stays exactly as the request found it. Tell the two `403`s apart by the numeric `error.code`, never by the message, which follows the server's language: on `4035` the user can try again once the other user is done, on a plain `403` they cannot.
@@ -1169,7 +1170,7 @@ Returns the compact representation of the moved entry.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (`error.code` `403`), **or** (*Server 20.0.0 and later*) the entry is protected by a second password (`error.code` `4030`, see [Second Password Protection](#second-password-protection)), **or** (*Server 20.0.0 and later*) the entry is being edited by another user (`error.code` `4035`); the entry stays where it is |
 | `404 Not Found` | Database, entry, or target folder not found |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; the entry stays where it is. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; the entry stays where it is. Try again later |
 
 ### Examples
 
@@ -1256,6 +1257,7 @@ The same rules apply as for [reading the entry](#get-entry): you need read permi
 | `404` | `4041` | The entry has no one-time code (`PD_ERRCODE_NO_ONE_TIME_CODE`) |
 | `405` | `405` | Method other than `GET` |
 | `501` | `501` | Entry type `encrypted_file` or `certificate` |
+| `503` | `503` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 !!! warning "Sensitive Data"
     A one-time code is a credential. Treat the response like the `pass` field: never log it, and discard it once it has been used.
@@ -1660,6 +1662,7 @@ The type follows the name only, not the content: a DER-encoded key stored as `pr
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, a seal/policy restriction, or a missing/incorrect current second password (`error.code` `4031`), or legacy second-password protection unavailable through REST (`error.code` `403`) |
 | `404 Not Found` | Database/entry not found or recycled, or the requested document/certificate part has no stored content |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 #### Example
 
@@ -1753,7 +1756,7 @@ Returns the compact representation of the entry. The `document` or `certificate`
 | `409 Conflict` | Upload attempted through a link |
 | `411 Length Required` | The request carries a `Transfer-Encoding` header, whether or not it also sends a `Content-Length`. Refused before the body is read and before authentication; the connection is closed. A request that carries both headers answers `411`, not the `413` below (*Server 20.0.0 and later*) |
 | `413 Payload Too Large` | `Content-Length` exceeds 64 MB. The request is refused before the body is read |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The content could not be written to the database; nothing is written. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the content could not be written to the database; nothing is written. Try again later |
 
 #### Example
 

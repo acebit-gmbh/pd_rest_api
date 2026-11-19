@@ -71,8 +71,18 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `POST /admin/databases` answers `201`, and a name that another database has answers `409` on create and on rename
 - `HEAD` on `/file/<icon>` answers the headers of `GET` without the body; on the API routes it answers `405`
 - in a client-scope session a database an administrator has disabled is left out of `GET /databases`, and every route under `/databases/{db_id}` answers `404` for it; the shared links of its entries answer as links that do not exist
+- while the server converts a database's permissions -- after an upgrade from an earlier version, once for each database, and for a database added later from an earlier version's file --, or where it could not convert them, in a client-scope session `GET /databases` leaves that database out and its routes under `/databases/{db_id}` answer `503`: with the message "This database is not available at the moment. Try again later.", on the client channel with the word `not served`
+- a database is listed and opens where a permission in force opens it for the user or for one of the user's groups; a user whose permissions give nothing inside a database finds it empty: its root lists no item, and a pull of the client channel delivers no folder and no entry
+- the client channel's session answer carries `root_caps`, `true`, and the database's own record states in its `access.caps` whether the user may create at the top of the database
 - `recipient_ids` and `approver_ids` of a shared secret are matched as whole user and group ids, groups within groups included; an id that names no user or group, and the author among the approvers, answer `400`, and the author never approves or rejects their own secret
 - `PATCH` of a permission answers `404` for a `principal_id` that names no user or group, and a change of its `seal_status` needs the issuer, a manager of the database or seal permission on the items it names
+- `deny` and `entry_deny` of a permission are always empty, and a request that names a right there answers `400`; so does a permission that names `print`, `export`, `save`, `auto_complete`, `addon_fill`, `addon_offer` or `sync`, which are set by policy
+- the rights of a permission build on each other: a combination such as `update` without `read` answers `400`, and so does an entry-level element that would give less than one above it
+- an `allow` list without `use` opens nothing: what the permission gave at the database level goes and its entry-level rights wait; a permission left with no rights is gone (`200`, then `404`), and creating one that gives nothing answers `400`
+- a permission that administers the database is changed only by an owner of the database or a server administrator, a change that would leave the database without an owner answers `409`, and the policy on access given to oneself applies to managers and server administrators
+- `db_admins` names users and groups, is changed only by a server administrator or by an owner of the database who holds the Database Administrator role, and an owner stays on it; `db_owners` names the owners
+- the list of permissions is ordered by `id`, and a permission's `id` is not always a UUID
+- a change of a permission or of `db_admins` that cannot be recorded in the audit trail answers `503`, and the permission or the list is not changed (see [Changing `db_admins`](api-reference/databases.md#changing-db_admins) for a request that also changes other members)
 - `custom_fields` elements carry `id`, `type` and `secret`; a write matches each element to a field the entry has, by `id` first, and keeps that field's type; `custom_fields` on an entry other than `password` and `custom` answers `400`
 - an entry's `expires_at` names a calendar day and is answered as midnight UTC of that day, whatever the server's time zone; a write takes the date part as written, in its own offset
 - the `value` of a custom field of the type `date`, `decimal` or `boolean` is answered in the form the database stores, still as a string: `"2029-12-31"`, `"0.50"`, `"true"` / `"false"` (earlier a day number, the server's decimal separator and `"1"` / `"0"`); a write still accepts the earlier forms
@@ -209,7 +219,8 @@ The client channel is the sync connection of the Password Depot apps: an app ope
 - **The routes.** `POST .../session` opens a database for sync, with the app's field key in `field_key`, or closes it; `GET .../sync` pulls since a cursor, in parts; `POST .../sync` pushes batches; `GET .../manifest` and `POST .../sync/fetch` reconcile; `POST .../entries/{id}/editing` sets an editing hint; `GET` and `POST` on `.../{entries|folders}/{id}/history`, and `GET .../history/{item}`, read a record's history; `PUT` and `GET` on `.../blobs/{blob}` upload and download a document's content in chunks.
 - **One state per REST session.** Each REST session opens its databases itself and is served one request at a time: a request waits for its turn at most 10 seconds (`503` `busy`), and a fifth request waiting answers `429` `rate limited`. Nothing is sent that the app did not ask for: an app learns of changes by pulling.
 - **Errors carry a word.** A refused channel request answers the published error object with `error.word`, a stable English word, and `error.retry_after` where it asks the app to wait. A client-scope session that declared no protocol gets `403` / `4039` `protocol required` on every channel route, and a session of the `admin` scope `403` `not permitted`, whether it declared one or not. A channel route reserved for a later feature answers `501` with the word `not in this version`: an app hides that feature.
-- **The database gate.** A channel request is admitted where the user holds the use permission on the database, the permission by which `GET /databases` lists it; otherwise `404` `not found`, one answer for every cause. A database in which nothing is permitted to the user opens empty.
+- **The database gate.** A channel request is admitted where a permission in force opens the database for the user or for one of the user's groups -- the rule by which `GET /databases` lists it; otherwise `404` `not found`, one answer for every cause. A database in which nothing is permitted to the user opens empty. While the server converts a database's permissions, after an upgrade or for a database added later from an earlier version's file, or where it could not convert them, its requests answer `503` `not served`: a wait, not a lost access.
+- **Creating at the top.** The answer of `POST .../session` carries `root_caps`, `true`, as its last member before `release_secret`: the database's own record, which `root` names, then carries `create` in its `access.caps` where the user may create, move and restore folders and entries at the top of the database, and `[]` where not; a push that does so without it is rejected `not authorised`. Without `root_caps`, offer such a create and let the server judge it.
 - **The database's audit settings.** The answer of `POST .../session` carries `audit`, the database's audit settings by setting id, as booleans: `audit.log_secret_access`, `true` where each use of a password or another protected value is recorded, and `audit.reason.delete`, `true` where a deletion asks for a reason; where the server cannot read a database's audit settings it answers `true` for both. For information: no request on this connection depends on them.
 
 **Client guidance:** a web client or a script needs none of this: the per-object routes stay as they are. An app that syncs a database declares `client.protocol`, keeps what it receives in memory only, changes the database's contents by pushes alone, and reads an answer without `word` by its status. See [Client Channel](api-reference/channel.md) and [Client Protocol](api-reference/authentication.md#client-protocol).
@@ -554,7 +565,7 @@ Reading a single object in the admin section applies the same filter as the corr
 | `GET /admin/groups/{id}` | server administrators, super-administrators and user administrators: every group. Group administrators: the groups they administer and the groups nested within them at any depth. | `404` "The server cannot find the group specified." |
 | `GET /admin/databases/{id}` | server administrators and super-administrators: every database. Database administrators: databases whose `db_admins` lists them. | `404` "The server cannot find the file specified." |
 
-A group or database administrator needs the corresponding server role. Being listed in a group's administrators or in a database's `db_admins` is not enough on its own. Membership or nesting through a disabled group does not count. On each route, a caller who holds none of the roles in that row gets `404` for every id. Messages are shown with their English defaults and are localized by the server.
+A group or database administrator needs the corresponding server role. Being listed in a group's administrators, or in a database's `db_admins` directly or through a group, is not enough on its own. Membership or nesting through a disabled group does not count. On each route, a caller who holds none of the roles in that row gets `404` for every id. Messages are shown with their English defaults and are localized by the server.
 
 !!! warning "Behavior change for clients"
     A `404` from these routes means the object does not exist or is not one you manage. Do not treat it as proof that the object was deleted. Read the corresponding list (`GET /admin/users`, `GET /admin/groups`, `GET /admin/databases`) to find the objects available to you. Always match the status and numeric `error.code`, never the localized message.
@@ -563,9 +574,9 @@ The list routes, the other admin methods on these resources and the client-scope
 
 #### Permission Rows Visible to Database Administrators and Their Issuer (Behavior Change)
 
-`GET /admin/databases/{db}/permissions` returns every permission row only to callers who manage the database. These are server administrators, super-administrators, and users who hold the Database Administrator server role and are listed in the database's `db_admins`. Any other admin-scoped caller gets only the rows it issued, meaning rows whose `issuer_id` is the caller's own user ID. `total` counts only the rows the caller can see, and `offset` / `limit` page through that filtered set. A caller that issued no rows gets `200` with an empty `data` array and `total` of `0`.
+`GET /admin/databases/{db}/permissions` returns every permission only to callers who manage the database. These are server administrators, super-administrators, and whoever the database's `db_admins` lists. Any other admin-scoped caller gets only the permissions it issued, meaning those whose `issuer_id` is the caller's own user ID. `total` counts only the permissions the caller can see, and `offset` / `limit` page through that filtered set, in the order of `id`. A caller that issued none gets `200` with an empty `data` array and `total` of `0`.
 
-`GET /admin/databases/{db}/permissions/{id}` returns `404` unless the caller manages the database or issued the row. This is the same response as for a permission ID that does not exist. A caller that created permission rows, for example to share entries with delegated rights, can list and read those rows as long as it uses an admin-scoped session.
+`GET /admin/databases/{db}/permissions/{id}` returns `404` unless the caller manages the database or issued the permission. This is the same response as for a permission ID that does not exist. A caller that created permissions, for example to give others access to entries, can list and read them as long as it uses an admin-scoped session.
 
 #### Permission Updates Name a Known Principal, and `seal_status` Changes Need the Right to Seal (Behavior Change)
 
@@ -576,6 +587,61 @@ See [Update Permission](api-reference/permissions.md#update-permission).
 
 !!! warning "Behavior change for clients"
     Send `seal_status` only to change it; otherwise leave the key out, or send the value `GET` returned. A seal approver who may not seal the permission's items cannot change it. Match the status, never the message.
+
+#### Permissions Only Give Rights (Behavior Change)
+
+A permission gives rights and takes none away. What a principal holds on an entry is the sum of what the permissions of the principal and of its groups give there and on the folders above it. A folder or entry that has its own permissions takes nothing from the folders above it.
+
+- **`deny` and `entry_deny`.** Responses always show them empty. A request that names a right in either answers `400`; an empty list, or leaving the member out, is accepted.
+- **Usage rights.** `print`, `export`, `save`, `auto_complete`, `addon_fill`, `addon_offer` and `sync` are set by policy, in the Server Manager under *Policies*. They never appear in a permission, and a request that names one in any list answers `400`.
+- **An element that would narrow.** An element of `entry_allow` that would give less than an element above it in the same permission answers `400`.
+
+See [Refused Requests](api-reference/permissions.md#refused-requests).
+
+!!! warning "Behavior change for clients"
+    Take `deny`, `entry_deny` and the usage rights out of the requests you send. To narrow what someone holds, remove the right, or give the object its own permissions in the Server Manager. Match the status, never the message.
+
+#### The Rights of a Permission Build on Each Other (Behavior Change)
+
+A list of rights that do not build on each other answers `400`, and the message says which do not fit: `update` and `share` need `read`, `second_pass` needs `update`, `seal` needs `share`. An element of `entry_allow` needs `use`. In `allow`, `use` stands alone or with `read`: `use` with another right and without `read` answers `400`. A list or an element that repeats what the permission shows is always accepted, so a permission read with `GET` can be sent back as it is, and sending it back changes nothing.
+
+#### `use` in `allow`, and a List Without It (Behavior Change)
+
+- **`use` alone** puts the database in the principal's list and opens it; no entry or folder is reached through it. It is accepted with or without `entry_allow`. A `PATCH` that sets `allow` to `use` alone takes away what the permission gave at the database level beyond that.
+- **A list without `use`,** the empty list included, opens nothing. It answers `200`: what the permission gave at the database level goes, and the entry-level rights stay and wait until a permission opens the database for the principal.
+- **A permission left with no rights is gone.** The `PATCH` answers `200` with the permission as requested, and a later `GET` or `PATCH` of its `id` answers `404`.
+- **A permission that would give nothing is not created.** A `POST` without `use` in `allow` and without `entry_allow` answers `400`.
+- **Dates.** Where a request names a date, a `valid_until` that is not after `valid_from`, or that lies before 1970, answers `400`.
+- **`PATCH` changes the members it names.** Each one replaces that member as a whole: an element left out of `entry_allow` is removed. Dates and `principal_id`, when named, apply to the whole permission.
+
+See [Rights Values](api-reference/permissions.md#rights-values) and [Update Permission](api-reference/permissions.md#update-permission).
+
+#### Who May Change a Permission That Administers the Database (Behavior Change)
+
+- A permission whose `caps` holds `manage` can be changed or deleted only by an owner of the database or a server administrator, and one whose `caps` holds `own` only by an owner; otherwise the request answers `403`.
+- A change or a delete that would leave the database without an owner whose ownership has no end date answers `409`.
+- The **Access granted to oneself by managers and administrators** policy (`access.self_grant`, set in the Server Manager under *Policies*) applies to a server administrator or database administrator who gives themselves, or a group they belong to, more than they hold: at **Forbidden** or **Needs approval** the request answers `403`.
+- A permission written in the Server Manager can be changed or deleted only by those who manage the database.
+
+See [Authorization](api-reference/permissions.md#authorization).
+
+#### `db_admins` Lists Who Administers the Database (Behavior Change)
+
+`db_admins` lists the users and groups whose right to administer the database counts now, owners included, sorted by ID. The new read-only `db_owners` lists the owners among them. A list sent back unchanged changes nothing. A change of the list needs a server administrator, or an owner of the database who holds the Database Administrator role (`403` otherwise); an ID that names no user or group answers `404`, and an owner stays on the list (`403`; ownership is transferred in the Server Manager). A user or group taken off loses the right to administer the database and keeps everything else they hold on it. `db_supervisors` and `include_server_supervisors` are unchanged.
+
+The list is written after the other members of the request. If that write is refused, the request answers the error and the other members have been changed; sending the request again changes only the list. See [Changing `db_admins`](api-reference/databases.md#changing-db_admins).
+
+#### New Members of a Permission, and Its `id` (Behavior Change)
+
+The full representation of a permission carries the read-only members `level`, `caps` and `origin`, and each element of `entry_allow` carries `level`, `caps`, `origin`, `own_permissions`, `valid_from` and `valid_until`. They say exactly what the permission gives, including what the rights tokens cannot show. A permission's `id` is a string and not always a UUID. The list of permissions is ordered by `id`.
+
+#### A Change of a Permission Needs Its Audit Record (Behavior Change)
+
+A change of a permission or of `db_admins` is recorded in the audit trail before it is made. Where the record cannot be written, the request answers `503`, and the permission or the list is not changed. A request that also changes other members of the database has changed those already: see [Changing `db_admins`](api-reference/databases.md#changing-db_admins).
+
+#### Permissions Issued by Users, and Seals, Are Deprecated
+
+Permissions issued by a user who does not manage the database -- with the Grant Access wizard of the Windows client or over the permission routes -- and seals work as described in Server 20.0.0, and will be removed in version 21. To give someone access to an entry, create a [shared secret](api-reference/secrets.md).
 
 #### Reading Alerts Requires a Server Administrator (Behavior Change)
 
@@ -748,6 +814,19 @@ See [Disabled Databases](api-reference/databases.md#disabled-databases).
 
 !!! warning "Behavior change for clients"
     A database can disappear from `GET /databases` while a user works with it. Handle the `404` on its routes like the `404` for an unknown id: close the database's views, list the databases again, and do not retry.
+
+#### Databases Not Available While Their Permissions Are Converted (Behavior Change)
+
+Server 20.0.0 keeps the permissions of a database in the database itself. After an upgrade from an earlier version the server converts each database's permissions once, at its first start; a database added later from an earlier version's file is converted when it is added. While a database's permissions are converted, and where the server could not convert them, until it has:
+
+- **Listing.** In a client-scope session `GET /databases` leaves the database out, and `total` does not count it. `GET /admin/databases` lists it.
+- **Its routes.** In a client-scope session every route under `/databases/{db_id}` -- the database itself, its children, folders, entries, search, categories, icons and recycle bin -- answers `503` with `error.code` `503` and the message "This database is not available at the moment. Try again later."; the client channel's routes under it answer `503` with the word `not served` and the channel's own message instead. In an admin-scope session the routes of its contents, `PATCH /admin/databases/{db_id}` and `/admin/databases/{db_id}/permissions` answer the same `503`, and nothing is changed.
+- **Shared secrets.** `POST /secrets` and `POST /admin/secrets` for one of its entries answer `503`, and the HTTPS page of a shared secret of one of its entries answers `503` with the same message, its warning page and its content alike. The secret itself is not changed: once the database is available, its page opens as before, within its own expiry, open count and approval.
+
+A database created on Server 20.0.0 is available at once. See [Databases Not Available at the Moment](api-reference/databases.md#databases-not-available-at-the-moment).
+
+!!! warning "Behavior change for clients"
+    Unlike the `404` of a disabled database, this `503` is a wait: the user has not lost access. Keep what the app holds of the database and the user's input, try again later and list the databases again; do not repeat the request in a tight loop. Match the status, never the message.
 
 ### Entries and Folders
 
@@ -1249,6 +1328,8 @@ A `POST` or `PATCH` accepts `credit_card.valid_thru` in the exact form `MM/YYYY`
 
 These correct the documentation only; the server's behavior is described as it has been.
 
+- **The compact list of permissions carries identity and validity only.** The reference named `allow` and `deny` among the members of a list response; `GET /admin/databases/{db}/permissions` returns `id`, `principal_id`, `issuer_id`, `valid_from` and `valid_until`, and the rights are in the full representation.
+- **An element of `entry_allow` names its entry or folder in `id`.** The OpenAPI document called the member `target_id`.
 - **`license.purchase_date` and `identity.birth_date` are date-time strings.** The OpenAPI document gave them `format: date`. The server answers them as `YYYY-MM-DDT00:00:00.000Z`, as the entries reference shows, and the OpenAPI document now says `format: date-time`.
 - **`PUT /databases/{db}/entries/{id}/content` over 64 MB answers `413`, not `400`.** The server refuses a `Content-Length` above the limit before it reads the body. `400` is used when the entry has no supported binary content or the `part` parameter is invalid for its type. The OpenAPI document and the test suite already said `413`. A chunked body never reaches that size check: any `Transfer-Encoding` header is refused with `411` while the request headers are read, see [Chunked Request Bodies Answer `411 Length Required`](#chunked-request-bodies-answer-411-length-required-behavior-change).
 - **`Content-Type` is not required on that upload, and is not stored.** The server does not read it. The type reported by `document.type` (or a certificate file descriptor), and sent as `Content-Type` by `GET .../content`, is derived from the extension of the file name.

@@ -55,7 +55,7 @@ Two rules decide what a caller finds in a database's bin:
 - **Your own deletions are always yours.** Every caller sees the items that caller deleted, whether or not `can_manage` is set. Acting on one is a separate question: putting an item back needs the right on the folder it returns to (see [Restore Item](#restore-item)), and destroying one needs the right to delete it (see [Delete Item](#delete-item)).
 - **Other people's deletions need `can_manage`.** The database's [`recycle_bin.can_manage`](databases.md#recycle-bin-capability) says whether this caller may also see and act on items *other* people deleted. When it is `false`, those items are not listed, and their ids answer `404` on every route here -- the same answer as an id that is not in the bin at all.
 
-`can_manage` is computed for the current caller and for that one database, so it can differ from one database to the next in the same session. It is `true` for a server administrator, and for a database administrator of that database -- an account with the Database Administrator role that the database's `db_admins` lists -- who holds delete and update permission on it; a database administrator of another database sees only what they deleted themselves. Read it from the database object rather than deriving it from a role.
+`can_manage` is computed for the current caller and for that one database, so it can differ from one database to the next in the same session. It is `true` for a server administrator, and for a user who administers that database -- whom its `db_admins` lists, directly or through a group --; an administrator of another database sees only what they deleted themselves. Read it from the database object rather than deriving it from a role.
 
 Every row says who deleted it, in `deleted_by`, which is what makes a bin worth listing for a caller with `can_manage`: without it, one person's deletions cannot be told from another's.
 
@@ -159,6 +159,7 @@ A row carries no password, no comments and no custom fields: it is the compact r
 | `401` | `401` | Not authenticated |
 | `404` | `404` | Database not found or not accessible to you. Also the answer of a server older than 20.0.0 |
 | `405` | `405` | Method other than `GET` or `DELETE` (`Allow: GET, DELETE`) |
+| `503` | `503` | The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 ### Examples
 
@@ -217,7 +218,7 @@ No response body. The item is out of the bin: its own [entry](entries.md) or [fo
 | `403` | `4030` | The item is an entry protected by a second password, which cannot be changed in this version; it stays in the bin (see [Second Password Protection](entries.md#second-password-protection)) |
 | `404` | `404` | The id is not in this database's recycle bin, or it is an item you may not see; the database does not exist or is not accessible to you; a server older than 20.0.0 |
 | `405` | `405` | Method other than `POST` (`Allow: POST`) |
-| `503` | `503` | The change could not be written to the database; the item stays in the bin. Try again later |
+| `503` | `503` | The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; the item stays in the bin. Try again later |
 
 ### Examples
 
@@ -272,7 +273,7 @@ No response body.
 | `404` | `404` | The id is not in this database's recycle bin, or it is an item you may not see; the database does not exist or is not accessible to you; a server older than 20.0.0 |
 | `409` | `409` | *Server 20.0.0 and later.* A backup is copying this database at the moment; nothing is destroyed. Try again in a moment |
 | `405` | `405` | Method other than `DELETE` on this path (`Allow: DELETE`) |
-| `503` | `503` | The change could not be written to the database; nothing is destroyed. Try again later |
+| `503` | `503` | The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; nothing is destroyed. Try again later |
 
 ### Examples
 
@@ -322,7 +323,7 @@ No response body. An empty bin answers `204` as well, so the call is safe to rep
 | `404` | `404` | Database not found or not accessible to you. Also the answer of a server older than 20.0.0 |
 | `409` | `409` | *Server 20.0.0 and later.* A backup is copying this database at the moment; nothing is destroyed. Try again in a moment |
 | `405` | `405` | Method other than `GET` or `DELETE` (`Allow: GET, DELETE`) |
-| `503` | `503` | The change could not be written to the database; nothing was destroyed. Try again later |
+| `503` | `503` | The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; nothing was destroyed. Try again later |
 
 ### Examples
 

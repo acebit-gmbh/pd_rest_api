@@ -25,7 +25,8 @@ The database object uses different representations depending on scope and contex
 | `entries_count` | integer | No | Number of password entries (admin detail only) |
 | `icons_count` | integer | No | Number of icon slots in the database's icon collection, removed icons included (admin detail only). Unrelated to `icons`: it is not a capability marker, and it can be larger than the `total` of [List Icons](icons.md#list-icons), which leaves removed icons out |
 | `disabled` | boolean | Restricted | Whether the database is disabled (admin detail only). Requires database management permission. *Server 20.0.0 and later:* a disabled database is closed to its users; see [Disabled Databases](#disabled-databases). |
-| `db_admins` | array of UUIDs | Restricted | User IDs designated as Database Administrators (admin detail only). Requires database management permission. |
+| `db_admins` | array of strings | Restricted | IDs of the users and groups that administer this database, owners included, sorted by ID (admin detail only). Requires database management permission. *Server 20.0.0 and later:* see [Changing `db_admins`](#changing-db_admins). |
+| `db_owners` | array of strings | No | *Server 20.0.0 and later.* IDs of the users and groups that own this database, sorted by ID; each of them is also in `db_admins` (admin detail only). Requires database management permission. Ownership is transferred in the Server Manager. |
 | `db_supervisors` | array of UUIDs | Restricted | User IDs designated as Database Supervisors (admin detail only). Requires database management permission. |
 | `include_server_supervisors` | boolean | Restricted | Whether server-level supervisors have access to this database (admin detail only). Requires database management permission. |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp |
@@ -33,7 +34,20 @@ The database object uses different representations depending on scope and contex
 | `recycle_bin` | object | No | [Recycle bin](recyclebin.md) capability of this database for the current caller, in every representation and both scopes - see [Recycle Bin Capability](#recycle-bin-capability). Absent on servers older than 20.0.0 |
 
 !!! warning "Field-Level Authorization"
-    The `disabled`, `db_admins`, `db_supervisors`, and `include_server_supervisors` fields can only be modified by users with database management permission (Server Administrators or Database Administrators for this database). If an unauthorized user attempts to change these fields, the server returns `403 Forbidden`.
+    The `disabled`, `db_supervisors`, and `include_server_supervisors` fields can only be modified by users with database management permission (Server Administrators or Database Administrators for this database). `db_admins` can only be modified by a Server Administrator, or by an owner of the database who holds the Database Administrator role. If an unauthorized user attempts to change these fields, the server returns `403 Forbidden`.
+
+### Changing `db_admins`
+
+*Server 20.0.0 and later.* `db_admins` lists the users and groups whose right to administer the database counts now: a right that has ended, or has not started yet, is not listed. [Update Database (Admin)](#update-database-admin) compares the list it receives with the list as it stands:
+
+- A list sent back unchanged, in any order, changes nothing and needs no further right.
+- Only a Server Administrator, or an owner of the database who holds the Database Administrator role, can change the list. Anyone else is answered `403`.
+- A user or group added receives the right to administer the database, which gives no access to the contents of its entries. An ID that names no user or group answers `404`.
+- A user or group taken off loses the right to administer the database and keeps everything else they hold on it.
+- An owner stays on the list: taking one off answers `403`. Ownership is transferred in the Server Manager.
+- A caller who adds themselves, or a group they belong to, is subject to the server's **Access granted to oneself by managers and administrators** policy (`access.self_grant`, set in the Server Manager under *Policies*): at **Forbidden** or **Needs approval** the request answers `403`.
+- A change of the list that cannot be recorded in the audit trail answers `503`, and the list is not changed.
+- The list is written after the other members of the request. If that write is refused, the request answers the error and the other members have been changed; sending the request again changes only the list.
 
 ### Icons Capability
 
@@ -64,7 +78,7 @@ Every database object - client and admin scope, list and detail, compact and ful
 | `keep` | integer | How many items the bin holds: `1000` unless an administrator has changed it, and `0` when the bin is off. Beyond that number the oldest items are dropped |
 | `can_manage` | boolean | Whether the current caller may see and act on the items **other** people deleted in this database. Everyone always sees what they deleted themselves, whatever this field says; restoring and destroying still need the rights described under [Recycle Bin](recyclebin.md) |
 
-Like `icons`, this object is on every database object, but only `can_manage` describes the **current caller** on **this one** database, so it can differ from one database to the next within the same session. `enabled` and `keep` are a server-wide setting and read the same on every database of a server. `can_manage` is `true` for a server administrator, and for a database administrator of this database -- an account with the Database Administrator role that the database's `db_admins` lists -- who holds delete and update permission on it; for everyone else it is `false`, a database administrator of another database included. Read `can_manage` from here rather than deriving it from a role, and read `enabled` before you tell a user that a deletion can be undone. See [Recycle Bin](recyclebin.md) for the endpoints and for what a caller finds in the bin.
+Like `icons`, this object is on every database object, but only `can_manage` describes the **current caller** on **this one** database, so it can differ from one database to the next within the same session. `enabled` and `keep` are a server-wide setting and read the same on every database of a server. `can_manage` is `true` for a server administrator, and for a user who administers this database -- whom its `db_admins` lists, directly or through a group --; for everyone else it is `false`, an administrator of another database included. Read `can_manage` from here rather than deriving it from a role, and read `enabled` before you tell a user that a deletion can be undone. See [Recycle Bin](recyclebin.md) for the endpoints and for what a caller finds in the bin.
 
 ---
 
@@ -89,13 +103,24 @@ These endpoints are available in both `client` and `admin` sessions. They return
 
 Enabling the database again (`"disabled": false`) gives its users back what their permissions allow. Handle the `404` like the one for an unknown id: close the database's views and list the databases again.
 
+### Databases Not Available at the Moment
+
+*Server 20.0.0 and later.* A database is not available while the server converts its permissions to the form in which Server 20.0.0 keeps them in each database -- after an upgrade from an earlier version, once for every database it holds, and for a database added later from an earlier version's file -- and where the server could not convert them, until it has. A database created on a server of version 20.0.0 is available at once. While a database is not available:
+
+- In a client-scope session [List Databases](#list-databases) leaves it out, and `total` does not count it.
+- In a client-scope session every route under `/v2.0/databases/{db_id}` -- [Get Database](#get-database), children, folders, entries, search, categories, icons and the recycle bin -- answers `503 Service Unavailable` with `error.code` `503` and the message "This database is not available at the moment. Try again later." The routes of the [client channel](channel.md) under it answer `503` with the word `not served` and the channel's own message instead (see [The Database Gate](channel.md#the-database-gate)).
+- In an admin-scope session the routes of its contents, [Update Database (Admin)](#update-database-admin) and the database's [permissions](permissions.md) answer the same `503`, and nothing is changed. [List All Databases (Admin)](#list-all-databases-admin) lists it.
+- A shared secret cannot be created for one of its entries (`503`), and the HTTPS page of a shared secret of one of its entries answers `503` with the same message, its warning page and its content alike. The secret itself is not changed: once the database is available, its page opens as before, within its own expiry, open count and approval; see [Access URLs](secrets.md#access-urls).
+
+The database is not gone and the user has not lost access: keep what the app holds of it and the user's unsaved input, try again later, and list the databases again; it is listed again once it is available. Match the status, never the message.
+
 ### List Databases
 
 ```
 GET /v2.0/databases
 ```
 
-Returns a paginated list of databases accessible by the authenticated user. Only databases the user has effective access rights on are included; in a client-scope session a database an administrator has disabled is not (*Server 20.0.0 and later*, see [Disabled Databases](#disabled-databases)). Returns the compact representation (no admin-specific fields).
+Returns a paginated list of databases accessible by the authenticated user. Only databases the user may open are included -- *Server 20.0.0 and later:* those a permission in force opens for the user or for a group the user belongs to, also where it gives nothing inside the database (see [Permissions](permissions.md)) --; in a client-scope session a database an administrator has disabled is not (*Server 20.0.0 and later*, see [Disabled Databases](#disabled-databases)), nor one that is not available at the moment (see [Databases Not Available at the Moment](#databases-not-available-at-the-moment)). Returns the compact representation (no admin-specific fields).
 
 #### Query Parameters
 
@@ -201,6 +226,7 @@ Returns details of a specific database that the user has access to. Returns the 
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions to access this database |
 | `404 Not Found` | Database not found or not accessible to you, or (*Server 20.0.0 and later*, in a client-scope session) disabled by an administrator -- see [Disabled Databases](#disabled-databases) |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](#databases-not-available-at-the-moment)). Try again later |
 
 #### Example
 
@@ -274,6 +300,7 @@ A database with no category answers the same envelope, empty:
 | `401` | `401` | Missing or invalid authentication token |
 | `404` | `404` | Database not found or not accessible to you, or a path segment after `/categories`. Also the answer of a server older than 20.0.0 |
 | `405` | `405` | Method other than `GET` (`Allow: GET`) |
+| `503` | `503` | The database is not available at the moment (see [Databases Not Available at the Moment](#databases-not-available-at-the-moment)). Try again later |
 
 #### Examples
 
@@ -421,7 +448,7 @@ Creates a new database.
 | `name` | string | Yes | Database name. Must follow the [Database Name Rules](#database-name-rules) below. |
 | `description` | string | No | Database description |
 | `disabled` | boolean | No | Whether the database is disabled (default: `false`). Requires database management permission. |
-| `db_admins` | array of UUIDs | No | Database Administrator user IDs. Requires database management permission. |
+| `db_admins` | array of strings | No | IDs of the users and groups that administer the new database. Requires database management permission. |
 | `db_supervisors` | array of UUIDs | No | Database Supervisor user IDs. Requires database management permission. |
 | `include_server_supervisors` | boolean | No | Whether server-level supervisors have access (default: `true`). Requires database management permission. |
 
@@ -533,6 +560,9 @@ Returns the **full representation** of a specific database, including size, entr
     "db_admins": [
         "83664092-DF61-45F0-AEA5-DD9E14C8C519"
     ],
+    "db_owners": [
+        "83664092-DF61-45F0-AEA5-DD9E14C8C519"
+    ],
     "db_supervisors": [
         "83664092-DF61-45F0-AEA5-DD9E14C8C519"
     ],
@@ -613,8 +643,11 @@ Updates an existing database. Include only the fields you want to update.
     "icons_count": 31,
     "disabled": false,
     "db_admins": [
-        "83664092-DF61-45F0-AEA5-DD9E14C8C519",
-        "3D1C91F6-754D-427E-9D76-8CC20E8C326E"
+        "3D1C91F6-754D-427E-9D76-8CC20E8C326E",
+        "83664092-DF61-45F0-AEA5-DD9E14C8C519"
+    ],
+    "db_owners": [
+        "83664092-DF61-45F0-AEA5-DD9E14C8C519"
     ],
     "db_supervisors": [
         "83664092-DF61-45F0-AEA5-DD9E14C8C519"
@@ -643,11 +676,11 @@ Updates an existing database. Include only the fields you want to update.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Session does not have admin scope, or attempted to modify restricted fields without database management permission |
-| `404 Not Found` | Database not found |
+| `403 Forbidden` | Session does not have admin scope, attempted to modify restricted fields without database management permission, or (*Server 20.0.0 and later*) a change of `db_admins` the caller may not make -- see [Changing `db_admins`](#changing-db_admins) |
+| `404 Not Found` | Database not found, or (*Server 20.0.0 and later*) an ID in `db_admins` that names no user or group of the server |
 | `409 Conflict` | Database name conflict: another database has the new name -- *Server 20.0.0 and later:* the name as it is stored, ending in `.pdepot`; nothing is changed |
 | `501 Not Implemented` | *Server 20.0.0 and later.* The database has not been converted to the new format; nothing is changed |
-| `503 Service Unavailable` | *Server 20.0.0 and later.* The change could not be written to the database; nothing is changed. Try again later |
+| `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](#databases-not-available-at-the-moment)), or the change could not be written to the database or recorded in the audit trail. Nothing is changed, except where the refused write is that of `db_admins`: the other members of the request have been changed then (see [Changing `db_admins`](#changing-db_admins)). Try again later |
 
 #### Example
 

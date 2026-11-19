@@ -2416,7 +2416,6 @@ if (-not $testDbId -or -not $testUserId) {
         $perm = New-PDPermission -Session $adminSession -DatabaseId $testDbId -Fields @{
             principal_id = $testUserId
             allow = @("use", "read")
-            deny = @("export", "print")
         }
         if (Assert-NotNull $perm.id "id") {
             $testPermId = $perm.id
@@ -2436,7 +2435,7 @@ if (-not $testDbId -or -not $testUserId) {
     if ($testPermId) {
         try {
             $p = Get-PDPermission -Session $adminSession -DatabaseId $testDbId -PermissionId $testPermId
-            if ((Assert-Contains $p.allow "use" "allow contains use") -and (Assert-Contains $p.deny "export" "deny contains export")) {
+            if (Assert-Contains $p.allow "use" "allow contains use") {
                 Pass-Test
             }
         } catch { Fail-Test $_.Exception.Message }

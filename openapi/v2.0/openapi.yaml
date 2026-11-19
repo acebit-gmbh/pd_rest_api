@@ -640,6 +640,16 @@ paths:
         next request. The admin routes (`adminListDatabases`,
         `adminGetDatabase`, `adminUpdateDatabase` and the permission routes)
         still list, read and change it for an administrator who manages it.
+
+        Server 20.0.0 and later: a database is listed where a permission in
+        force opens it for the user or for a group the user belongs to, also
+        where it gives nothing inside the database. While the server converts
+        a database's permissions (after an upgrade from an earlier version,
+        once for each database, and for a database added later from an
+        earlier version's file), and where it could not convert them, a
+        client-scope session's list leaves it out and every route under
+        `/databases/{id}` answers `503` (`DatabaseUnavailable`); it is listed
+        again once it is available.
       parameters:
         - $ref: "#/components/parameters/PaginationOffset"
         - $ref: "#/components/parameters/PaginationLimit"
@@ -684,6 +694,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   # ---------------------------------------------------------------------------
   # Folders
@@ -776,6 +788,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
     patch:
       operationId: updateFolder
       tags:
@@ -1118,6 +1132,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
     patch:
       operationId: updateEntry
       tags:
@@ -1465,6 +1481,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   # ---------------------------------------------------------------------------
   # Admin Endpoints
@@ -1576,6 +1594,15 @@ paths:
         Requires an admin-scoped session. A new name that another database
         already has -- the name as it is stored, ending in `.pdepot` (Server
         20.0.0 and later) -- answers `409`, and nothing is changed.
+
+        Server 20.0.0 and later: a change of `db_admins` needs a server
+        administrator, or an owner of the database who holds the Database
+        Administrator role (`403` otherwise). An ID that
+        names no user or group answers `404`, an owner stays on the list
+        (`403`), and a list sent back unchanged changes nothing. The list is
+        written after the other members of the request: if that write is
+        refused, the request answers the error and the other members have
+        been changed.
       parameters:
         - $ref: "#/components/parameters/DatabaseId"
       requestBody:
@@ -1648,7 +1675,10 @@ paths:
       tags:
         - Admin - Permissions
       summary: List permissions for a database (admin)
-      description: Requires an admin-scoped session.
+      description: |
+        Requires an admin-scoped session. Permissions are listed in the order
+        of their `id`. A caller who manages the database sees all of them;
+        any other caller sees those it issued.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/PaginationOffset"
@@ -1679,6 +1709,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: |
+            The database is not available at the moment. Try again later.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: adminCreatePermission
       tags:
@@ -1700,6 +1737,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Permission"
+        "400":
+          description: |
+            Invalid fields, or a request the server refuses by its form: a
+            right named in `deny` or `entry_deny`; a right that is set by
+            policy; rights that do not build on each other; an element of
+            `entry_allow` without `use`, or one that would give less than an
+            element above it in the same permission; an unknown `seal_status`;
+            dates that end before they start or before 1970; a new permission
+            that gives nothing. Nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1710,6 +1760,15 @@ paths:
           description: |
             Server 20.0.0 and later: the database has not been converted to
             the new format; nothing is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: |
+            The database is not available at the moment, or the change could
+            not be written to the database or recorded in the audit trail;
+            nothing is created. Try again later.
           content:
             application/json:
               schema:
@@ -1746,6 +1805,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: |
+            The database is not available at the moment. Try again later.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     patch:
       operationId: adminUpdatePermission
       tags:
@@ -1766,6 +1832,15 @@ paths:
         `404` for an unknown `principal_id` and precedes the checks of the
         rights the permission grants. A refused request leaves the
         permission unchanged.
+
+        Only the members a request names change, and each one replaces that
+        member as a whole: an element left out of `entry_allow` is removed.
+        A permission read with `adminGetPermission` and sent back as it is
+        changes nothing. An `allow` list without `use` opens nothing: what
+        the permission gave at the database level goes, and its entry-level
+        rights stay and wait. A request that leaves a permission giving
+        nothing removes it: the answer is `200` with the permission as
+        requested, and a later `GET` or `PATCH` of its `id` answers `404`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - $ref: "#/components/parameters/PermissionId"
@@ -1782,13 +1857,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Permission"
+        "400":
+          description: |
+            Invalid fields, or a request the server refuses by its form: a
+            right named in `deny` or `entry_deny`; a right that is set by
+            policy; rights that do not build on each other; an element of
+            `entry_allow` without `use`, or one that would give less than an
+            element above it in the same permission; an unknown `seal_status`;
+            dates that end before they start or before 1970; a new permission
+            that gives nothing. Nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           description: |
             Not the issuer, a seal approver or a manager of the database, no
-            right on a referenced entry, or (Server 20.0.0 and later) a change
-            of `seal_status` the caller may not make; nothing was changed.
+            `share` right on the database or on a referenced entry, a right
+            the caller does not hold, a change of a permission that
+            administers the database by a caller who is neither an owner of
+            the database nor, for `manage`, a server administrator, the
+            server's policy on access given to oneself, or (Server 20.0.0 and
+            later) a change of `seal_status` the caller may not make; nothing
+            was changed.
           content:
             application/json:
               schema:
@@ -1802,10 +1895,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: |
+            The change would leave the database without an owner whose
+            ownership has no end date; nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "501":
           description: |
             Server 20.0.0 and later: the database has not been converted to
             the new format; nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: |
+            The database is not available at the moment, or the change could
+            not be written to the database or recorded in the audit trail;
+            nothing is changed. Try again later.
           content:
             application/json:
               schema:
@@ -1832,10 +1942,27 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The delete would leave the database without an owner whose
+            ownership has no end date; nothing is deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "501":
           description: |
             Server 20.0.0 and later: the database has not been converted to
             the new format; nothing is deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: |
+            The database is not available at the moment, or the change could
+            not be written to the database or recorded in the audit trail;
+            nothing is deleted. Try again later.
           content:
             application/json:
               schema:
@@ -4261,6 +4388,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/folders/{folder_id}/children:
     parameters:
@@ -4292,6 +4421,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   /databases/{db}/folders/{folder_id}/move:
     parameters:
@@ -4416,6 +4547,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
     put:
       operationId: uploadDocumentContent
       tags:
@@ -4572,6 +4705,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   # ---------------------------------------------------------------------------
   # Database icons (Server 20.0.0 and later)
@@ -4661,6 +4796,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
     post:
       operationId: uploadDatabaseIcon
       tags:
@@ -4822,6 +4959,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   # ---------------------------------------------------------------------------
   # Recycle bin (Server 20.0.0 and later)
@@ -4879,6 +5018,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
     delete:
       operationId: emptyRecycleBin
       tags:
@@ -5084,6 +5225,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
 
   # ---------------------------------------------------------------------------
   # Client channel (Server 20.0.0 and later): the sync connection of the apps
@@ -5990,10 +6133,10 @@ components:
       name: id
       in: path
       required: true
-      description: Permission ID
+      description: |
+        Permission ID. A string, not always a UUID.
       schema:
         type: string
-        format: uuid
 
     UserId:
       name: id
@@ -6364,10 +6507,15 @@ components:
 
     DatabaseUnavailable:
       description: |
-        Server 20.0.0 and later. The change could not be written to the
-        database file: nothing was written, and the database is as it was
-        before the request. Keep the user's input and try again later. Match
-        the status, never the message.
+        Server 20.0.0 and later. The database is not available at the moment
+        -- the server is converting its permissions, after an upgrade from an
+        earlier version or for a database added later from an earlier
+        version's file, or could not convert them -- with the message "This
+        database is not available at the moment. Try again later."; or, for a
+        change, the change could not be written to the database file: nothing
+        was written, and the database is as it was before the request. Keep
+        the user's input and try again later. Match the status, never the
+        message.
       content:
         application/json:
           schema:
@@ -7452,7 +7600,21 @@ components:
               items:
                 type: string
                 format: uuid
-              description: User IDs designated as database administrators
+              description: |
+                IDs of the users and groups that administer this database,
+                owners included, sorted by ID. Server 20.0.0 and later: a
+                change of the list needs a server administrator, or an owner
+                of the database who holds the Database Administrator role.
+            db_owners:
+              type: array
+              readOnly: true
+              items:
+                type: string
+                format: uuid
+              description: |
+                Server 20.0.0 and later: IDs of the users and groups that own
+                this database, sorted by ID; each of them is also in
+                `db_admins`.
             db_supervisors:
               type: array
               items:
@@ -7501,9 +7663,8 @@ components:
             deleted. Everyone may always see what they deleted themselves,
             whatever this says; restoring and destroying still need the rights
             the recyclebin routes describe. `true` for a server administrator,
-            and for a database administrator of this database (the Database
-            Administrator role, listed in `db_admins`) who holds delete and
-            update permission on it.
+            and for a user who administers this database (whom `db_admins`
+            lists, directly or through a group).
 
     # --- Database icons ---
     DatabaseIconsCapability:
@@ -8621,14 +8782,16 @@ components:
       description: |
         A permission binds a principal (user OR group, identified by
         `principal_id`) to a database, optionally gated by a validity
-        window and a seal workflow. The basic view returned in list
-        responses carries only identity and validity; the full view (from
-        `GET /admin/databases/{db}/permissions/{id}`) additionally
-        includes the allow/deny right tokens and per-entry overrides.
+        window and a seal workflow. It only gives rights. The basic view
+        returned in list responses carries only identity and validity; the
+        full view (from `GET /admin/databases/{db}/permissions/{id}`)
+        additionally includes the rights tokens and the entry-level rights.
       properties:
         id:
           type: string
-          format: uuid
+          description: |
+            Identifier of the permission, read-only. A string, not always a
+            UUID: treat it as opaque.
           readOnly: true
         principal_id:
           type: string
@@ -8642,7 +8805,7 @@ components:
         issuer_id:
           type: string
           format: uuid
-          description: ID of the user who created the permission
+          description: ID of the user who created the permission; empty when it names no issuer
           readOnly: true
         valid_from:
           type: string
@@ -8657,22 +8820,28 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RightToken"
-          description: Database-level allow rights
+          description: |
+            Rights at the database level. `use` alone opens the database and
+            reaches no entry. A list without `use`, the empty list included,
+            opens nothing: what the permission gave at the database level
+            goes, and its entry-level rights stay and wait.
         deny:
           type: array
           items:
             $ref: "#/components/schemas/RightToken"
-          description: Database-level deny rights (override `allow`)
+          description: |
+            Always empty. A request that names a right here answers `400`.
         entry_allow:
           type: array
           items:
             $ref: "#/components/schemas/ItemRightOverride"
-          description: Per-entry or per-folder allow overrides
+          description: Rights on entries and folders
         entry_deny:
           type: array
           items:
             $ref: "#/components/schemas/ItemRightOverride"
-          description: Per-entry or per-folder deny overrides
+          description: |
+            Always empty. A request that names a right here answers `400`.
         seal_status:
           type: integer
           enum:
@@ -8699,44 +8868,119 @@ components:
             type: string
             format: uuid
           description: User IDs designated as seal approvers
+        level:
+          type: string
+          nullable: true
+          readOnly: true
+          description: |
+            Server 20.0.0 and later: the level the permission gives on the
+            database, `view`, `use`, `read` or `edit`; `null` where it gives
+            no level there.
+        caps:
+          type: array
+          readOnly: true
+          items:
+            $ref: "#/components/schemas/PermissionCapability"
+          description: |
+            Server 20.0.0 and later: the capabilities the permission gives on
+            the database.
+        origin:
+          type: string
+          nullable: true
+          readOnly: true
+          description: |
+            Server 20.0.0 and later: how the permission came about: `manual`,
+            `conversion`, `provisioning` or `client`.
 
     RightToken:
       type: string
       description: |
-        A single right on a database. These tokens also appear under
-        `entry_allow` / `entry_deny` when narrowed to a specific
-        entry or folder.
+        A single right, in `allow` and in the `rights` of an element of
+        `entry_allow`. `use` opens the database in `allow` and reaches no
+        entry there; on an entry or folder it lets the entry be used without
+        its secret being shown. `read` needs `use`, `update` and `share` need
+        `read`, `second_pass` needs `update`, `seal` needs `share`. In
+        `allow`, every right but `use` needs `read` as well. Printing,
+        exporting, saving a copy, auto-complete, the browser add-on and
+        synchronization are set by policy, and a request that names their
+        tokens answers `400`.
       enum:
         - use
         - read
         - update
         - create
         - delete
-        - print
-        - export
-        - save
-        - auto_complete
-        - addon_fill
-        - addon_offer
-        - sync
         - share
         - seal
         - second_pass
 
+    PermissionCapability:
+      type: string
+      description: |
+        A capability a permission gives. `protect` is the right
+        `second_pass`; `manage` and `own` have no right token: administrators
+        are changed with `db_admins`, and owners in the Server Manager.
+      enum:
+        - create
+        - delete
+        - share
+        - protect
+        - manage
+        - own
+        - seal
+
     ItemRightOverride:
       type: object
       description: |
-        Per-entry or per-folder override of a right. The `target_id`
-        points at an entry or folder; `rights` lists the right tokens
-        that are overridden for that target.
+        The rights of a permission on one entry or folder.
       properties:
-        target_id:
+        id:
           type: string
           format: uuid
+          description: ID of the entry or folder
         rights:
           type: array
           items:
             $ref: "#/components/schemas/RightToken"
+        level:
+          type: string
+          nullable: true
+          readOnly: true
+          description: |
+            Server 20.0.0 and later: the level on this entry or folder,
+            `view`, `use`, `read` or `edit`.
+        caps:
+          type: array
+          readOnly: true
+          items:
+            $ref: "#/components/schemas/PermissionCapability"
+          description: |
+            Server 20.0.0 and later: the capabilities on this entry or folder.
+        origin:
+          type: string
+          nullable: true
+          readOnly: true
+          description: |
+            Server 20.0.0 and later: how this element came about: `manual`,
+            `conversion`, `provisioning` or `client`.
+        own_permissions:
+          type: boolean
+          readOnly: true
+          description: |
+            Server 20.0.0 and later: whether this entry or folder has its own
+            permissions; it then takes nothing from the folders above it.
+        valid_from:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: Server 20.0.0 and later. The start of this element alone.
+        valid_until:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: Server 20.0.0 and later. The end of this element alone.
 
     # --- Users ---
     UserBasic:
@@ -10965,7 +11209,10 @@ components:
           description: |
             The user's capabilities on the record, each once, in this order:
             `create`, `delete`, `share`, `protect`, `manage`, `own`; ignore
-            an unknown word
+            an unknown word. On the database's own record (the record `root`
+            names) `create` alone, where the user may create at the top of
+            the database and the session answer carries `root_caps`; on the
+            database's other records that are no folder and no entry, none
         own_permissions:
           type: boolean
           description: The record carries permissions of its own
@@ -11156,6 +11403,17 @@ components:
             The server's own id, the same text as the `server` of a lease
             and of the policy bundle; written only in an answer that
             carries an `offline` object
+        root_caps:
+          type: boolean
+          enum: [true]
+          description: |
+            `true`: the database's own record (the record `root` names)
+            states in its `access.caps` whether the user may create, move
+            and restore folders and entries at the top of the database --
+            `create` where the user may, none where not; a push that does
+            so without it is rejected `not authorised`. Written last before
+            `release_secret`. Absent: an empty `caps` on that record says
+            nothing about the top
         release_secret:
           type: string
           nullable: true

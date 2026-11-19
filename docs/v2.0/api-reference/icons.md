@@ -142,6 +142,7 @@ With `ids=3,7&include=data`:
 | `401` | `401` | Not authenticated |
 | `404` | `404` | Database not found or not accessible to you. Also the answer of a server older than 20.0.0, and of any further path segment that is not an icon id |
 | `405` | `405` | Method other than `GET` or `POST` (`Allow: GET, POST`) |
+| `503` | `503` | The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 ### Examples
 
@@ -217,6 +218,7 @@ Store the image under the `version` that this response carries. When it differs 
 | `404` | `4042` | No usable icon with that id in **this** database: the id is unknown, the icon was removed, it has no image, or the stored image cannot be served (`PD_ERRCODE_ICON_NOT_FOUND`). Show the item's standard [`icon`](entries.md#compact-representation) and do not ask again in this session |
 | `404` | `404` | Database not found or not accessible to you; a server older than 20.0.0; an `icon_id` that is not 1 to 6 digits; any further path segment |
 | `405` | `405` | Method other than `GET` (`Allow: GET`) |
+| `503` | `503` | The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)). Try again later |
 
 ### Examples
 
@@ -305,7 +307,7 @@ Any other key is ignored. The whole request body may be at most `65536` bytes.
 ### Order of checks
 
 1. `401` without a valid token; a plain `403` on a mirror server
-2. `404` when the database does not exist or is not accessible to you
+2. `404` when the database does not exist or is not accessible to you; `503` when it is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment))
 3. `405` for a method other than `GET` or `POST`
 4. `403` when you may not upload to this database
 5. `400` when the body is missing or is not a JSON object (a form-encoded body counts as missing); `413` / `4131` when the body is larger than `65536` bytes
