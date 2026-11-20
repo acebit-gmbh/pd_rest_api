@@ -12,6 +12,8 @@ Permissions control which users and groups can access a database and what operat
 
 Multiple permissions can exist for the same principal on the same database, with different validity periods or different entries and folders. A permission only gives rights: what a principal holds is the sum of what the permissions of the principal and of its groups give, and a right given on a folder reaches everything below it. A folder or entry that has its own permissions takes nothing from the folders above it; the `own_permissions` member of an `entry_allow` element says where. To narrow what someone holds, remove the right, or give the object its own permissions in the Server Manager.
 
+The server removes, on its own, what can no longer give access: a permission, or a part of one, one year after it ended, and the parts that name an entry or folder deleted for good (emptied from the recycle bin). What it removed is no longer listed or returned -- `valid_from` and `valid_until` come from the parts that remain --, and a permission whose every part was removed answers `404 Not Found`.
+
 ---
 
 ## Permission Object
