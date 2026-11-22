@@ -77,7 +77,7 @@ The example is indented for reading. The server writes the bundle compactly, wit
 | `403 Forbidden` | As for every authenticated request, for example a client platform the server's **Allowed client platforms** policy does not allow (`4036` for Android) or a version below its **Minimum client version** policy (`4037`); see [Authentication](authentication.md#error-responses) |
 | `404 Not Found` | A further path segment after `policy` |
 | `405 Method Not Allowed` | Any method but `GET`, with `Allow: GET` |
-| `500 Internal Server Error` | The server issues bundles but cannot issue this one at that moment -- a mirror server before its main server's configuration and policies have arrived is one such case; the message is the generic one with a reference, and the server log names the reason. It never means that no policy applies; see [When to Fetch It](#when-to-fetch-it) |
+| `500 Internal Server Error` | The server issues bundles but cannot issue this one at that moment -- a mirror server before its primary server's configuration and policies have arrived is one such case; the message is the generic one with a reference, and the server log names the reason. It never means that no policy applies; see [When to Fetch It](#when-to-fetch-it) |
 
 ### Example
 
@@ -120,7 +120,7 @@ A successful sign-in with the client scope -- `POST /auth/login` with every `aut
 ```
 
 - A sign-in with the admin scope never carries `policy`; such a session reads its account's bundle with `GET /me/policy`.
-- Where the server cannot issue the bundle at that moment -- a mirror server before its main server's configuration and policies have arrived is one such case --, the sign-in still succeeds and its answer comes without `policy`; `GET /me/policy` then answers `500` for as long as it cannot.
+- Where the server cannot issue the bundle at that moment -- a mirror server before its primary server's configuration and policies have arrived is one such case --, the sign-in still succeeds and its answer comes without `policy`; `GET /me/policy` then answers `500` for as long as it cannot.
 - The answers that issue no token -- `401`, `403`, `429`, `459`, `460` and the others -- never carry it.
 
 ---
@@ -131,8 +131,8 @@ A successful sign-in with the client scope -- `POST /auth/login` with every `aut
 |--------|------|-------------|
 | `type` | string | Always `pd-policy-bundle` |
 | `v` | integer | The version of the bundle's shape: `1` |
-| `server` | string | The server's id, `srv:` followed by 32 lower-case hexadecimal digits. It never changes for a server, and a mirror server names its main server's. Always present: where the server has no id, it issues no bundle (see [In the Sign-In Answer](#in-the-sign-in-answer)) |
-| `incarnation` | string | The id of the server's policy store whose changes `serial` counts, 22 characters of base64url. A mirror server names its main server's. Always present: where the store has none, the server issues no bundle |
+| `server` | string | The server's id, `srv:` followed by 32 lower-case hexadecimal digits. It never changes for a server: a mirror server names its primary server's, and a mirror that [takes over](mirror.md#after-a-mirror-has-taken-over) as the primary server keeps it. Always present: where the server has no id, it issues no bundle (see [In the Sign-In Answer](#in-the-sign-in-answer)) |
+| `incarnation` | string | The id of the server's policy store whose changes `serial` counts, 22 characters of base64url. A mirror server names its primary server's; a mirror that takes over as the primary server answers a new one. Always present: where the store has none, the server issues no bundle |
 | `serial` | integer | The count of policy changes, as the server's policy store holds it: it moves with every change of a policy and with every change of the users and groups that can alter what applies to a user -- a membership added or removed, a user or a group disabled, enabled or deleted. Compare it, and `incarnation`, only for equality, never as a time or as a number of changes for this user: a pair that differs from your copy's means that something changed on the server since, not necessarily for this user. An equal pair does not promise an equal bundle -- a group's new name, for one, reaches `src` without moving `serial` --, so apply the newest bundle you hold as a whole (see [When to Fetch It](#when-to-fetch-it)) |
 | `user` | string | `u:` followed by the user's id |
 | `session` | object | The session the bundle was issued for; see [Session](#session) |

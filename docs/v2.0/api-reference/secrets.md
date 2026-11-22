@@ -132,6 +132,8 @@ The `open_uuid` and `approve_uuid` are returned in the full representation, but 
 
 *Server 20.0.0 and later.* While the entry of a secret belongs to a database an administrator has disabled (see [Disabled Databases](databases.md#disabled-databases)), the HTTPS page of its link answers exactly as for a link that does not exist, its warning page and its content alike. The secret itself is not changed: once the database is enabled again, the link opens as before, within its own expiry, open count and approval.
 
+*Server 20.0.0 and later.* A link opens on the primary server only. On a [mirror server](mirror.md) the HTTPS page of a link opens nothing and says "This link can be opened on the primary server *address* only." (without the address where the mirror's settings name none); a secret cannot be created there either. Build the links with the primary server's address.
+
 ### Recipients and Approvers
 
 *Server 20.0.0 and later.* `recipient_ids` and `approver_ids` hold the ids of users and groups of the server:

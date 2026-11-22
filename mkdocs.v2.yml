@@ -77,6 +77,7 @@ nav:
       - Policies: api-reference/policies.md
       - Policies for Clients: api-reference/client-policy.md
       - Client Channel: api-reference/channel.md
+      - Mirror Servers: api-reference/mirror.md
       - Key Stores: api-reference/key-stores.md
       - Alerts: api-reference/alerts.md
       - Secrets: api-reference/secrets.md

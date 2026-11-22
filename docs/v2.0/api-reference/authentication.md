@@ -57,7 +57,7 @@ Each platform is one entry of the policy in the Server Manager:
 | `windows` | Windows |
 | `windows-corp` | Windows (Corporate Edition) |
 
-A value enforced at server scope refuses the platform to every account alike; it is checked at login (including both WebAuthn steps), on OIDC discovery (`GET /auth/oidc`) and on every authenticated request, before the account is known. Otherwise the value that applies to the account is checked once the sign-in has proven the account -- after the password, identity token or Windows sign-in was accepted, or after the passkey assertion was verified -- and on every authenticated request, long-lived API tokens included. A platform the policy leaves out is refused as described below. A mirror server that has not yet received its main server's policies after an upgrade refuses every platform.
+A value enforced at server scope refuses the platform to every account alike; it is checked at login (including both WebAuthn steps), on OIDC discovery (`GET /auth/oidc`) and on every authenticated request, before the account is known. Otherwise the value that applies to the account is checked once the sign-in has proven the account -- after the password, identity token or Windows sign-in was accepted, or after the passkey assertion was verified -- and on every authenticated request, long-lived API tokens included. A platform the policy leaves out is refused as described below. A mirror server that has not yet received its primary server's policies after an upgrade refuses every platform.
 
 New session tokens retain the platform established at login. Later requests without the header use that stored platform; a header declaring a different platform returns `400`. If the stored platform is disabled, that policy refusal takes precedence over a conflicting header. Clients cannot change the platform of an established session by omitting or changing the header.
 
@@ -571,7 +571,7 @@ When the request carried `"trust_device": true` and made the device trusted (Ser
 | `tfatoken_expires_at` | string (UTC, ISO 8601) | Present with `tfatoken`: when the server stops accepting the token under the trusted-device period in force at issue. Advisory: the server can stop accepting it earlier, and accepts it for longer if the period is raised. |
 | `id` | string | *Server 20.0.0 and later.* Only where the sign-in declared `client.protocol`: the account's id as the server holds it, letter case included; `GET /me` answers the same text. See [Client Protocol](#client-protocol). |
 | `client_protocol` | integer | *Server 20.0.0 and later.* Only where the sign-in declared `client.protocol`: the protocol the server admitted for the session's [client channel](channel.md). |
-| `policy` | object | *Server 20.0.0 and later.* Only with the client scope: the [client policy bundle](client-policy.md) of the signed-in user for the session the login opened, after the members above. Absent from an admin-scope login; such a session reads its account's bundle with [`GET /me/policy`](client-policy.md#get-own-policy-bundle). Also absent where the server cannot issue the bundle at that moment (a mirror server before its main server's configuration and policies have arrived is one such case); the sign-in still succeeds, and `GET /me/policy` answers `500` for as long as the server cannot issue it. See [In the Sign-In Answer](client-policy.md#in-the-sign-in-answer). |
+| `policy` | object | *Server 20.0.0 and later.* Only with the client scope: the [client policy bundle](client-policy.md) of the signed-in user for the session the login opened, after the members above. Absent from an admin-scope login; such a session reads its account's bundle with [`GET /me/policy`](client-policy.md#get-own-policy-bundle). Also absent where the server cannot issue the bundle at that moment (a mirror server before its primary server's configuration and policies have arrived is one such case); the sign-in still succeeds, and `GET /me/policy` answers `500` for as long as the server cannot issue it. See [In the Sign-In Answer](client-policy.md#in-the-sign-in-answer). |
 
 !!! info "Simplified Response"
     Unlike v1.0, the login response has no `client_id` -- the Bearer token alone identifies the session. Besides `access_token` it carries the trusted-device fields above, only when the login asked for them with `trust_device`, `id` and `client_protocol` only when it declared `client.protocol`, and with the client scope the user's `policy`. Ignore members you do not know.
@@ -592,6 +592,8 @@ For **automation and service accounts** (e.g., scheduled tasks, CI/CD pipelines,
 | **API tokens: maximum lifetime** (`auth.api_tokens.max_lifetime`) | 1 to 730 days. A token is refused once this time has passed since it was created, and a new token's expiry is cut to its creation time plus this time. |
 
 Both are checked on every request made with a long-lived token, `POST /auth/logout` included, against the values that apply to the account at that moment: switching tokens off ends every existing token of the account, and lowering the maximum lifetime ends the tokens older than it. A token the policies end receives `401` with `error.code` `401` and "Access token is invalid or expired.", as a revoked token does. It is not revoked: it is accepted again once the policies allow it, until its own expiry. The check comes after the token's signature, the account's status, the client platform, the token's expiry and whether it is still registered and not revoked, and before the **Allowed network addresses** policy; a refused request is not recorded as the token's last use and does not count towards the IP lockout (`429`). The server log and the audit record name the policy setting and the scope.
+
+**Mirror servers.** *Server 20.0.0 and later.* A long-lived token works on the server whose Server Manager created it, the primary server. A [mirror server](mirror.md#tokens-on-a-mirror-server) creates none and answers a token of its primary server `401` with "This server is a mirror of *address*. Sign in here again; API tokens work on the primary server only."; after a mirror has [taken over](mirror.md#after-a-mirror-has-taken-over) as the primary server, the tokens of the former primary server are answered `401` with "Access token is invalid or expired.", and new ones are created in the Server Manager of the new primary server.
 
 When a token is created in the Server Manager, the server refuses it where **Allow API tokens** is off for the account, and cuts its expiry to the maximum lifetime that applies; the Server Manager then says which expiry the token got. An expiry that is not in the future is refused. Where no maximum lifetime applies, the expiry is at most 730 days after the creation. The token's `exp` claim is always the expiry the server stored.
 
@@ -705,6 +707,10 @@ A client whose declared version is below the server's **Minimum client version**
 **403 -- Admin scope refused**
 
 *Server 20.0.0 and later.* A sign-in with `"scope": "admin"` by an account that holds no server role receives `403` with `error.code: 403`, with every `auth` method and on the passkey sign-in. It comes once the credential is accepted and before a second factor is asked; no token is issued, and it counts towards the IP lockout (`429`) as a failed sign-in. See [Client vs Admin Scope](#client-vs-admin-scope).
+
+**403 -- Sign-in refused by a mirror server, or by a server that hands over**
+
+*Server 20.0.0 and later.* A [mirror server](mirror.md#signing-in-on-a-mirror-server) refuses a sign-in -- `POST /auth/login` with every `auth` method and both passkey steps -- with `403` and `error.code: 403`, before any credential is examined and without counting it towards the IP lockout, where it is no longer a mirror of its primary server ("This server is no longer a mirror of its primary server. Sign in on the primary server.") or where none of its databases has been brought up to date from the primary server for longer than its administrator allows ("This mirror has not been brought up to date from its primary server for more than *n* hours. Sign in on the primary server."). A server that is handing over to its mirror, has been replaced by another primary server, or is a mirror leaving its primary server answers every request with `403` and a message that says so, the sign-in included (see [Mirror Servers](mirror.md)). Show the message and do not retry: sign in on the server it names, or on the primary server.
 
 **401 -- Unauthorized**
 
@@ -929,7 +935,7 @@ Servers before 20.0.0 decide by the server's two-factor settings (Server Manager
 | No second factor asked of the user (not required by the server's policies) | No: `trust_device` is ignored | Ignored |
 | Trusted-device period `0` for the user | No | No |
 | `"scope": "admin"` | No | Ignored |
-| Mirror server | No | Yes, tokens the main server issued |
+| Mirror server | No | Yes, tokens the primary server issued |
 | Passkey sign-in (`/auth/webauthn/complete`) | No: no second factor is involved | Not used |
 
 The `auth` methods `standard`, `sspi`, `azure` and `oidc` all support trusted devices. With `negotiate`, `trust_device` and `tfatoken` must be in the body of the request that completes the handshake, as `tfacode` must.

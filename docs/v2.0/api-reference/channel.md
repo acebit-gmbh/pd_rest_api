@@ -186,7 +186,7 @@ The example is indented for reading; the server writes the answer compactly, in 
 |-------|------|-------------|
 | `incarnation` | string | The id of the database's current store, 16 bytes in base64url. A pull answer with another `incarnation` means that the app reconciles |
 | `generation` | integer | The database's change number: it rises with every change written to the database |
-| `writable` | boolean | `false` where the database takes no changes at the moment. It is still pulled; a push's batches are then deferred `read-only` |
+| `writable` | boolean | `false` where the database takes no changes at the moment, and always on a [mirror server](mirror.md#the-client-channel-on-a-mirror-server). It is still pulled; a push's batches are then deferred `read-only` |
 | `db_id` | string | The database's own id, in lower case. Compare it with the `{db}` you opened before the first pull; where they differ, open nothing |
 | `root` | string | The id of the database's root record: every top-level folder and entry names it as its parent, also where the user sees no record yet |
 | `floor` | integer | The floor the server holds for this `writer` id, as a push answer names it (see [Push Changes](#push-changes)); absent where the server holds nothing for that id yet. For diagnostics only |
@@ -194,11 +194,12 @@ The example is indented for reading; the server writes the answer compactly, in 
 | `recycle_bin` | object | The recycle bin as it applies to the user: `max_items`, the number of top-level items the bin keeps, `0` to `10000` (`0`: a deletion does not stay in the bin, so delete as "delete permanently" does); `manage`, `true` where the user manages this database's bin and may reach every item in it, `false` where only the items the user deleted. Either way the user's permissions on an item's place decide too. An app that receives no `recycle_bin` offers no command of the bin |
 | `usage` | object | The usage policies as they apply to the user on this database, by setting id: `usage.autofill.channels` and `usage.export.channels` as arrays of words, `usage.print.allowed`, `usage.clipboard.allowed` and `usage.attachments.external_open` as booleans. **Fail closed:** a function whose setting the object does not hold, or holds in another type, is not allowed. Ignore a setting id or a word you do not know. The values hold until the database is opened again |
 | `shared_secrets` | object | What the server applies when a shared secret of an entry of this database is created: `approval` -- `required` where the server's policy requires approval (the server then sets approval on every shared secret created in the database), `not_required` where the policy says that approval is not required (nothing is forced, and a secret may still ask for approval), `unset` where it says nothing and the user chooses; read a word you do not know as `unset` --; `quorum`, the least number of approvals the server sets on a secret created with approval, `0` where it sets none; `approvers`, the users and groups designated to approve the database's shared secrets, as an app offers them for a new secret, at most 256, each an object with `id` -- `u:` and a user's id, or `g:` and a group's id -- and `name`, the user's full name (else the user name) or the group's name. The prefix is for display only: name each approver in `approver_ids` by its id without it (see [Recipients and Approvers](secrets.md#recipients-and-approvers)). The list leaves out the user who opened the database, who may not approve a secret of their own. A count of `approvers` is no count of approvals: each user a secret names in `approver_ids` may approve it once, and so may each member of a group named there, as [Recipients and Approvers](secrets.md#recipients-and-approvers) matches an approver. Read a `shared_secrets` that is not an object of this form as absent. Absent on a mirror server. The values hold until the database is opened again |
-| `blobs` | object | What the server serves of a document's content: `max_size`, the largest size an upload may declare, in bytes; `push`, `true` where a push may name new content and the database takes changes now; `icons`, `true` where the server serves a database icon's picture through the channel: the picture by [Download Chunks](#download-chunks) naming the icon's record, and, where `push` is `true` too, an icon's creation and a new picture by a push - a PNG of at most 32768 bytes in one chunk, at most 1024 icons in a database, a push beyond them refused `too large` with the detail `image` or `icons`; absent where it does not. Without `blobs` send no chunk request and push no reference to content; where `push` is `false` upload no chunk and push no reference to content |
+| `blobs` | object | What the server serves of a document's content: `max_size`, the largest size an upload may declare, in bytes; `push`, `true` where a push may name new content and the database takes changes now; `icons`, `true` where the server serves a database icon's picture through the channel: the picture by [Download Chunks](#download-chunks) naming the icon's record, and, where `push` is `true` too, an icon's creation and a new picture by a push - a PNG of at most 32768 bytes in one chunk, at most 1024 icons in a database, a push beyond them refused `too large` with the detail `image` or `icons`; absent where it does not. Without `blobs` send no chunk request and push no reference to content; where `push` is `false` upload no chunk and push no reference to content. On a mirror server `push` is `false` and `icons` is absent |
 | `audit` | object | The database's audit settings by setting id, as booleans: `audit.log_secret_access`, `true` where an administrator asks that each use of a password or another protected value in this database be recorded; `audit.reason.delete`, `true` where an administrator asks for a reason with each deletion of an entry. **Fail closed:** where the server cannot read a database's audit settings it answers `true` for both. For information: no request on this connection depends on them. Ignore a setting id you do not know |
 | `offline` | object | Present where the server serves [offline copies](#offline-copies), `null` where it cannot say at the moment; absent on a server that serves none and on a mirror server. It announces the two routes of that section and `offline_since` on a push, and its members say what applies to the user on this database: `allowed`, a boolean, `true` where the user may keep a copy; `max_age`, how long a copy stays usable offline, in seconds; `unlock`, the ways a copy may be unlocked, as an array of the words `fido2-prf`, `os-protected` and `password`; `second_factor`, a boolean, `true` where a copy must be unlocked by a password and a second factor together; `sign_in`, the kind of the account -- `standard`, `windows`, `azure` or `oidc` --, by which a copy may have the Windows account as its only way in (never for `standard`); `lease`, the state of this `writer` id's copy at the server, `live` or `revoked`, absent where the server holds no copy of it. **Fail closed:** read an `offline` that is not an object, that lacks one of these members or whose member is not of its type as absent, and keep no copy. Ignore a member, and a word of `unlock`, that you do not know; a `sign_in` word you do not know reads as `standard`, and a `lease` word you do not know reads as `offline` absent |
 | `server` | string | The server's own id, `srv:` and 32 lower-case hexadecimal digits: the same text as the `server` of a lease and of the policy bundle. Written only in an answer that carries an `offline` object, and read in that form alone -- an announced `offline` without it reads as absent. A copy needs it before its first lease, to tell the servers apart whose sign-ins the device notes |
-| `root_caps` | boolean | `true`: the database's own record -- the record `root` names, which every user who opens the database receives -- says in its `access.caps` whether the user may create, move and restore folders and entries at the top of the database: `["create"]` where the user may, `[]` where not. A push that does so for a user whose record carries no `create` is rejected `not authorised`, so offer those commands only where the record carries `create`. Written as the last member before `release_secret`. Where `root_caps` is absent or not `true`, an empty `caps` on that record says nothing about the top: offer the commands and let the server judge the push |
+| `root_caps` | boolean | `true`: the database's own record -- the record `root` names, which every user who opens the database receives -- says in its `access.caps` whether the user may create, move and restore folders and entries at the top of the database: `["create"]` where the user may, `[]` where not. A push that does so for a user whose record carries no `create` is rejected `not authorised`, so offer those commands only where the record carries `create`. Written after `server`, where the answer carries it, and before `mirror` and `release_secret`. Where `root_caps` is absent or not `true`, an empty `caps` on that record says nothing about the top: offer the commands and let the server judge the push |
+| `mirror` | object | Only on a [mirror server](mirror.md), in every answer: `principal`, the primary server's address for clients as the mirror's settings name it -- a text for display, or `null` where they name none --, and `as_of`, an integer, the time in milliseconds since 1970-01-01 UTC at which the mirror last knew its copy of the database to equal the primary server's. For information: what shapes the app is `writable`, `false` on a mirror; the app may show `principal` and `as_of` in its read-only view and acts on nothing else of it. Read a `mirror` that is not an object, a `principal` that is neither a string nor `null`, and an `as_of` that is not an integer from 0 to 2^53 - 1 as absent; an offline copy keeps none of it. Absent on a server that takes changes |
 | `release_secret` | null | Reserved; always `null` |
 
 **Features added later** are announced by a member of this answer: where the member is absent or `null`, the app offers nothing of that feature and sends none of its requests. `recycle_bin` and `blobs` are such members. A member shapes what an app offers, never what the server allows: the server judges every request as ever.
@@ -220,8 +221,8 @@ Without `field_key`. Closes the database in this REST session -- its field key w
 | `409` | `writer of another principal` | The `writer` id was first used on this database by another user |
 | `409` | `in use by an older client` | An older client that does not use the channel holds the database open; try again later |
 | `409` | `too many sessions` | The REST session holds 64 open databases; close one first |
-| `503` | `not served` | The database cannot be served at the moment, also while the server converts its permissions (see [The Database Gate](#the-database-gate)): keep the database and back off |
-| `503` | `busy` | The server does not take requests at the moment, or the request waited out its turn |
+| `503` | `not served` | The database cannot be served at the moment, also while the server converts its permissions (see [The Database Gate](#the-database-gate)), and on a [mirror server](mirror.md#the-client-channel-on-a-mirror-server) where it holds no copy of the database that it can serve now: keep the database and back off |
+| `503` | `busy` | The server does not take requests at the moment, or the request waited out its turn; on a [mirror server](mirror.md#the-client-channel-on-a-mirror-server), its copy of the database is being brought up to date from the primary server, or waits for the primary server's configuration of it, with `error.retry_after` |
 
 ---
 
@@ -465,7 +466,7 @@ A change pushed over REST carries `rest/` and the version the sign-in declared a
 | `receipts` | Per change: `counter`, `record`, `groups`, `outcome`, `generation` |
 | `history`, `drop`, `filed`, `clock_anomaly` | `history` is always empty; `drop` names local history items the app drops; `filed`, conflict items the batch filed; `clock_anomaly`, records whose change took the server's clock |
 | `units` | A rejected batch: `{id, reason, detail}` for every unit of the batch |
-| `reason` | A rejected batch's reason where one applies to the batch: `writer level`, `duplicated writer identity`, `too large`. A deferred batch's reason: `read-only` (the database takes no changes now), `busy` (a heavy task holds the database, or a write failed; that batch and every later one), `receipts` (the server's record of the app's changes is full; that batch and every later one), `blob incomplete` (the content the batch names is not uploaded whole) |
+| `reason` | A rejected batch's reason where one applies to the batch: `writer level`, `duplicated writer identity`, `too large`. A deferred batch's reason: `read-only` (the database takes no changes now, as on a [mirror server](mirror.md#the-client-channel-on-a-mirror-server)), `busy` (a heavy task holds the database, or a write failed; that batch and every later one), `receipts` (the server's record of the app's changes is full; that batch and every later one), `blob incomplete` (the content the batch names is not uploaded whole) |
 
 A unit's `reason` is one of `deleted on the server`, `changed on the server` (a purge of a record that changed since the app last received it: once the app holds the newer version, the user may purge again), `stale`, `duplicated writer identity`, `principal` (a change whose stamp names another user than the signed-in one), `protected`, `compartment entry read-only`, `not in this version`, `not authorised`, `incomplete`, `invalid`, `too large`, `tree`, `batch` (a unit refused because another unit of its batch was), with a `detail` where one applies (for `tree`: `loop`, `parent missing`, `parent trashed`, `changed below`, and `not in bin` for a purge of a record that is not in the recycle bin). An unknown reason of a rejected batch is a refusal; an unknown reason of a deferred batch is a wait.
 
@@ -504,7 +505,7 @@ Tells the other users of the database that the user is editing the entry `{id}`:
 
 ### Errors
 
-`400` `malformed`, `404` `not found` (the gate), `404` `not visible` (an entry the user may not see, one that does not exist and a folder alike), `429` `rate limited` (more than 20 editing hints in 10 seconds in the REST session; `Retry-After` and `error.retry_after`), `503` `not served`, `503` `busy`.
+`400` `malformed`, `403` `read only mirror` (a [mirror server](mirror.md#the-client-channel-on-a-mirror-server), where the database is read-only: nothing is set; `error.principal` names the primary server's address for clients, or is `null`), `404` `not found` (the gate), `404` `not visible` (an entry the user may not see, one that does not exist and a folder alike), `429` `rate limited` (more than 20 editing hints in 10 seconds in the REST session; `Retry-After` and `error.retry_after`), `503` `not served`, `503` `busy`. Send no editing hint where the database was opened with `writable` `false`.
 
 ---
 
@@ -626,7 +627,7 @@ Every parameter is required, once, as digits only. The first chunk of an upload 
 | `403` | `not authorised` | The user may change nothing in the database |
 | `413` | `too large` | `size` above `blobs.max_size`, or a new upload whose `size` would take the database past 4 GiB, its documents included |
 | `429` | `quota` | A new upload that would take the user past 128 MiB or 256 uploads on the database, or past 256 MiB on the server; the server first ends the user's own uploads there that took no chunk for 15 minutes. `error.retry_after`: at least the seconds until one of the uploads that count ends its life. Push the records whose content is complete first |
-| `503` | `not served` | The server's disk for uploads is nearly full |
+| `503` | `not served` | The server's disk for uploads is nearly full, or the server is a [mirror server](mirror.md#the-client-channel-on-a-mirror-server), which stores no upload |
 
 And, as on every route of the channel: `404` `not found` (the gate), `409` `no session`, `429` `rate limited`, `500` `failed` (the server could not store the chunk), `503` `busy`.
 
@@ -785,9 +786,11 @@ Each issue, each renewal and each refusal by a `403` word is recorded in the ser
 | `501` | `not in this version` | This server serves no offline copies |
 | `503` | `not served` | No lease at the moment -- the server cannot say what applies to the user, its clock is in question, the copy would pass the number of copies the user may hold of this database, or the lease could not be written. A wait: the copy keeps the lease it holds |
 | `503` | `busy` | The server does not take requests at the moment, or the request waited out its turn |
+| `503` | `renew at the principal` | A [mirror server](mirror.md#the-client-channel-on-a-mirror-server): keep the copy and the lease it holds, and renew it at the primary server |
 
-On a [mirror server](overview.md#http-status-codes) this request is refused with `403` before the token, as every
-`POST` is: keep the copy and ask the principal server, which holds the copies.
+On a [mirror server](mirror.md) this request is answered `503` with the word `renew at the principal` once the
+database gate and the opened database are checked, before the body is read, and nothing is recorded: keep the copy
+and ask the primary server, which holds the copies.
 
 ### Report What Was Done in a Copy
 
@@ -876,9 +879,8 @@ event: keep it and send it again at the [backoff](#words).
 than 256 events, or a body above 256 KiB -- sent to `/v2.0/audit/outbox` or `/v2.0/audit/outbox/` such a body is
 refused before it is read, with `413` and no `word`), `429` `rate limited` (the rates below, nothing recorded),
 `500` `failed`, `501` `not in this version`, `503` `not served` (the server could not record the request: keep
-every event and send it again), `503` `busy`. On a [mirror server](overview.md#http-status-codes) this request is
-refused with `403` before the token, as every `POST` is, and nothing is recorded there: send it to the principal
-server.
+every event and send it again), `503` `busy`, `503` `renew at the principal` (a [mirror server](mirror.md): nothing
+is recorded there; keep every event and send it to the primary server).
 
 ### Records in the Audit Trail
 
@@ -919,6 +921,7 @@ A refused channel request answers the published [error object](overview.md#error
 - The HTTP status is authoritative; `error.code` is the status, or `4039` for `protocol required`.
 - `error.word` is stable English and never localized: match it, never `message`, which is a text for people.
 - `error.retry_after`, where present, is the number of seconds to wait; the response then also carries `Retry-After`.
+- `error.principal`, with the word `read only mirror` alone: the primary server's address for clients, a text for display, or `null`.
 - Ignore members of `error` you do not know.
 - A pull's `reconcile`, a fetch's `missing` and `later` and a batch's outcome are answers, not errors: they come with `200`.
 
@@ -936,6 +939,7 @@ A refused channel request answers the published [error object](overview.md#error
 | `offline not allowed` | `403` | The user may keep no offline copy of this database | Report what the copy holds, tell the user, remove the copy |
 | `second factor required` | `403` | A second factor is required for an offline copy and no stated way holds one | Ask the user for a second factor and state the ways again |
 | `unlock method not allowed` | `403` | A stated way to unlock an offline copy is not allowed for this user | Ask the user for an allowed way and state the ways again |
+| `read only mirror` | `403` | An editing hint on a [mirror server](mirror.md#the-client-channel-on-a-mirror-server), where the database is read-only; `error.principal` names the primary server's address for clients | Nothing: the database takes no changes there |
 | `not found` | `404` | The [database gate](#the-database-gate) | Open the database again at the backoff; see Access lost |
 | `not visible` | `404` | An editing hint for an entry the user may not see | Nothing |
 | `no session` | `409` | The database is not opened in this REST session | Open it, then send the request again |
@@ -950,8 +954,9 @@ A refused channel request answers the published [error object](overview.md#error
 | `rate limited` | `429` | A rate bound, or too many requests of the REST session waiting | After `retry_after` |
 | `failed` | `500` | A failure on the server | Backoff |
 | `not in this version` | `501` | A request this server does not serve | Hide the feature (below) |
-| `not served` | `503` | The database or its history cannot be served at the moment -- a database also while the server converts its permissions --, the server's disk for uploads is nearly full, or no lease can be issued now | Backoff |
-| `busy` | `503` | The server does not take requests at the moment, a heavy task holds the database, or the request waited out its turn | Backoff |
+| `not served` | `503` | The database or its history cannot be served at the moment -- a database also while the server converts its permissions, and on a mirror server where it holds no copy it can serve now --, the server's disk for uploads is nearly full, an upload on a mirror server, or no lease can be issued now | Backoff |
+| `busy` | `503` | The server does not take requests at the moment, a heavy task holds the database, the request waited out its turn, or a mirror server brings its copy of the database up to date from the primary server | Backoff |
+| `renew at the principal` | `503` | A lease or a report of an offline copy sent to a [mirror server](mirror.md#the-client-channel-on-a-mirror-server) | Keep the copy; renew its lease and report at the primary server |
 
 **Backoff:** 1 second, doubling to 60 seconds, `Retry-After` honoured. **An unknown word is a wait:** a `word` you do not know, under any status, reads as a wait at the backoff; the pending changes stay as they are.
 
@@ -962,8 +967,8 @@ Not every answer comes from the channel. The checks before it, the HTTP layer an
 | Status | What stands behind it | What the app does |
 |--------|-----------------------|-------------------|
 | `400` | A request the checks before the channel refuse | Nothing: a defect of the app |
-| `401` | The token refused: expired, ended or invalid, or its account disabled or deleted | Sign in again, then open the databases again; the pending changes stay |
-| `403` | A `POST` or `PUT` on a [mirror server](overview.md#http-status-codes), which accepts only `GET` with a token; the platform and minimum-version policies (`error.code` `4036`, `4037`) | Stop sending, show the server's text, keep the pending changes |
+| `401` | The token refused: expired, ended or invalid, its account disabled or deleted, or, on a [mirror server](mirror.md#tokens-on-a-mirror-server), a token another server issued | Sign in again, then open the databases again; the pending changes stay |
+| `403` | A request other than a `GET` on a [mirror server](mirror.md), before the token, except the routes of the channel, a step of a sign-in and the logout; every request, `GET` and the sign-in included, on a server that is [handing over to its mirror or has been replaced](mirror.md#a-server-that-hands-over-or-has-been-replaced), with a text that says so -- one that has been replaced names the new primary server where it knows its address; the platform and minimum-version policies (`error.code` `4036`, `4037`) | Stop sending, show the server's text, keep the pending changes and any offline copy; do not retry on your own |
 | `404` | A route this server does not know | Hide the feature. Only the word `not found` starts the check of Access lost |
 | `405` | A method the route does not take; `Allow` names the methods it takes | Nothing: a defect of the app |
 | `413` | A body above its bound, refused before it is read | As `too large` |

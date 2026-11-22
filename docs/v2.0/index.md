@@ -95,3 +95,5 @@ v2.0 groups its endpoints by resource, separated into client and admin scopes:
 | [Groups](api-reference/groups.md) | Group administration |
 | [Alerts](api-reference/alerts.md) | Alert management |
 | [Secrets](api-reference/secrets.md) | Full CRUD + workflow on all secrets |
+
+A server can also run as a mirror server of a primary server: it serves reads and the sign-in, and refuses every change. [Mirror Servers](api-reference/mirror.md) says what a mirror answers on Server 20.0.0 and later.

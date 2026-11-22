@@ -227,7 +227,11 @@ info:
     - `403 Forbidden` -- a client version below the server's Minimum client
       version policy: error.code 4037 (Server 20.0.0 and later).
     - `403 Forbidden` -- on a mirror server, every request other than `GET`
-      that carries a bearer token (`POST /auth/logout` included).
+      that carries a bearer token, except the sign-in and, on Server 20.0.0
+      and later, `POST /auth/logout` and the routes of the client channel;
+      on a server that hands over to its mirror or has been replaced by
+      another primary server (Server 20.0.0 and later), every request, with
+      a message that says so. See Mirror Servers in the API reference.
     - `411 Length Required` -- the request carries a `Transfer-Encoding`
       header, whether or not it also sends a `Content-Length`
       (Server 20.0.0 and later). Refused while the request headers are
@@ -390,6 +394,14 @@ paths:
             server role (`error.code` 403), with every `auth` method, once the
             credential is accepted and before a second factor is asked; no
             token is issued, and it counts towards the IP lockout (429).
+            Also (`error.code` 403, with a message that says so) a sign-in
+            on a mirror server that is no longer a mirror of its primary
+            server, or none of whose databases has been brought up to date
+            from it for longer than its administrator allows - before any
+            credential is examined and not counted towards the IP lockout;
+            and every request to a server that hands over to its mirror, has
+            been replaced by another primary server, or is a mirror leaving
+            its primary server. See Mirror Servers in the API reference.
           content:
             application/json:
               schema:
@@ -3665,7 +3677,7 @@ paths:
         "500":
           description: |
             The server issues bundles but cannot issue this one at that
-            moment -- a mirror server before its main server's configuration
+            moment -- a mirror server before its primary server's configuration
             and policies have arrived is one such case; it never means that
             no policy applies. Ask again later and keep the last bundle held
             while it is within its `not_after`. The message is the generic
@@ -5956,9 +5968,10 @@ paths:
         refused before it is read, with `413` and no `word`. Each issue,
         each renewal and each refusal by a `403` word is recorded in the
         audit trail. A server that serves no offline copies answers `501`
-        `not in this version`; a mirror server refuses the request with
-        `403` before the token, as every POST. See Client Channel in the
-        API reference.
+        `not in this version`; a mirror server answers `503` with the word
+        `renew at the principal` and records nothing: the copy renews its
+        lease at the primary server. See Client Channel in the API
+        reference.
       requestBody:
         required: true
         content:
@@ -6015,9 +6028,10 @@ paths:
         with the `writer` and `counter` it was sent with; where the server
         could not record the request it answers `503` `not served` and the
         app sends every event of it again. A server that serves no offline
-        copies answers `501` `not in this version`; a mirror server refuses
-        the request with `403` before the token, as every POST, and records
-        nothing. See Client Channel in the API reference.
+        copies answers `501` `not in this version`; a mirror server answers
+        `503` with the word `renew at the principal` and records nothing:
+        the app sends the events to the primary server. See Client Channel
+        in the API reference.
       requestBody:
         required: true
         content:
@@ -6662,9 +6676,13 @@ components:
         client-scope session that declared no `client.protocol`;
         `not permitted`: a session of the admin scope, whether it declared
         a protocol or not; `not authorised`: an upload of a user who may
-        change nothing in the database. Without `word`: a `POST` or
-        `PUT` on a mirror server, and the client platform and minimum
-        version policies (`error.code` 4036, 4037).
+        change nothing in the database; `read only mirror`: an editing
+        hint on a mirror server, with `error.principal`. Without `word`: a
+        request other than a `GET` on a mirror server, before the token,
+        except the routes of the client channel, a step of a sign-in and
+        the logout; every request on a server that hands over to its mirror
+        or has been replaced, with a message that says so; and the client
+        platform and minimum version policies (`error.code` 4036, 4037).
       content:
         application/json:
           schema:
@@ -6757,10 +6775,15 @@ components:
       description: |
         `error.word` `not served` (the database or its history cannot be
         served at the moment, the server's disk for uploads is nearly full,
-        or no lease of an offline copy can be issued now) or `busy` (the
-        server does not take requests at the moment, a heavy task holds the
-        database, or the request waited 10 seconds for its turn). Back off
-        and try again.
+        no lease of an offline copy can be issued now, or, on a mirror
+        server, an upload or a database of which it holds no copy it can
+        serve now), `busy` (the server does not take requests at the
+        moment, a heavy task holds the database, the request waited 10
+        seconds for its turn, or a mirror server brings its copy of the
+        database up to date from the primary server) or
+        `renew at the principal` (a lease or a report of an offline copy
+        sent to a mirror server: the copy is kept and renews at the primary
+        server). Back off and try again.
       content:
         application/json:
           schema:
@@ -7314,7 +7337,7 @@ components:
           pattern: "^srv:[0-9a-f]{32}$"
           description: |
             The server's id. It never changes for a server, and a mirror
-            server names its main server's. Always present: where the server
+            server names its primary server's. Always present: where the server
             has no id, it issues no bundle.
           example: "srv:e1aa5c3f90b24d7c8a1e6f0b3d2c9a47"
         incarnation:
@@ -7322,7 +7345,7 @@ components:
           description: |
             The id of the server's policy store whose changes `serial`
             counts, 22 characters of base64url. A mirror server names its
-            main server's. Always present: where the store has none, the
+            primary server's. Always present: where the store has none, the
             server issues no bundle.
           example: "AQIDBAUGBwgJCgsMDQ4PEA"
         serial:
@@ -11217,11 +11240,20 @@ components:
                 `writer of another principal`, `in use by an older client`,
                 `too many sessions`, `cursor of another database`,
                 `part expired`, `too large`, `quota`, `rate limited`,
-                `failed`, `not in this version`, `not served`, `busy`
+                `failed`, `not in this version`, `not served`, `busy`;
+                on a mirror server also `read only mirror` and
+                `renew at the principal`
             retry_after:
               type: integer
               minimum: 1
               description: Seconds to wait, as the `Retry-After` header says
+            principal:
+              type: string
+              nullable: true
+              description: |
+                With `read only mirror` alone: the primary server's address
+                for clients, a text for display, or `null` where the mirror's
+                settings name none
 
     ChannelAccess:
       type: object
@@ -11327,6 +11359,9 @@ components:
           format: int64
         writable:
           type: boolean
+          description: |
+            `false` where the database takes no changes at the moment, and
+            always on a mirror server; pushes are then deferred `read-only`
         db_id:
           type: string
           format: uuid
@@ -11476,9 +11511,33 @@ components:
             states in its `access.caps` whether the user may create, move
             and restore folders and entries at the top of the database --
             `create` where the user may, none where not; a push that does
-            so without it is rejected `not authorised`. Written last before
+            so without it is rejected `not authorised`. Written after
+            `server`, where the answer carries it, and before `mirror` and
             `release_secret`. Absent: an empty `caps` on that record says
             nothing about the top
+        mirror:
+          type: object
+          description: |
+            Only on a mirror server, in every answer: information for the
+            app's read-only view; what shapes the app is `writable`, `false`
+            there. Read a `mirror` that is not an object, a `principal` that
+            is neither a string nor `null`, and an `as_of` that is not an
+            integer from 0 to 2^53 - 1 as absent. Absent on a server that
+            takes changes
+          properties:
+            principal:
+              type: string
+              nullable: true
+              description: |
+                The primary server's address for clients as the mirror's
+                settings name it, a text for display; `null` where they name
+                none
+            as_of:
+              type: integer
+              format: int64
+              description: |
+                When the mirror last knew its copy of the database to equal
+                the primary server's, in milliseconds since 1970-01-01 UTC
         release_secret:
           type: string
           nullable: true
