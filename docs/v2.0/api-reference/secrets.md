@@ -270,7 +270,7 @@ POST /v2.0/secrets
 POST /v2.0/admin/secrets
 ```
 
-Creates a new shared secret for an entry. The caller must have **share permission** on the referenced entry. Entries protected by a second password cannot be shared.
+Creates a new shared secret for an entry. The caller must have **share permission** on the referenced entry. Entries protected by a second password cannot be shared. Neither can an entry of a converted database that its second password protects (its `has_second_pass` is `false`), nor a link to such an entry: the answer is `400`.
 
 ### Request Body
 

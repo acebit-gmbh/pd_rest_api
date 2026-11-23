@@ -21,7 +21,7 @@ The group object uses different representations depending on context:
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `id` | string (UUID) | No | Unique identifier (server-generated, ignored on input) |
-| `name` | string | Yes | Group name |
+| `name` | string | Yes | Group name. *Server 20.0.0 and later:* it cannot contain any of the characters `\` `/` `:` `*` `?` `"` `<` `>` `\|`, which the Server Manager does not take in a group name either |
 | `description` | string | Yes | Group description |
 | `department` | string | Yes | Department |
 | `email` | string | Yes | Email address |
@@ -262,7 +262,7 @@ Creates a new group.
 
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
-| `name` | string | Yes | Group name |
+| `name` | string | Yes | Group name, without any of the characters `\` `/` `:` `*` `?` `"` `<` `>` `\|` (*Server 20.0.0 and later*) |
 | `description` | string | No | Group description |
 | `department` | string | No | Department |
 | `email` | string | No | Email address |
@@ -304,7 +304,7 @@ Creates a new group.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields |
+| `400 Bad Request` | Invalid or missing required fields, **or** (*Server 20.0.0 and later*) a `name` with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `\|`: the message is "A group name cannot contain any of these characters: \ / : * ? " < > \|", and the group is not created |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, or attempted to set restricted fields without required role |
 | `409 Conflict` | A group with this name already exists |
@@ -455,7 +455,7 @@ Returns the full representation of the updated group.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields |
+| `400 Bad Request` | Invalid fields, **or** (*Server 20.0.0 and later*) a new `name` with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `\|`; nothing of the group is changed. The name a group already has may be sent back unchanged |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, or attempted to modify restricted fields without required role |
 | `404 Not Found` | Group or referenced parent group not found |

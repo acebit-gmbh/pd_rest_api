@@ -21,6 +21,8 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - REST clients declare their platform through `X-PD-Client` or login/WebAuthn-begin JSON; the server's **Allowed client platforms** policy applies at login, on OIDC discovery and on token requests, with `403` / `4036` when Android is not allowed; a client that declares no platform, including a long-lived API token sent without `X-PD-Client`, is checked as `web`
 - request bodies must be valid JSON; send `{}` when a request has no body fields
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
+- a `type` change in `PATCH .../entries/{id}` starts the new type's values empty (between `password` and `custom` the custom fields stay)
+- a group name with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `|` answers `400` on `POST` and `PATCH /admin/groups`
 - `importance` strings map to the levels the desktop and mobile clients show
 - a password change ends the account's REST sessions; `POST /me/password` ends all of them but the calling one
 - the server's account password policies decide which new password `POST /me/password`, `POST /admin/users/{id}/password` and `POST /admin/users` accept, in place of the master-password rules of the client security policies: a refused one answers `400` naming the rules it breaks; a password older than the policies' maximum age reads as `must_change_pass: true` in `GET /me`
@@ -1347,6 +1349,26 @@ The `value` of a custom field of the type `date`, `decimal` or `boolean` is answ
 #### Credit-Card `valid_thru` Checked as `MM/YYYY`
 
 A `POST` or `PATCH` accepts `credit_card.valid_thru` in the exact form `MM/YYYY` -- seven characters, a month from `01` to `12`, a `/` and a year from `1950` to `2199` -- or `""` for no expiry. Any other value answers `400` with nothing written, among them `"12/29"`, `"12-2029"` and a value with spaces around it.
+
+#### `param_str` Stored
+
+`POST` and `PATCH` store the top-level `param_str` of a `password` or `custom` entry -- the command line parameters `GET` answers -- and `GET` and the Windows client show the value sent. A `param_str` that is not a string answers `400` with nothing written. Other types keep their command line in their sub-object, as `rdp.cmd_line` and `putty.cmd_line`.
+
+#### A Type Change Starts the New Type's Values Empty (Behavior Change)
+
+A `PATCH` that changes an entry's `type` removes the values of the old type, so that none of them stands in a field of the new type with another meaning; the new type's sub-object in the same `PATCH` fills its fields. Between `password` and `custom` the custom fields stay. A `credit_card` takes its `valid_thru` from the entry's `expires_at`. See [Update Entry](api-reference/entries.md#update-entry).
+
+#### Group Names Checked as in the Server Manager (Behavior Change)
+
+`POST /admin/groups` and `PATCH /admin/groups/{id}` answer `400` for a `name` with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `|`, which the Server Manager does not take in a group name, and write nothing. The name a group already has may be sent back unchanged. See [Groups](api-reference/groups.md).
+
+#### A Request Without Its JSON Body Answers `400`
+
+An endpoint that reads a JSON body answers a request that sends none -- no `Content-Length`, or the body sent as a form -- with `400` and `error.code` `400` ("Malformed JSON request body."), as it answers an empty body. See [Length required](api-reference/overview.md#http-status-codes).
+
+#### Entries of a Converted Database Protected by a Second Password
+
+`GET` of such an entry, of its content and of its one-time code answers `403` with `error.code` `403` and a message that says the entry uses an old form of second-password protection; `PATCH` answers `403` / `4030`. A list, a search or the recycle bin that holds such an entry answers as for any other entry, the row with `has_otp` `false` and the `totp` state `hidden`. See [Second Password Protection](api-reference/entries.md#second-password-protection).
 
 ### Documentation Corrections
 

@@ -1137,7 +1137,11 @@ paths:
             `error.code` 4031: wrong or missing second password.
             `error.code` 403: no permission, the entry is sealed, or an
             `encrypted_file` or `certificate` entry, read directly or through a
-            link, has legacy second-password protection that REST cannot verify.
+            link, has legacy second-password protection that REST cannot verify;
+            Server 20.0.0 and later: or the entry, read directly or through a
+            link, is one that a converted database keeps under its second
+            password ("This entry uses an old form of second-password
+            protection that cannot be unlocked through the REST API.").
           content:
             application/json:
               schema:
@@ -2272,6 +2276,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Group"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2320,6 +2326,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Group"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -6416,9 +6424,10 @@ components:
   responses:
     BadRequest:
       description: |
-        Malformed request. The request body could not be parsed as JSON, or a
-        required field is missing, or an enum value is unknown. The response
-        body uses the standard error envelope.
+        Malformed request. The request body could not be parsed as JSON -- or
+        an endpoint that reads one was sent none: no `Content-Length`, or a
+        body sent as a form --, or a required field is missing, or an enum
+        value is unknown. The response body uses the standard error envelope.
       content:
         application/json:
           schema:
@@ -8675,7 +8684,8 @@ components:
           readOnly: true
           description: |
             In order of precedence: `hidden` (the caller may not read the
-            entry; nothing else is reported), `unsupported` (entry type
+            entry, or it is an entry of a converted database that its second
+            password protects; nothing else is reported), `unsupported` (entry type
             `encrypted_file` or `certificate`), `set` (a code can be
             computed; the same as `has_otp: true`), `invalid` (a seed is
             stored but produces no code), `none` (no seed). Treat a value you
@@ -9262,6 +9272,9 @@ components:
           readOnly: true
         name:
           type: string
+          description: |
+            Server 20.0.0 and later: without any of the characters
+            \ / : * ? " < > | (a `POST` or `PATCH` with one answers 400).
         description:
           type: string
         department:
