@@ -7225,10 +7225,12 @@ components:
             authorization `code`: the REST server performs no
             authorization-code exchange and never POSTs to the
             `token_endpoint`. It validates the supplied value directly (JWT
-            signature/aud/exp via JWKS, then falls back to Bearer ->
-            userinfo). The recommended client configuration is
-            `response_type=id_token`. An invalid/expired/forged token, a bare
-            code, or no matching local user yields HTTP `401`.
+            signature/iss/aud/exp via JWKS, then falls back to Bearer ->
+            userinfo); the `iss` of a JWT it verifies must be the issuer that
+            the provider's discovery document names. The recommended client
+            configuration is `response_type=id_token`. An
+            invalid/expired/forged token, a bare code, or no matching local
+            user yields HTTP `401`.
 
     LoginResponse:
       type: object
