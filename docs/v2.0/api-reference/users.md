@@ -919,6 +919,8 @@ DELETE /v2.0/admin/users/{id}
 
 Deletes a user.
 
+*Server 20.0.0 and later:* a user who is the only owner of a database -- the only one whose ownership has no end date -- is not deleted: the request answers `409` with a message that names the database. Make someone else an owner of that database first. The user's own private database is the exception. It is deleted together with the user where the server is set to delete private databases with their accounts; otherwise it stays without an owner, and a server administrator can take it over in the Server Manager.
+
 #### Path Parameters
 
 | Parameter | Type | Required | Description |
@@ -938,6 +940,7 @@ No response body.
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions to delete users |
 | `404 Not Found` | User not found |
+| `409 Conflict` | (Server 20.0.0 and later) The user is the only owner of a database other than the user's own private database |
 
 #### Example
 

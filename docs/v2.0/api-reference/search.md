@@ -10,7 +10,7 @@ Search for entries and folders within a database on the Password Depot Enterpris
 GET /v2.0/databases/{db}/search
 ```
 
-Searches for entries and folders matching the given query within a database. The search matches against the item name, login, URL, comments, and tags. Results are returned as a paginated list of compact representations.
+Searches for entries and folders matching the given query within a database. The search matches against the item name, login, URL, comments, and tags. A link matches on the login of the entry it points to only where you may read that entry (see [Link Targets](entries.md#link-targets)). Results are returned as a paginated list of compact representations.
 
 When a `folder` parameter is provided, the search is scoped to that folder and its subfolders (recursive).
 

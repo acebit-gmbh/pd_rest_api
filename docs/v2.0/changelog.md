@@ -46,6 +46,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - `DELETE` on an entry or folder moves the item to the database's recycle bin by default; ask for `?mode=permanent` to destroy it, and expect the new `403` / `4035` for an item another user is editing
 - new recycle-bin routes under `/databases/{db}/recyclebin` and a `recycle_bin` object on every database
 - writing a link's fields answers `409`
+- `DELETE /admin/users/{id}` answers `409` where the user is the only owner of a database other than the user's own private database; that private database, where it is not deleted with the account, stays without an owner for a server administrator to take over
 - `super_admin` in `roles` is not applied
 - a database's `name` ends in `.pdepot`: `.pswe` or `.pswd` at the end of a name sent is replaced with `.pdepot`, any other name without it gets `.pdepot` appended, and an upgraded server lists its `.pswe` and `.pswd` databases with `.pdepot` in their place where no other database already has that name
 - stricter passkey verification
@@ -641,6 +642,10 @@ See [Rights Values](api-reference/permissions.md#rights-values) and [Update Perm
 - A permission written in the Server Manager can be changed or deleted only by those who manage the database.
 
 See [Authorization](api-reference/permissions.md#authorization).
+
+#### Deleting a User Who Owns a Database (Behavior Change)
+
+`DELETE /admin/users/{id}` does not delete a user who is the only owner of a database -- the only one whose ownership has no end date: it answers `409` with a message that names the database, and nothing is changed. Make someone else an owner of that database first. The user's own private database is the exception: it is deleted with the user where the server is set to delete private databases with their accounts, and otherwise stays without an owner; a server administrator can take it over in the Server Manager. See [Delete User](api-reference/users.md#delete-user-admin).
 
 #### `db_admins` Lists Who Administers the Database (Behavior Change)
 

@@ -2196,7 +2196,13 @@ paths:
       tags:
         - Admin - Users
       summary: Delete a user (admin)
-      description: Requires an admin-scoped session.
+      description: |
+        Requires an admin-scoped session. (Server 20.0.0 and later) A user
+        who is the only owner of a database is not deleted (`409`); the
+        user's own private database is the exception: it is deleted with the
+        user where the server is set to delete private databases with their
+        accounts, and otherwise stays without an owner for a server
+        administrator to take over.
       parameters:
         - $ref: "#/components/parameters/UserId"
       responses:
@@ -2208,6 +2214,15 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            (Server 20.0.0 and later) The user is the only owner of a database
+            other than the user's own private database; the message names the
+            database.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # --- Admin Groups ---
   /admin/groups:
@@ -8069,7 +8084,10 @@ components:
           description: Primary URL (empty for types that don't have one)
         login:
           type: string
-          description: Primary username / login
+          description: |
+            Primary username / login. For a link, the login of the entry it
+            points to; in a list, a search result or the answer of a move
+            `""` where the caller may not read that entry.
         has_second_pass:
           type: boolean
           description: Whether this entry is protected by a second password
