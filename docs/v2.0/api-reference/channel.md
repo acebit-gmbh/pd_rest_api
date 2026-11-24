@@ -586,7 +586,7 @@ Drop the history items you hold of that record, and show none; its visibility st
 - `items[].body`: the old version, its values sealed under the field key as a pull delivers a record at `read`. A value the user could not read in the record's current version, and a folder the user cannot see, are left out and named in the body's `redacted`.
 - `missing`: an item the record's list does not hold, or whose values cannot be delivered. `later`: the ids the answer did not reach within its 4 MiB.
 - For a record whose history the user may not read, the `missing` form of the list above, whatever items the request names.
-- A request that delivers at least one item is recorded in the audit trail, naming the record and the number of items -- never a value.
+- A request that delivers at least one item is recorded in the audit trail, naming the record and the number of items -- never a value. Where the database's `audit.log_secret_access` is `true`, a request that delivers old versions of an entry is also recorded as a use of the entry, and the alerts the server keeps for an accessed entry are raised.
 
 ### Errors
 
