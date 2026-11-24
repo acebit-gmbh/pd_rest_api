@@ -252,6 +252,8 @@ GET /v2.0/databases/{db}/folders/{id}
 
 Returns the **full representation** of a specific folder, including `comments` and the ancestor `path` for breadcrumb navigation. If the folder is protected by a second password, the `X-Second-Password` header is required.
 
+*Server 20.0.0 and later.* A folder you may not read yourself, but that lies on the way to an entry you may read, is listed by the children endpoints - with the counts of what you may see below it - so that the entry can be reached. The folder itself is not readable: Get Folder answers `403`, and [Search](search.md) does not return it.
+
 ### Path Parameters
 
 | Parameter | Type | Required | Description |
