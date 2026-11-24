@@ -27,7 +27,7 @@ The database object uses different representations depending on scope and contex
 | `disabled` | boolean | Restricted | Whether the database is disabled (admin detail only). Requires database management permission. *Server 20.0.0 and later:* a disabled database is closed to its users; see [Disabled Databases](#disabled-databases). |
 | `db_admins` | array of strings | Restricted | IDs of the users and groups that administer this database, owners included, sorted by ID (admin detail only). Requires database management permission. *Server 20.0.0 and later:* see [Changing `db_admins`](#changing-db_admins). |
 | `db_owners` | array of strings | No | *Server 20.0.0 and later.* IDs of the users and groups that own this database, sorted by ID; each of them is also in `db_admins` (admin detail only). Requires database management permission. Ownership is transferred in the Server Manager. |
-| `db_supervisors` | array of UUIDs | Restricted | User IDs designated as Database Supervisors, the database's own approvers of shared secrets (admin detail only). Requires database management permission. |
+| `db_supervisors` | array of UUIDs | Restricted | User IDs of the database's own approvers of shared secrets (admin detail only). Requires database management permission. |
 | `include_server_supervisors` | boolean | Restricted | Whether the server's approvers - the users and groups the server's policy setting `shared_secret.approvers` lists - can also be named as approvers of this database's shared secrets (admin detail only); see [Recipients and Approvers](secrets.md#recipients-and-approvers). Requires database management permission. |
 | `updated_at` | string (ISO 8601) | No | Last modification timestamp |
 | `icons` | object | No | [Database icon](icons.md) capability of this database for the current caller, in every representation and both scopes - see [Icons Capability](#icons-capability). Absent on servers older than 20.0.0 |
@@ -449,7 +449,7 @@ Creates a new database.
 | `description` | string | No | Database description |
 | `disabled` | boolean | No | Whether the database is disabled (default: `false`). Requires database management permission. |
 | `db_admins` | array of strings | No | IDs of the users and groups that administer the new database. Requires database management permission. |
-| `db_supervisors` | array of UUIDs | No | Database Supervisor user IDs, the database's own approvers of shared secrets. Requires database management permission. |
+| `db_supervisors` | array of UUIDs | No | User IDs of the database's own approvers of shared secrets. Requires database management permission. |
 | `include_server_supervisors` | boolean | No | Whether the server's approvers can also be named as approvers of this database's shared secrets (default: `true`). Requires database management permission. |
 
 ```json

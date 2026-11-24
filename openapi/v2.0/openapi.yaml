@@ -3426,9 +3426,10 @@ paths:
           description: |
             Invalid or missing fields, or an entry protected by a second password. Server 20.0.0 and later: also an id
             in `recipient_ids` or `approver_ids` that names no user or group
-            of the server, the author in `approver_ids`, or an approver who is
-            not one of the approvers of the secret's database; nothing is
-            created.
+            of the server, the author in `approver_ids`, an approver who is
+            not one of the approvers of the secret's database, or approvers
+            who cannot give the approvals a secret that needs approval asks
+            (`quorum_n`, at least one); nothing is created.
           content:
             application/json:
               schema:
@@ -4090,9 +4091,10 @@ paths:
           description: |
             Invalid or missing fields, or an entry protected by a second password. Server 20.0.0 and later: also an id
             in `recipient_ids` or `approver_ids` that names no user or group
-            of the server, the author in `approver_ids`, or an approver who is
-            not one of the approvers of the secret's database; nothing is
-            created.
+            of the server, the author in `approver_ids`, an approver who is
+            not one of the approvers of the secret's database, or approvers
+            who cannot give the approvals a secret that needs approval asks
+            (`quorum_n`, at least one); nothing is created.
           content:
             application/json:
               schema:
@@ -7688,8 +7690,8 @@ components:
                 type: string
                 format: uuid
               description: |
-                User IDs designated as database supervisors, the database's
-                own approvers of shared secrets.
+                User IDs of the database's own approvers of shared
+                secrets.
             include_server_supervisors:
               type: boolean
               description: |
@@ -9498,7 +9500,11 @@ components:
         not one of the approvers of this database."), and so does
         `adminUpdateSecret` for an approver its body adds, and for every
         approver where it changes `database_id`; the approvers a secret
-        names already can still approve it. The author
+        names already can still approve it. A secret that needs approval
+        must name approvers who can give the approvals its `quorum_n`
+        asks, at least one - each user named and each member of a group
+        named approves once, the author never -; otherwise `createSecret`
+        and `adminCreateSecret` answer `400`. The author
         never approves or rejects their own secret (`403`). The HTTPS page
         of a link whose entry belongs to a database an administrator has
         disabled answers as for a link that does not exist; the secret

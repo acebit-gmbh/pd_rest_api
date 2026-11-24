@@ -49,7 +49,7 @@ Includes all compact fields plus:
 | `access_max` | integer | Yes | Maximum number of times the secret can be opened (default: `1`) |
 | `access_count` | integer | No | Current number of times the secret has been opened (read-only) |
 | `include_totp` | boolean | Yes | Whether the recipient gets the shared entry's one-time code (default: `true`). `true`: the HTTPS shared-link page shows the entry's current code, and over `pd-server` the TOTP seed travels with the entry. `false`: neither happens. See the note on shared links and one-time codes below. |
-| `approval_required` | boolean | Yes | Whether supervisor approval is required before the secret becomes available |
+| `approval_required` | boolean | Yes | Whether approval is required before the secret becomes available |
 | `quorum_n` | integer | Yes | Number of approvals required (default: `1`) |
 | `quorum_m` | integer | Yes | Total number of designated approvers (default: `2`) |
 | `require_2fa` | boolean | Yes | Whether 2FA is required to open the secret |
@@ -84,7 +84,7 @@ Includes all compact fields plus:
 | Value | Description |
 |-------|-------------|
 | `pending` | Secret created, not yet processed |
-| `pending_approval` | Waiting for supervisor approval (when `approval_required` is `true`) |
+| `pending_approval` | Waiting for approval (when `approval_required` is `true`) |
 | `approved` | Approved but not yet available |
 | `available` | Ready to be opened by recipients |
 | `consumed` | All allowed accesses have been used (`access_count >= access_max`) |
@@ -142,6 +142,7 @@ The `open_uuid` and `approve_uuid` are returned in the full representation, but 
 - **Known ids only.** [Create Secret](#create-secret) and [Update Secret (Admin)](#update-secret-admin) answer `400 Bad Request` with the message "A recipient or an approver of the shared link is no user or group of this server." when either list holds an id that names no user or group of the server.
 - **The author approves nothing.** The same two routes answer `400` with the message "The author of a shared link cannot approve it." when `approver_ids` names the author, and [Approve Secret](#approve-secret) and [Reject Secret](#reject-secret) answer `403` to the author, whatever the lists say.
 - **Approvers of the database.** Each approver `approver_ids` names must be one of the approvers of the secret's database: one of its `db_supervisors` (see [Databases](databases.md)), or, where its `include_server_supervisors` is `true`, a user or a group the server's policy setting `shared_secret.approvers` lists, or a member of such a group, also through groups within groups (a disabled group counts for nobody). [Create Secret](#create-secret) answers `400 Bad Request` with the message "An approver of the shared link is not one of the approvers of this database." when an approver is none of them; it checks this once the entry is found and the caller's permissions on it are checked, so an entry that does not exist answers `404` and a caller without the permissions `403` first. [Update Secret (Admin)](#update-secret-admin) applies the rule to the approvers its body adds to the secret's `approver_ids`, and to every approver where it moves the secret to another database (`database_id`); the approvers a secret names already are not checked again against the approvers of the database, and can still approve it.
+- **Enough approvers.** A secret that needs approval - `approval_required` is `true`, as the request asks or as the server's policy sets it - must name approvers who can give the approvals its `quorum_n` asks, at least one: each user `approver_ids` names can approve once, and so can each member of a group it names, also through groups within groups (a disabled group counts for nobody); the author never counts. [Create Secret](#create-secret) answers `400 Bad Request` with the message "The approvers of this shared secret cannot give the number of approvals it needs. Each user can approve once: name more users, or a group." where they cannot. It checks this once the server's shared-secret policy is applied, so it compares with the `quorum_n` the policy leaves, and a channel the policy does not allow answers `403` first.
 
 A request answered `400` creates nothing, and an update answered `400` leaves the secret as it was. The messages can be localized: match the status, never the message.
 
@@ -284,12 +285,12 @@ Creates a new shared secret for an entry. The caller must have **share permissio
 | `notes` | string | No | Notes for approvers or recipients |
 | `access_max` | integer | No | Maximum number of openings (default: `1`) |
 | `include_totp` | boolean | No | Whether the recipient gets the entry's one-time code (default: `true`, also when omitted). Send `false` to share the entry without it - see [Full Representation](#full-representation) |
-| `approval_required` | boolean | No | Require supervisor approval (default: `false`) |
+| `approval_required` | boolean | No | Require approval (default: `false`) |
 | `quorum_n` | integer | No | Approvals required (default: `1`) |
 | `quorum_m` | integer | No | Total approvers (default: `2`) |
 | `require_2fa` | boolean | No | Require 2FA to open (default: `false`) |
 | `recipient_ids` | array of UUIDs | No | User/group IDs who can open the secret. *Server 20.0.0 and later:* each must name a user or a group of the server (`400` otherwise) |
-| `approver_ids` | array of UUIDs | No | User/group IDs designated as approvers. *Server 20.0.0 and later:* each must name a user or a group of the server and be one of the approvers of the database, and the author may not be among them (`400` otherwise; see [Recipients and Approvers](#recipients-and-approvers)) |
+| `approver_ids` | array of UUIDs | No | User/group IDs designated as approvers. *Server 20.0.0 and later:* each must name a user or a group of the server and be one of the approvers of the database, and the author may not be among them; where the secret needs approval, they must be able to give the approvals `quorum_n` asks (`400` otherwise; see [Recipients and Approvers](#recipients-and-approvers)) |
 
 !!! note
     The `database_name`, `entry_path`, `entry_user`, and `entry_type` fields are auto-populated from the referenced entry if not provided in the request.
@@ -353,7 +354,7 @@ Returns the full representation of the created secret. The `status` is set to `"
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields, or entry is protected by a second password, or (*Server 20.0.0 and later*) `recipient_ids` or `approver_ids` holds an id that names no user or group of the server, or `approver_ids` names the author or someone who is not one of the approvers of the database -- see [Recipients and Approvers](#recipients-and-approvers) |
+| `400 Bad Request` | Invalid or missing required fields, or entry is protected by a second password, or (*Server 20.0.0 and later*) `recipient_ids` or `approver_ids` holds an id that names no user or group of the server, or `approver_ids` names the author or someone who is not one of the approvers of the database, or the secret needs approval and its approvers cannot give the approvals `quorum_n` asks -- see [Recipients and Approvers](#recipients-and-approvers) |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions (no share permission on the entry), also for an entry of a database an administrator has disabled (*Server 20.0.0 and later*) |
 | `404 Not Found` | Database or entry not found |
