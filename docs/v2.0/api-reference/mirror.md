@@ -68,7 +68,7 @@ An app that syncs a database through the [client channel](channel.md) keeps sync
 Users sign in on a mirror server with their accounts, as on the primary server, and receive a session token that the mirror issued. The mirror refuses a sign-in -- `POST /auth/login` and both steps of a passkey sign-in -- with `403` and `error.code` `403`, before any credential is examined and without counting it towards the IP lockout, where:
 
 - it is no longer a mirror of its primary server, because the primary server ended the pairing or the server it reaches there is no longer the one it was paired with: "This server is no longer a mirror of its primary server. Sign in on the primary server.";
-- its administrator set the mirror's maximum age for sign-ins (the Server Manager's *Mirror settings*, off by default) and no database on it has been brought up to date from the primary server for longer than that: "This mirror has not been brought up to date from its primary server for more than *n* hours. Sign in on the primary server."
+- its administrator set the mirror's maximum age for sign-ins (the Server Manager's *Mirror settings*, off by default) and no database on it has been brought up to date from the primary server for longer than that: "This mirror has not been brought up to date from its primary server for more than *n* hours. Sign in on the primary server." (with "for more than an hour" where *n* is 1)
 
 Sign in on the primary server instead.
 
@@ -88,7 +88,7 @@ Either `401` means: sign in again, on the mirror or on the primary server. **Lon
 
 ## A Mirror That Leaves Its Primary Server
 
-An administrator can let a mirror server leave its primary server; the Leave finishes when the mirror's service is restarted. From the Leave until that restart, the mirror answers every request -- a `GET`, a sign-in, a shared link and a file included -- with `403` and the message "This server has left its primary server. Restart the service to finish." Connect to the primary server.
+An administrator can let a mirror server leave its primary server; the Leave finishes when the mirror's service is restarted. From the Leave until that restart, the mirror answers every request -- a `GET`, a sign-in, a shared link and a file included -- with `403` and the message "This server has left its primary server. Restart the service to finish." Where the Leave stopped before it finished, the message is "This server stopped serving, but leaving its primary server did not finish. Choose Leave the primary server... again to finish." until the administrator runs the Leave again. Connect to the primary server.
 
 ---
 
