@@ -522,8 +522,8 @@ In a write, send the forms above. For compatibility the server also accepts a `d
 *Server 20.0.0 and later.* `custom_fields` can be written on `password` and `custom` entries, the types whose full representation carries it, and in a `POST` or `PATCH` body it is always the complete list of the entry's fields. Each element of the array is matched to a field the entry already has, each field at most once:
 
 1. by `id`, when the element has a non-empty `id` (letter case does not matter);
-2. otherwise by `name`, without regard to letter case;
-3. otherwise by its position: the element matches the entry's field at the same position in the list, when no other element has matched that field.
+2. otherwise by `name`, without regard to letter case, when the element has no `type` or that field's `type`;
+3. otherwise by its position, where no element of the array has a non-empty `id`: the element matches the entry's field at the same position in the list, when no other element has matched that field and the element has no `type` or that field's `type`.
 
 A matched field keeps its `id`, its `type` and whether it is secret. Only the members the element sends are changed -- `name`, `value`, `input_id` -- and a member the element leaves out keeps its value. An element that matches no field adds a new field, of the element's `type`, or `text` when the element has none; a new field of type `password` or `protected` is stored as a secret. A field that no element matches is deleted, and the fields take the order of the array. `secret` in a request is ignored, and so is `type` on a matched field: the type of an existing field cannot be changed through REST. `custom_fields` sent back exactly as a `GET` returned them leave every field as it was. On `POST` the new entry has no field yet, so every element adds one.
 
@@ -946,7 +946,7 @@ The `totp` key writes the entry's one-time-code (TOTP) settings. It has four for
 
 #### Custom fields (`custom_fields`)
 
-*Server 20.0.0 and later.* `custom_fields` is the complete list of the entry's fields, and each element is matched to a field the entry has -- by `id`, otherwise by `name`, otherwise by its position -- which keeps its type. Send back the `id` of each field `GET` returned; `custom_fields` sent back exactly as `GET` returned them leave every field as it was. Only `password` and `custom` entries accept the key. The rules and the `400`s are under [Writing Custom Fields](#writing-custom-fields).
+*Server 20.0.0 and later.* `custom_fields` is the complete list of the entry's fields, and each element is matched to a field the entry has -- by `id`, otherwise by `name`, otherwise, where no element has an `id`, by its position -- which keeps its type. Send back the `id` of each field `GET` returned; `custom_fields` sent back exactly as `GET` returned them leave every field as it was. Only `password` and `custom` entries accept the key. The rules and the `400`s are under [Writing Custom Fields](#writing-custom-fields).
 
 #### Type (`type`)
 

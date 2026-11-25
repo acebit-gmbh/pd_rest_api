@@ -1240,7 +1240,9 @@ paths:
         is then `403` / `4035`, and nothing is written. `custom_fields` is the
         complete list of the entry's fields: each element is matched to a
         field the entry has -- by `id`, otherwise by `name`, otherwise by its
-        position -- and a matched field keeps its `id`, `type` and `secret`;
+        position where no element has an `id`; by `name` and by position only
+        where the element names no other `type` than that field's -- and a
+        matched field keeps its `id`, `type` and `secret`;
         see `CustomField`. Only `password` and `custom` entries accept it
         (`400` otherwise, judged on the type after the request); on a link
         it answers `409` first.
@@ -9622,7 +9624,9 @@ components:
         element is matched to a field the entry has, each field at most
         once: by `id` when it is not empty (letter case does not matter),
         otherwise by `name` without regard to letter case, otherwise by its
-        position in the array. A matched field keeps its `id`, `type` and
+        position in the array, where no element has a non-empty `id`; by
+        `name` and by position only where the element names no `type` or that
+        field's `type`. A matched field keeps its `id`, `type` and
         `secret` and takes only the members the element sends (`name`,
         `value`, `input_id`); an element that matches no field adds one of
         the element's `type` (`text` by default; a new `password` or
