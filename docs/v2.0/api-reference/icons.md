@@ -289,7 +289,7 @@ Any other key is ignored. The whole request body may be at most `65536` bytes.
 
 **Audit.** Every upload attempt that gets past the permission check is recorded in the server's audit log and written to the server log, whatever its outcome. Neither ever contains image data.
 
-**Windows clients.** The icon is stored in the same place and form the Windows client uses. A Windows client that has the database open at the time of the upload sees the new icon, and entries that use it, after it reopens the database.
+**Windows clients.** The icon is stored in the same place and form the Windows client uses. Password Depot for Windows shows the new icon, and entries that use it, with the other changes it receives for a database it has open.
 
 ### Response
 

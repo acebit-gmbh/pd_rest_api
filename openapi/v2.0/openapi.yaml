@@ -4890,8 +4890,8 @@ paths:
         database sees the icon's name and image. Every attempt past the
         permission check is audited, never with image data. A refused or
         failed upload leaves no icon, no half-written icon and no changed
-        icon. A connected Windows client sees the icon after it reopens the
-        database.
+        icon. Password Depot for Windows shows the icon with the other
+        changes it receives for a database it has open.
 
         Order of checks: token (`401`), mirror (`403`), database (`404`),
         method (`405`), upload right (`403`), body (`400`; over 65536 bytes

@@ -1479,7 +1479,7 @@ A value of the wrong JSON type - a string for `image_index`, for example - is a 
 
 **Nothing is written on a refusal.** After `400` / `4007` the entry has all the fields it had before, no new history item, its previous icon, and its previous second password - also when the same request carried `X-New-Second-Password` or a `totp` key. That holds for every refusal of a `PATCH`, not only this one; see [Order of checks](#order-of-checks). The check never answers `409`. Reload [List Icons](icons.md#list-icons) and let the user pick again.
 
-**Reading it back.** After a database icon was assigned, the full representation reports `image_custom` `true` and `image_name` in the icon's spelling; every representation reports `database_icon` with the icon's `id`, `name` and `version`, and `icon` with the standard icon of the entry's type as the fallback. When that icon is later removed in the Windows client, `database_icon` becomes `null` and `icon` keeps naming the fallback; the three stored values stay as they are until somebody assigns another icon. An item last saved by a client older than version 17 can report `image_custom` `true` with an empty `image_name`; the server then finds the icon by the stored position. In every case `database_icon` is the answer - do not resolve `image_name` or `image_index` yourself.
+**Reading it back.** After a database icon was assigned, the full representation reports `image_custom` `true` and `image_name` in the icon's spelling; every representation reports `database_icon` with the icon's `id`, `name` and `version`, and `icon` with the standard icon of the entry's type as the fallback. When that icon is later deleted -- Password Depot for Windows deletes icons through the [client channel](channel.md#push-changes) --, `database_icon` becomes `null` and `icon` keeps naming the fallback; the three stored values stay as they are until somebody assigns another icon. An item last saved by a client older than version 17 can report `image_custom` `true` with an empty `image_name`; the server then finds the icon by the stored position. In every case `database_icon` is the answer - do not resolve `image_name` or `image_index` yourself.
 
 ```json
 {
@@ -1512,7 +1512,7 @@ A value of the wrong JSON type - a string for `image_index`, for example - is a 
 
 **Older servers.** A server older than 20.0.0 stores whatever the three keys carry, checks nothing and resolves nothing. Detect the feature by the [`icons`](databases.md#icons-capability) object on the database, or by the `database_icon` key on any entry or folder.
 
-**Windows clients.** A Windows client that has the database open sees an icon uploaded through this API, and the entries that use it, after it reopens the database.
+**Windows clients.** Password Depot for Windows shows an icon uploaded through this API, and the entries that use it, with the other changes it receives for a database it has open.
 
 ### Examples
 
