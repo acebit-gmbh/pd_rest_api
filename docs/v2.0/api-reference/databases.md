@@ -335,7 +335,7 @@ A category is created by **saving an item with it**. Create or update an [entry]
 | **The match ignores letter case** | Sending `"banking"` where the list holds `"Banking"` adds nothing and changes nothing: the list keeps its own spelling. The item keeps the spelling you sent, so the two can differ -- compare them without regard to case |
 | **An update adds it even when the body is silent** | A `PATCH` adds the item's category as it stands after the write, so an item whose category predates this and is missing from the list puts it there the next time the item is saved |
 | **Trimmed; blanks add nothing** | Surrounding spaces are removed before the name is added. An empty `category`, or one of spaces only, adds nothing |
-| **No route here removes a name** | Deleting the last entry or folder of a category leaves the category in the list, and no route in this API removes a name. A Password Depot client can remove one, so a name can disappear between two reads |
+| **No route here removes a name** | Deleting the last entry or folder of a category leaves the category in the list, and no per-object route removes a name. An app that syncs the database through the [client channel](channel.md#push-changes), such as Password Depot for Windows, deletes one, so a name can disappear between two reads |
 
 A client that shows a category picker should re-read [List Categories](#list-categories) after it has saved an item with a category the list did not hold, or add the name to its own copy of the list in the spelling this route returns.
 

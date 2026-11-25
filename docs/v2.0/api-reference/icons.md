@@ -10,10 +10,10 @@ Every database carries its own collection of icons next to the 135 standard icon
 | `GET` | [`/v2.0/databases/{db}/icons/{icon_id}`](#get-icon) | One icon with its image |
 | `POST` | [`/v2.0/databases/{db}/icons`](#upload-icon) | Upload a new icon |
 
-The endpoints work the same in `client` and `admin` sessions. There is no `PATCH`, no `PUT` and no `DELETE`: an icon that exists is never changed or removed through this API.
+The endpoints work the same in `client` and `admin` sessions. There is no `PATCH`, no `PUT` and no `DELETE` on these routes: they never change or remove an icon that exists. An app that syncs the database through the [client channel](channel.md#push-changes) changes and deletes icons by its pushes.
 
 !!! warning "An upload is database-wide"
-    An uploaded icon is not attached to the entry you are editing. It becomes part of the database: every user who can open the database sees its name and its image, in every client, and it counts toward the database's icon quota. It cannot be deleted through this API. Do not put anything confidential into an icon or its name.
+    An uploaded icon is not attached to the entry you are editing. It becomes part of the database: every user who can open the database sees its name and its image, in every client, and it counts toward the database's icon quota. It cannot be deleted through these routes: only an app that syncs the database through the [client channel](channel.md#push-changes), such as Password Depot for Windows, deletes it. Do not put anything confidential into an icon or its name.
 
 ---
 
@@ -279,7 +279,7 @@ Any other key is ignored. The whole request body may be at most `65536` bytes.
 - An icon of that name holds exactly the same image: nothing is written (`200`, `created` `false`). Repeating an upload is therefore safe.
 - An icon of that name holds a **different** image: it is left alone, and yours is stored under a free name such as `example.com (2)` (`201`, `created` `true`).
 
-**Removed icons.** This API cannot remove or replace an icon. Icons are removed in the Windows client or by an administrator; the slot of a removed icon stays reserved, so it still counts toward `max_count`.
+**Removed icons.** The routes on this page cannot remove or replace an icon. An icon deleted through the [client channel](channel.md#push-changes), as Password Depot for Windows deletes one, is gone: it is not listed, it does not count toward `max_count`, and an upload of its name adds a new icon. The slot of an icon an administrator removed stays reserved, so it still counts toward `max_count`.
 
 **Permissions and tokens.** Listing and fetching need nothing beyond access to the database: whoever can open the database sees all of its icon names and images, exactly as the desktop and mobile clients receive them with the database. Uploading is open to the same callers - in a client session everyone with the database-level `use` right, in an admin session everyone who manages the database - because an upload can never change or remove an existing icon and is bounded by the quotas. The verdict for the current caller is published as `icons.can_upload`. Long-lived API tokens may upload, as they may write entries. Assigning an icon needs no right of its own; it is part of the entry or folder write.
 
