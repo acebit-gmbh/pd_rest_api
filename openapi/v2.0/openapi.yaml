@@ -3544,6 +3544,11 @@ paths:
         maximum age policy (`account.password.max_age`), in a session that a
         password sign-in (`auth: standard`) opened, for an account that may
         change its password itself; the stored flag is not changed by it.
+        While it answers `must_change_pass` true, for the stored flag or the
+        expiry, a client-scope session that a password sign-in opened may
+        only call this route, `GET /me/policy`, `POST /me/password`, the
+        logout and the client channel's routes: every other route answers
+        403 until the password is changed.
       responses:
         "200":
           description: Profile returned
@@ -3601,7 +3606,8 @@ paths:
         and later: the new password must also pass the server's account
         password policies that apply to the account, including the minimum
         age since the last change; a successful change ends an expiry that
-        `GET /me` reported as `must_change_pass`. Server 20.0.0 and later: a
+        `GET /me` reported as `must_change_pass`, and the session that a
+        password sign-in held to the change goes on. Server 20.0.0 and later: a
         successful change ends the account's other REST sessions and keeps
         the calling one; made with a long-lived API token, it ends all of
         the account's REST sessions.
