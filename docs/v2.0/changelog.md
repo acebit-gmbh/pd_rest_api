@@ -60,6 +60,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - database icons: new `/databases/{db}/icons` endpoints, an `icons` object on every database, a `database_icon` field on every entry and folder; new sub-codes `4007` and `4008` (`400`), `4034` (`403`), `4042` (`404`) and `4131` (`413`, the first of that family)
 - `icon` follows `image_index` and is never `<name>.ico`; `image_custom`, `image_index` and `image_name` are validated when written (`400` / `4007`); documents show `ico133.svg`
 - `/file/` serves the 135 standard icons only
+- the search matches every word of `q`, in any order, and also an entry's additional URLs; every search result carries `path`, the folders it lies in, and every `password` and `custom` entry carries `urls` in the compact representation too
 - a database's category list is readable at `GET /databases/{db}/categories`, and saving an entry or a folder with a `category` the list does not hold adds it there
 - a read-only `warning` on every entry: the conditional-access warning set in the Windows client, `null` when there is none, for clients to show before the entry is opened or used
 - connections are reused between requests; an idle one is closed silently after 15 seconds, a `404` no longer closes the connection, and above 1024 connections a new one is refused at TCP level
@@ -1100,6 +1101,12 @@ A `POST` or `PATCH` takes the date part of `expires_at` as written, in the value
 #### Folder Objects Carry `entry_count` and `folder_count`
 
 Every folder object -- `children`, search, `GET /databases/{db}/folders/{id}`, the answers of `POST`, `PATCH` and move, and the recycle bin -- carries two read-only integers right after `updated_at`: `entry_count` and `folder_count`, the entries (links included) and subfolders at any depth that the caller may see. The keys are absent on earlier servers, so their presence is a client's feature test.
+
+#### Search Matches Every Word and the Additional URLs (Behavior Change)
+
+`GET /databases/{db}/search` splits `q` into words at white space and finds an item that holds every word, in any order, each in any of the fields the search looks at: the name, login, URL, comments and tags, and now also the additional URLs (`urls`). `Test Device` finds "Test One Device", and `q=squareup.com` finds an entry whose additional URL is `*squareup.com*`. A query of one word finds what it found before; a query of several words can find more than on earlier servers, which matched `q` as one text. A word given more than once counts once, and only the first 16 different words count.
+
+Every search result carries `path`, the folders it lies in, nearest first (`[]` at the top of the database), in the form of [Path / Breadcrumb](api-reference/folders.md#path-breadcrumb). Every `password` and `custom` entry carries `urls` in the compact representation too -- in lists, search results, the recycle bin and the answers of `POST`, `PATCH` and move --, `[]` when it has none. Both keys are absent on earlier servers, so their presence is a client's feature test. See [Search](api-reference/search.md).
 
 ### Shared Secrets
 

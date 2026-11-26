@@ -28,6 +28,7 @@ Returned by list/children and search endpoints.
 | `warning` | object or null | No | The entry's [conditional-access warning](#conditional-access-warning), set in the Windows client: `{"message", "level", "verify_text"}`, or `null` when the entry has none. Never withheld: every caller who receives the entry receives it. For a link, the link's own warning. Show it before the entry is opened or used - see the section for when. Absent on servers older than 20.0.0: treat a missing field like `null`. |
 | `login` | string | Yes | Login/username (only for `password` and `custom` types). For a link, the login of the entry it points to; in a list, a search result or the answer of a move it is `""` where you may not read that entry -- see [Link Targets](#link-targets). |
 | `url` | string | Yes | Primary URL (only for `password` and `custom` types). |
+| `urls` | array of strings | Yes | Additional URLs (only for `password` and `custom` types): further addresses of the entry, also masks such as `*example.com*` that the clients match a site against; `[]` when there are none. *Server 20.0.0 and later* in the compact representation; earlier servers send it in the full representation only. |
 | `icon` | string | No | File name of a standard icon, always `ico0.svg` to `ico134.svg`, served at [`/file/{icon}`](overview.md#entry-icons): the standard icon selected by `image_index`, otherwise the standard icon of the entry's type (see [Assigning an Icon](#assigning-an-icon)). When `database_icon` is set, this is the icon of the entry's type and serves as the fallback. *Changed in Server 20.0.0:* earlier servers returned the icon of the entry's type whatever `image_index` said, or `<image_name>.ico` for some custom icons. |
 | `database_icon` | object or null | No | The [database icon](icons.md) the entry uses: `{"id", "name", "version"}` of an icon in the entry's own database, or `null` when the entry uses a standard icon or its custom icon no longer exists. It carries no image data - fetch the image with [List Icons](icons.md#list-icons) or [Get Icon](icons.md#get-icon) and cache it by `version`. Absent on servers older than 20.0.0: treat a missing field as "not supported". |
 | `importance` | string | Yes | Importance level: `"low"`, `"normal"`, or `"high"` -- the same level the Windows, macOS, iOS and Android clients show (default: `"normal"`) |
@@ -78,7 +79,6 @@ For `encrypted_file` and `certificate` links, the full response identifies the l
 | `login_id` | string | Yes | Associated HTML element ID or name for the login field (for browser form filling) |
 | `pass` | string | Yes | Password. Requires `X-Second-Password` header if `has_second_pass` is `true`. |
 | `pass_id` | string | Yes | Associated HTML element ID or name for the password field (for browser form filling) |
-| `urls` | array of strings | Yes | Associated URLs |
 | `is_template` | boolean | Yes | Whether this entry is a template |
 | `info_template` | string or null | Yes | Template identifier (only applicable for `custom` type entries) |
 | `param_str` | string | Yes | Command line parameters string |

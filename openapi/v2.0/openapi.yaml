@@ -1471,14 +1471,26 @@ paths:
         entries as compact rows. Existing policy, permission and recycle-bin
         filters apply before counting and pagination. Server 19.x excludes
         these entry types.
+
+        `q` is split into words at white space; an item matches when it
+        holds every word, in any order, each word a case-insensitive
+        substring of its name, login, URL, additional URLs (`urls`),
+        comments or tags. A repeated word counts once, and only the first
+        16 different words count. Every result carries `path`, the folders it lies
+        in, nearest first. Servers older than 20.0.0 match `q` as one text,
+        do not search the additional URLs and send no `path`.
       parameters:
         - $ref: "#/components/parameters/DatabaseIdPath"
         - name: q
           in: query
-          description: Search query string
+          description: |
+            Search words, separated by white space; every word must be found.
+            A repeated word counts once; only the first 16 different words count.
+            At least 3 characters; white space only finds nothing.
           required: true
           schema:
             type: string
+            minLength: 3
         - $ref: "#/components/parameters/PaginationOffset"
         - $ref: "#/components/parameters/PaginationLimit"
       responses:
@@ -1494,7 +1506,25 @@ paths:
                       data:
                         type: array
                         items:
-                          $ref: "#/components/schemas/Entry"
+                          allOf:
+                            - $ref: "#/components/schemas/Entry"
+                            - type: object
+                              properties:
+                                path:
+                                  type: array
+                                  readOnly: true
+                                  description: |
+                                    The folders the result lies in, nearest
+                                    first; empty at the top of the database.
+                                    Server 20.0.0 and later.
+                                  items:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: string
+                                        format: uuid
+                                      name:
+                                        type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -8108,6 +8138,15 @@ components:
         url:
           type: string
           description: Primary URL (empty for types that don't have one)
+        urls:
+          type: array
+          items:
+            type: string
+          description: |
+            Additional URLs of a `password` or `custom` entry, also masks
+            such as `*example.com*`; empty when there are none. In every
+            representation from Server 20.0.0 on; earlier servers send it in
+            the full representation only.
         login:
           type: string
           description: |
@@ -8206,11 +8245,6 @@ components:
         pass_id:
           type: string
           description: Associated HTML element id or name for the password field
-        urls:
-          type: array
-          items:
-            type: string
-          description: Additional URLs associated with this entry
         is_link:
           type: boolean
           description: Present in full password, custom, encrypted_file and certificate responses; true for an entry linked to another entry.
@@ -10129,16 +10163,16 @@ components:
         Paginated list of a folder's (or the database root's) direct
         children. `data` contains a heterogeneous mix of folders and
         entries in their basic (list) representation, distinguished by
-        the `type` field. `path` is the ancestor breadcrumb trail from the
-        database root down to (but not including) the current folder; it is
-        an empty array at the root. The envelope contains only `path`,
+        the `type` field. `path` lists the folders above the current
+        folder, nearest first (not including the current folder); it is an
+        empty array at the root. The envelope contains only `path`,
         `data`, `total`, `offset`, and `limit` -- there are no top-level
         `name`, `parent`, or `has_second_pass` fields.
       properties:
         path:
           type: array
           readOnly: true
-          description: Ancestor breadcrumb trail (root-first); empty at the root.
+          description: The folders above the current folder, nearest first; empty at the root.
           items:
             type: object
             properties:

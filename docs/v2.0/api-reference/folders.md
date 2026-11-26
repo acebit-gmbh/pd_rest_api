@@ -63,12 +63,12 @@ Returned by the detail endpoint (`GET /v2.0/databases/{db}/folders/{id}`). Inclu
 
 ## Path / Breadcrumb
 
-Several folder-related responses include a `path` array that represents the ancestor chain from the database root down to (but not including) the current item. This enables breadcrumb navigation in client UIs without extra API calls.
+Several responses include a `path` array: the folders that hold the current item, from its own folder up to the top level of the database. This enables breadcrumb navigation in client UIs without extra API calls.
 
 ```json
 "path": [
-    { "id": "3BF225B7-48BC-4AA4-888D-605E61A0F2D4", "name": "Infrastructure" },
-    { "id": "174992DC-06A2-475F-BC6E-CD8768B2C054", "name": "Servers" }
+    { "id": "174992DC-06A2-475F-BC6E-CD8768B2C054", "name": "Servers" },
+    { "id": "3BF225B7-48BC-4AA4-888D-605E61A0F2D4", "name": "Infrastructure" }
 ]
 ```
 
@@ -79,7 +79,7 @@ Several folder-related responses include a `path` array that represents the ance
 
 **Rules:**
 
-- Elements are ordered from the root towards the current item (first element = top-level ancestor).
+- Elements are ordered from the current item towards the root: the first element is the folder that holds the item, the last one the top-level folder. Reverse the array to show the path from the top down.
 - For **root-level** items, `path` is an empty array `[]`.
 - The current folder itself is **not** included in the `path`.
 
@@ -89,7 +89,8 @@ Several folder-related responses include a `path` array that represents the ance
 |----------|-------------|
 | `GET .../children` | Ancestors of the folder being listed |
 | `GET .../folders/{id}` | Ancestors of the requested folder |
-| `GET .../entries/{id}` | Ancestors of the entry's parent folder |
+| `GET .../entries/{id}` | The folders that hold the entry |
+| `GET .../search` | Each result: the folders that hold it (see [Search](search.md)) |
 
 ---
 
@@ -135,7 +136,7 @@ From Server 20.0.0, both children endpoints include accessible `encrypted_file` 
 
 The response envelope includes the ancestor `path` followed by the `data` array and pagination metadata. Each item in the `data` array includes a `type` field so the client can distinguish between them -- folders have `type: "folder"`, while entries have a specific type such as `"password"`, `"credit_card"`, etc. Folder items use the compact folder representation; entry items use the compact entry representation (without `password`).
 
-The `path` array contains the ancestor chain from the database root down to the current folder (not including the current folder itself). Each element provides the `id` and `name` of an ancestor. For root-level requests, `path` is an empty array.
+The `path` array contains the folders above the current folder, nearest first (not including the current folder itself). Each element provides the `id` and `name` of an ancestor. For root-level requests, `path` is an empty array.
 
 | Field | Type | Description |
 |-------|------|-------------|
