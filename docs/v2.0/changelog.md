@@ -23,6 +23,7 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
 - a `type` change in `PATCH .../entries/{id}` starts the new type's values empty (between `password` and `custom` the custom fields stay)
 - a group name with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `|` answers `400` on `POST` and `PATCH /admin/groups`
+- the name of a `password_depot` account with one of those characters answers `400` on `POST` and `PATCH /admin/users`
 - `importance` strings map to the levels the desktop and mobile clients show
 - a password change ends the account's REST sessions; `POST /me/password` ends all of them but the calling one
 - the server's account password policies decide which new password `POST /me/password`, `POST /admin/users/{id}/password` and `POST /admin/users` accept, in place of the master-password rules of the client security policies: a refused one answers `400` naming the rules it breaks; a password older than the policies' maximum age reads as `must_change_pass: true` in `GET /me`
@@ -1366,6 +1367,10 @@ A `PATCH` that changes an entry's `type` removes the values of the old type, so 
 #### Group Names Checked as in the Server Manager (Behavior Change)
 
 `POST /admin/groups` and `PATCH /admin/groups/{id}` answer `400` for a `name` with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `|`, which the Server Manager does not take in a group name, and write nothing. The name a group already has may be sent back unchanged. See [Groups](api-reference/groups.md).
+
+#### User Names Checked as in the Server Manager (Behavior Change)
+
+`POST /admin/users` and `PATCH /admin/users/{id}` answer `400` for a `name` of a `password_depot` account with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `|`, which the Server Manager does not take in the name of such an account, and write nothing. The account type is the one the request leaves the account with (see [`account_type` Values](api-reference/users.md#account_type-values)); the name of an `ad`, `azure_ad` or `oidc` account is the directory's and is not checked. A `password_depot` account may send back the name it already has unchanged; a request that makes an account a `password_depot` account (`auth_modes`) has its name checked, sent anew or kept. See [Users](api-reference/users.md).
 
 #### A Request Without Its JSON Body Answers `400`
 

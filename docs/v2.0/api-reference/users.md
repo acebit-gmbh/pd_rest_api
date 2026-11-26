@@ -14,7 +14,7 @@ Reference for user endpoints. Users are accessible in both **client** and **admi
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `id` | string (UUID) | No | Unique identifier (server-generated, ignored on input) |
-| `name` | string | Yes | Username |
+| `name` | string | Yes | Username. *Server 20.0.0 and later:* the name of a `password_depot` account cannot contain any of the characters `\` `/` `:` `*` `?` `"` `<` `>` `\|`, which the Server Manager does not take in the name of such an account either; the name of an `ad`, `azure_ad` or `oidc` account is the directory's and is not checked. A `password_depot` account may send back the name it already has unchanged; a request that makes an account a `password_depot` account has its name checked, sent anew or kept |
 | `auth_modes` | array of strings | Yes | The sign-in methods the user may use (see values below). From Server 20.0.0 the methods the server's policies allow the user; writing it sets the account type and the user's own policy entry (see [`account_type` Values](#account_type-values)). |
 | `account_type` | string | No | *Server 20.0.0 and later.* The account type: `password_depot`, `ad`, `azure_ad` or `oidc` (see values below). A value sent is ignored; writing `auth_modes` sets the type. |
 | `display_name` | string | Yes | Display name |
@@ -628,7 +628,7 @@ Creates a new user.
 
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
-| `name` | string | Yes | Username |
+| `name` | string | Yes | Username; for a `password_depot` account without any of the characters `\` `/` `:` `*` `?` `"` `<` `>` `\|` (*Server 20.0.0 and later*) |
 | `new_password` | string | Conditional | Initial password (plaintext). **Required** when the methods of `auth_modes` contain `"standard"`, as the usual methods of a `password_depot` account do when `auth_modes` is omitted. Optional for users that will only authenticate via OIDC, SSPI, IWA, or WebAuthn. |
 | `auth_modes` | array of strings | No | The sign-in methods (see [`account_type` Values](#account_type-values)). Omitted, the user is a `password_depot` account without an entry of its own (Server 20.0.0 and later; earlier servers default to `["standard"]`). |
 | `display_name` | string | No | Display name |
@@ -732,7 +732,7 @@ Creates a new user.
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, a password that breaks the server's password rules (see [Password Rules](#password-rules)), or a `new_password` that is not well-formed Unicode text; from Server 20.0.0 also a refused `idp` or `idp_user_id` -- a value of the wrong form, a binding on an account whose type is neither `oidc` nor `azure_ad`, an incomplete pair, or a provider or tenant the server does not have (see [Directory Binding](#directory-binding)); no user is created then. |
+| `400 Bad Request` | Invalid or missing required fields. Includes: missing `new_password` for a standard-auth user, empty `new_password`, a password that breaks the server's password rules (see [Password Rules](#password-rules)), or a `new_password` that is not well-formed Unicode text; from Server 20.0.0 also a refused `idp` or `idp_user_id` -- a value of the wrong form, a binding on an account whose type is neither `oidc` nor `azure_ad`, an incomplete pair, or a provider or tenant the server does not have (see [Directory Binding](#directory-binding)), or the `name` of a `password_depot` account with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `\|`: the message is "A user name cannot contain any of these characters: \ / : * ? " < > \|"; no user is created then. |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | `error.code` `403`: the session is not admin-scoped, the account has neither the `server_admin` nor the `user_admin` role, or it may not set the requested `roles` (requires `server_admin`) or `member_of`. `error.code` `4032` (`PD_ERRCODE_LICENSE_LIMIT`): the server's licensed number of users is reached. From Server 20.0.0 also `error.code` `403` when the `two_factor_mode` or `auth_modes` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values) and [`account_type` Values](#account_type-values)); no user is created then |
 | `409 Conflict` | A user with this username already exists, or (Server 20.0.0 and later) the user's policies changed while `two_factor_mode` or `auth_modes` was written. `error.code` `4091` (`PD_ERRCODE_IDENTITY_LINKED`, Server 20.0.0 and later): another account already holds the identity in `idp` and `idp_user_id` (see [Directory Binding](#directory-binding)); no user is created then |
@@ -885,7 +885,7 @@ The response carries the fields every user representation has. It does not carry
 
 | Status | Description |
 |--------|-------------|
-| `400 Bad Request` | Invalid fields; from Server 20.0.0 also a refused `idp` or `idp_user_id`, or `auth_modes` that give `"azure"` to an account of another type than `azure_ad` while it keeps a GUID in `idp_user_id` (see [Directory Binding](#directory-binding)). Nothing in the request is applied |
+| `400 Bad Request` | Invalid fields; from Server 20.0.0 also a refused `idp` or `idp_user_id`, `auth_modes` that give `"azure"` to an account of another type than `azure_ad` while it keeps a GUID in `idp_user_id` (see [Directory Binding](#directory-binding)), or the `name` of a `password_depot` account with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `\|` where the name is new or the request makes the account a `password_depot` account (`auth_modes`). Nothing in the request is applied. A `password_depot` account may send back the name it already has unchanged |
 | `401 Unauthorized` | Missing or invalid authentication token |
 | `403 Forbidden` | Insufficient permissions, or attempted to modify `roles` without `server_admin` role, or (Server 20.0.0 and later) the `two_factor_mode` or `auth_modes` write is refused (see [`two_factor_mode` Values](#two_factor_mode-values) and [`account_type` Values](#account_type-values)) |
 | `404 Not Found` | User or referenced group not found |
