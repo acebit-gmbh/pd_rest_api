@@ -100,7 +100,7 @@ The sub-object is present only in the **full representation**. Clients can gener
 
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
-| `card` | string | Yes | Card brand: `visa`, `master_card`, `discover`, `american_express`, `diners_club`, `jcb` |
+| `card` | string | Yes | Card brand: `master_card`, `discover`, `visa`, `american_express`, `jcb`, `diners_club`, `other`, or `""` for a card without one. *Server 20.0.0 and later:* `other` is the brand Other of the Windows client; a write of `""` or `null` leaves the stored brand as it is, and any other word answers `400` with nothing written |
 | `holder` | string | Yes | Cardholder name |
 | `number` | string | Yes | Card number (e.g., `"4111 1111 1111 1111"`) |
 | `valid_thru` | string | Yes | Expiration date in `MM/YYYY` format: a month from `01` to `12` and a year from `1950` to `2199`, or `""` for none. Any other value answers `400`. The entry's `expires_at` is the last day of that month |
@@ -393,7 +393,7 @@ This sub-object is present only in the full representation when the caller may r
 |-------|------|:--------:|-------------|
 | `host` | string | Yes | Remote host address |
 | `port` | integer | Yes | Port number (default: `0`) |
-| `protocol` | string | Yes | Protocol: `ssh`, `telnet`, `rlogin`, `raw` |
+| `protocol` | string | Yes | Protocol: `ssh`, `telnet`, `rlogin`, `raw`. *Server 20.0.0 and later:* a write of `""` or `null` leaves the stored protocol as it is, and any other word answers `400` with nothing written |
 | `user` | string | Yes | Username |
 | `pass` | string | Yes | Password |
 | `key_file` | string | Yes | Path to a private key file |
@@ -423,7 +423,7 @@ This sub-object is present only in the full representation when the caller may r
 |-------|------|:--------:|-------------|
 | `partner_id` | string | Yes | Partner/device ID |
 | `pass` | string | Yes | Password |
-| `mode` | string | Yes | Connection mode: `remote_control`, `file_transfer`, `vpn` |
+| `mode` | string | Yes | Connection mode: `remote_control`, `file_transfer`, `vpn`. *Server 20.0.0 and later:* a write of `""` or `null` leaves the stored mode as it is, and any other word answers `400` with nothing written |
 
 ```json
 {
@@ -950,7 +950,26 @@ The `totp` key writes the entry's one-time-code (TOTP) settings. It has four for
 
 #### Type (`type`)
 
-*Server 20.0.0 and later.* A `type` other than the entry's own changes the entry to that type, and the new type's values start empty: the values of the old type are removed, and the new type's [sub-object](#type-specific-fields), sent in the same `PATCH`, fills them. Between `password` and `custom` the custom fields stay. A `credit_card` takes its `valid_thru` from the entry's `expires_at` -- the month of that day, and `expires_at` becomes the month's last day -- unless the same `PATCH` sends `valid_thru` or `expires_at`. The common fields, such as `name`, `login`, `pass`, `urls` and `comments`, keep their values. The entry's own `type` sent again changes nothing. A refused `PATCH` leaves the entry's type and values as they were.
+*Server 20.0.0 and later.* A `type` other than the entry's own changes the entry to that type.
+
+- **Into `password` or `custom`.** The values of the old type's [sub-object](#type-specific-fields) become [custom fields](#custom-field-object) of the entry, in the order of the table below, under their English names in Password Depot for Windows. A value that is empty is left out, and so is a value the table does not name. Custom fields the entry already holds besides its type's values, for example from an import, stay as they are. Each field keeps the type of its value (for example `date` for a `purchase_date`, `number` for a `port`); the card brand, the PuTTY protocol and the TeamViewer mode are written in words (for example `Visa`, `telnet`, `File transfer`) and a card's `valid_thru` as its `MM/YYYY` text, all of the type `text`. A credit card's number is a field of the type `protected`; it, the card's security code, the PINs and the passwords are secret fields (`secret` `true`). Between `password` and `custom` the custom fields stay as they are.
+- **Into any other type.** The new type's values start empty: the values of the old type are removed, and the new type's sub-object, sent in the same `PATCH`, fills them. A `credit_card` takes its `valid_thru` from the entry's `expires_at` -- the month of that day, and `expires_at` becomes the month's last day -- unless the same `PATCH` sends `valid_thru` or `expires_at`.
+
+| Old type | Member: name of the custom field |
+|----------|----------------------------------|
+| `credit_card` | `card`: Card, `holder`: Card Holder, `number`: Card Number, `valid_thru`: Expires On, `cvv`: CVV/CVC, `phone`: Service Phone, `url`: Service URL, `online_pass`: Password, `online_user`: User ID, `pin`: PIN |
+| `license` | `product`: Product, `version`: Version, `reg_name`: Registered Name, `key_1`: License Key, `key_2`: Additional Key, `url`: Download URL, `user`: User Name, `pass`: Password, `purchase_date`: Purchase Date, `order_number`: Order Number, `reg_email`: Email Address |
+| `identity` | `account`: Account Name/ID, `email`: Email Address, `first_name`: First Name, `last_name`: Last Name, `company`: Company, `address_1`: Street, `address_2`: Address 2, `city`: City, `state`: State (Province), `zip`: ZIP, `country`: Country, `phone`: Phone, `website`: Website, `birth_date`: Birth Date, `mobile`: Mobile, `fax`: Fax, `house`: House Number |
+| `information` | `text`: Text |
+| `banking` | `holder`: Account Holder, `account_number`: Account Number, `bank_id`: Bank Code Number, `bank_name`: Bank Name, `bic`: BIC, `iban`: IBAN, `card_number`: Card Number, `phone`: Service Phone, `legitimation_id`: Legitimacy ID, `pin`: PIN |
+| `putty` | `protocol`: Protocol, `key_file`: Key File, `key_pass`: Key Password, `port`: Port |
+| `teamviewer` | `mode`: Mode |
+| `passkey` | `cred_id`: Credential Id, `rp_id`: Relying Party Id, `rp_name`: Relying Party Name, `user_id`: User Id |
+| `encrypted_file` | each element of `files`: a field named by its `name`, its `path` the value |
+
+A `document`, a `certificate` and an `rdp` entry have no values that become custom fields this way; their own custom fields stay as they are. `custom_fields` sent in the same `PATCH` is the entry's complete list, as on every write (see [Writing Custom Fields](#writing-custom-fields)).
+
+The common fields, such as `name`, `login`, `pass`, `url`, `urls`, `expires_at` and `comments`, keep their values. The entry's own `type` sent again changes nothing. A refused `PATCH` leaves the entry's type and values as they were.
 
 #### Category (`category`)
 

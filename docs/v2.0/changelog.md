@@ -21,7 +21,8 @@ Server 20.0.0 keeps the v2.0 routes and fields listed under Server 19.x and make
 - REST clients declare their platform through `X-PD-Client` or login/WebAuthn-begin JSON; the server's **Allowed client platforms** policy applies at login, on OIDC discovery and on token requests, with `403` / `4036` when Android is not allowed; a client that declares no platform, including a long-lived API token sent without `X-PD-Client`, is checked as `web`
 - request bodies must be valid JSON; send `{}` when a request has no body fields
 - every request body must carry a `Content-Length`: a body sent with `Transfer-Encoding: chunked` answers `411 Length Required`
-- a `type` change in `PATCH .../entries/{id}` starts the new type's values empty (between `password` and `custom` the custom fields stay)
+- a `type` change in `PATCH .../entries/{id}` into `password` or `custom` keeps the old type's values as custom fields; a change into another type starts the new type's values empty (between `password` and `custom` the custom fields stay)
+- `credit_card.card` knows `other`; a write of `credit_card.card`, `putty.protocol` or `teamviewer.mode` answers `400` for a word it does not know, and `""` leaves the stored value as it is
 - a group name with one of the characters `\` `/` `:` `*` `?` `"` `<` `>` `|` answers `400` on `POST` and `PATCH /admin/groups`
 - the name of a `password_depot` account with one of those characters answers `400` on `POST` and `PATCH /admin/users`
 - `importance` strings map to the levels the desktop and mobile clients show
@@ -1369,7 +1370,15 @@ A `POST` or `PATCH` accepts `credit_card.valid_thru` in the exact form `MM/YYYY`
 
 #### A Type Change Starts the New Type's Values Empty (Behavior Change)
 
-A `PATCH` that changes an entry's `type` removes the values of the old type, so that none of them stands in a field of the new type with another meaning; the new type's sub-object in the same `PATCH` fills its fields. Between `password` and `custom` the custom fields stay. A `credit_card` takes its `valid_thru` from the entry's `expires_at`. See [Update Entry](api-reference/entries.md#update-entry).
+A `PATCH` that changes an entry's `type` into another type than `password` and `custom` removes the values of the old type, so that none of them stands in a field of the new type with another meaning; the new type's sub-object in the same `PATCH` fills its fields. Between `password` and `custom` the custom fields stay. A `credit_card` takes its `valid_thru` from the entry's `expires_at`. See [Update Entry](api-reference/entries.md#update-entry).
+
+#### A Type Change into `password` or `custom` Keeps the Values as Custom Fields (Behavior Change)
+
+A `PATCH` that changes an entry of another type into a `password` or a `custom` entry keeps every value of the old type's sub-object that is not empty as a custom field, under its English name in Password Depot for Windows -- for example `Card Number`, `Expires On` or `ZIP` --, with the type of its value. Custom fields the entry already holds besides its type's values stay as they are. The card brand, the PuTTY protocol and the TeamViewer mode are written in words, a card's `valid_thru` as its `MM/YYYY` text; a credit card's number and security code, the PINs and the passwords are secret fields. A passkey's key, algorithm and counter are not kept. The names are listed under [Update Entry](api-reference/entries.md#update-entry).
+
+#### Card Brand `other` and Unknown Words (Behavior Change)
+
+`credit_card.card` answers and takes `other`, the brand Other of the Windows client. A write of `credit_card.card`, `putty.protocol` or `teamviewer.mode` with a word that is not one of the documented ones answers `400` with nothing written, and `""` or `null` leaves the stored value as it is, so that a `credit_card`, `putty` or `teamviewer` object sent back as `GET` answered it keeps the brand, the protocol and the mode. See [Type-Specific Fields](api-reference/entries.md#type-specific-fields).
 
 #### Group Names Checked as in the Server Manager (Behavior Change)
 
