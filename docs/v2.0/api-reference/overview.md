@@ -160,7 +160,7 @@ Some responses add members to `error`. `459` and `460` from `POST /auth/login` c
     | `4008` | `400` | `PD_ERRCODE_ICON_IMAGE` | `POST /databases/{db}/icons`: `data` is not a usable PNG |
     | `4012` | `401` | `PD_ERRCODE_2FA_EMAIL_SEND_FAILED` | Login: e-mail two-factor authentication is required, but the server cannot send the verification e-mail |
     | `4013` | `401` | `PD_ERRCODE_2FA_EMAIL_MISSING` | Login: e-mail two-factor authentication is required, but the account has no e-mail address |
-    | `4030` | `403` | `PD_ERRCODE_SECOND_PASSWORD_READ_ONLY` | The item is protected by a second password and cannot be changed in this version, or the request sets, changes or removes a second password (`X-New-Second-Password`); nothing was written. Reading the item still works |
+    | `4030` | `403` | `PD_ERRCODE_SECOND_PASSWORD_READ_ONLY` | The item is protected by a second password and cannot be changed in this version, or the request sets, changes or removes a second password (`X-New-Second-Password`); nothing was written. Reading the item still works, except for an [entry of a converted database](entries.md#second-password-protection) that the server does not open, whose read answers `4030` too |
     | `4031` | `403` | `PD_ERRCODE_INVALID_SECOND_PASS` | Wrong or missing second password; a generic access-denied `403` keeps `error.code = 403` |
     | `4032` | `403` | `PD_ERRCODE_LICENSE_LIMIT` | `POST /admin/users`: the server's licensed number of users is reached |
     | `4033` | `403` | `PD_ERRCODE_TOTP_READ_REQUIRED` | Entry `PATCH` with a `totp` key: read permission on the entry is required as well; a `PATCH` without a `totp` key answers a plain `403` |

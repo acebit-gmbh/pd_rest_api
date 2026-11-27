@@ -1134,14 +1134,29 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           description: |
-            `error.code` 4031: wrong or missing second password.
+            `error.code` 4031: wrong or missing second password - Server 20.0.0
+            and later: also for an entry, read directly or through a link, that
+            a converted database keeps under its second password.
+            `error.code` 4030 (Server 20.0.0 and later): such an entry that the
+            server does not open here - the database does not let the server
+            open it, or the server cannot open this entry; do not ask for the
+            second password again.
             `error.code` 403: no permission, the entry is sealed, or an
             `encrypted_file` or `certificate` entry, read directly or through a
-            link, has legacy second-password protection that REST cannot verify;
-            Server 20.0.0 and later: or the entry, read directly or through a
-            link, is one that a converted database keeps under its second
-            password ("This entry uses an old form of second-password
-            protection that cannot be unlocked through the REST API.").
+            link, has legacy second-password protection that REST cannot verify.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: |
+            Server 20.0.0 and later: too many wrong second passwords of this
+            user for an entry that a converted database keeps under its second
+            password. Honor the `Retry-After` header.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
           content:
             application/json:
               schema:
@@ -4622,7 +4637,23 @@ paths:
             Insufficient permissions, a seal/policy restriction, or a missing
             or incorrect current second password (error.code 4031). Legacy
             second-password protection that REST cannot verify answers plain
-            error.code 403; do not retry by prompting for a password.
+            error.code 403; do not retry by prompting for a password. Server
+            20.0.0 and later: an entry that a converted database keeps under its
+            second password and that the server does not open here answers
+            error.code 4030; do not prompt for a password either.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: |
+            Server 20.0.0 and later: too many wrong second passwords of this
+            user for an entry that a converted database keeps under its second
+            password. Honor the `Retry-After` header.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
           content:
             application/json:
               schema:
@@ -4769,9 +4800,25 @@ paths:
         "403":
           description: |
             `error.code` 4031: wrong or missing second password.
+            `error.code` 4030 (Server 20.0.0 and later): an entry that a
+            converted database keeps under its second password and that the
+            server does not open here (for a link, also the linked entry).
             `error.code` 403: no permission (on the entry or a link's target),
             sealed, long-lived API token, or an old form of second-password
             protection the REST API cannot check.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: |
+            Server 20.0.0 and later: too many wrong second passwords of this
+            user for an entry that a converted database keeps under its second
+            password. Honor the `Retry-After` header.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
           content:
             application/json:
               schema:
@@ -8161,7 +8208,9 @@ components:
             `""` where the caller may not read that entry.
         has_second_pass:
           type: boolean
-          description: Whether this entry is protected by a second password
+          description: |
+            Whether this entry is protected by a second password - also an
+            entry that a converted database keeps under its second password.
           readOnly: true
         has_otp:
           type: boolean
@@ -8734,8 +8783,9 @@ components:
           readOnly: true
           description: |
             In order of precedence: `hidden` (the caller may not read the
-            entry, or it is an entry of a converted database that its second
-            password protects; nothing else is reported), `unsupported` (entry type
+            entry, or it is the compact representation of an entry of a
+            converted database that its second password protects; nothing else
+            is reported), `unsupported` (entry type
             `encrypted_file` or `certificate`), `set` (a code can be
             computed; the same as `has_otp: true`), `invalid` (a seed is
             stored but produces no code), `none` (no seed). Treat a value you

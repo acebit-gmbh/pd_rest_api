@@ -1399,7 +1399,7 @@ An endpoint that reads a JSON body answers a request that sends none -- no `Cont
 
 #### Entries of a Converted Database Protected by a Second Password
 
-`GET` of such an entry, of its content and of its one-time code answers `403` with `error.code` `403` and a message that says the entry uses an old form of second-password protection; `PATCH` answers `403` / `4030`. A list, a search or the recycle bin that holds such an entry answers as for any other entry, the row with `has_otp` `false` and the `totp` state `hidden`. See [Second Password Protection](api-reference/entries.md#second-password-protection).
+`GET` of such an entry, of its content and of its one-time code opens it with its second password in `X-Second-Password`, where the database lets the server open such entries - a database converted from an earlier server does, a new database and one added from an earlier version's file do not -, for that one request: a missing or wrong second password answers `403` / `4031`, too many wrong ones in a short time `429`, and an entry the server does not open there `403` / `4030`. `PATCH` answers `403` / `4030`. A list, a search or the recycle bin that holds such an entry answers as for any other entry, the row with `has_second_pass` `true`, `has_otp` `false` and the `totp` state `hidden`. See [Second Password Protection](api-reference/entries.md#second-password-protection).
 
 ### Documentation Corrections
 
