@@ -1323,7 +1323,9 @@ paths:
             `error.code` `403`. A `totp` write without read permission on the
             entry returns `error.code` `4033`
             (`PD_ERRCODE_TOTP_READ_REQUIRED`); a `totp` write on an entry
-            sealed for the caller keeps `error.code` `403`. So does an
+            sealed for the caller keeps `error.code` `403`, and so does
+            `custom_fields` on such an entry of another type than `password`,
+            `custom` and `encrypted_file` (Server 20.0.0 and later). So does an
             `encrypted_file` or `certificate` entry with legacy
             second-password protection that REST cannot verify; do not
             re-prompt for a second password.
@@ -8107,7 +8109,11 @@ components:
         `certificate`, `rdp`, `putty`,
         `teamviewer`, `passkey`). For `password` and `custom` entries the
         common password fields (`pass`, `urls`, `custom_fields`, ...) are
-        at the top level instead.
+        at the top level instead. Server 20.0.0 and later: the full
+        representation of an entry of every type but `encrypted_file`
+        carries `custom_fields`; on the other types it lists the custom
+        fields the entry holds besides its type's values, read-only there
+        (sent back as `getEntry` returned it, it changes nothing).
       properties:
         type:
           type: string
@@ -8266,7 +8272,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CustomField"
-          description: The entry's custom fields (only for `password` / `custom`); from Server 20.0.0 on, see `CustomField` for how a write matches them
+          description: The entry's custom fields - on `password` and `custom` entries all their fields; Server 20.0.0 and later also on every other type but `encrypted_file`, the fields the entry holds besides its type's values (for example from an import), read-only there (the list `getEntry` returned is accepted and changes nothing). See `CustomField` for how a write matches them
         author:
           type: string
           format: uuid
@@ -9656,11 +9662,20 @@ components:
     CustomField:
       type: object
       description: |
-        One custom field of a `password` or `custom` entry. Server 20.0.0 and
-        later: `custom_fields` in a `createEntry` or `updateEntry` body is the
-        complete list of the entry's fields, accepted on `password` and
-        `custom` entries only (`400` otherwise; the type the entry has after
-        the request decides, and on a link the `409` comes first). Each
+        One custom field of an entry. Server 20.0.0 and later: the full
+        representation of every type but `encrypted_file` carries them, with
+        the same members on every type. `custom_fields` in a `createEntry` or
+        `updateEntry` body is the
+        complete list of the entry's fields, written on `password` and
+        `custom` entries only. On the other types it is read-only: a list
+        that changes nothing is accepted and not written (the list
+        `getEntry` returned for an entry that keeps its type, `[]` where the
+        request gives the entry its type); any other list, and any list on
+        an `encrypted_file`, answers `400` (the type the entry has after
+        the request decides, and on a link the `409` comes first); on
+        `updateEntry` of an entry that keeps such a type (not
+        `encrypted_file`), the list answers `403` where the entry is sealed
+        for the caller. Each
         element is matched to a field the entry has, each field at most
         once: by `id` when it is not empty (letter case does not matter),
         otherwise by `name` without regard to letter case, otherwise by its

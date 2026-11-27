@@ -89,6 +89,7 @@ For `encrypted_file` and `certificate` links, the full response identifies the l
 | Field | Type | Writable | Description |
 |-------|------|:--------:|-------------|
 | `<type>` | object | Varies by field | Type-specific data as a sub-object keyed by the entry type name. See [Type-Specific Fields](#type-specific-fields). |
+| `custom_fields` | array of objects | No | *Server 20.0.0 and later.* The custom fields the entry holds besides its type's values, for example from an import; `[]` where it holds none. Read-only: sent back as a `GET` returned it, the list is accepted and changes nothing, and any other list answers `400` (see [Writing Custom Fields](#writing-custom-fields)). Not on an `encrypted_file` entry, whose files are listed in its sub-object. May require `X-Second-Password` header. See [Custom Field Object](#custom-field-object). |
 
 ### Type-Specific Fields
 
@@ -494,6 +495,8 @@ This sub-object is present only in the full representation when the caller may r
 | `type` | string | New fields only | *Server 20.0.0 and later.* The field's type: `text`, `password`, `memo`, `date`, `number`, `boolean`, `decimal`, `email`, `url`, `iban`, `card_number` or `protected`. Read-only for a field the entry has; sets the type of a field a write adds (default `text`) |
 | `secret` | boolean | No | *Server 20.0.0 and later.* Whether the server stores the value as a secret. Ignored in a request |
 
+*Server 20.0.0 and later.* The full representation of an entry of every type but `encrypted_file` carries `custom_fields`, in the order of the fields. For `password` and `custom` these are all the entry's fields. An entry of another type, such as a `credit_card` or an `identity`, can hold custom fields besides its type's values -- for example from an import --, and `custom_fields` lists those, never its type's values, which stay in its [sub-object](#type-specific-fields). Each element has the same members on every type, a field stored as a secret is answered with `secret` `true` as on a `password` entry, and the compact representation carries no `custom_fields`. On the types other than `password` and `custom` the list is read-only; sent back as a `GET` returned it, it changes nothing (see [Writing Custom Fields](#writing-custom-fields)).
+
 #### Custom Field Values
 
 *Server 20.0.0 and later.* `value` is always a JSON string. A field of one of these types carries it in the type's form, the form in which the database stores it:
@@ -519,7 +522,7 @@ In a write, send the forms above. For compatibility the server also accepts a `d
 
 #### Writing Custom Fields
 
-*Server 20.0.0 and later.* `custom_fields` can be written on `password` and `custom` entries, the types whose full representation carries it, and in a `POST` or `PATCH` body it is always the complete list of the entry's fields. Each element of the array is matched to a field the entry already has, each field at most once:
+*Server 20.0.0 and later.* `custom_fields` can be written on `password` and `custom` entries, and in a `POST` or `PATCH` body it is always the complete list of the entry's fields. Each element of the array is matched to a field the entry already has, each field at most once:
 
 1. by `id`, when the element has a non-empty `id` (letter case does not matter);
 2. otherwise by `name`, without regard to letter case, when the element has no `type` or that field's `type`;
@@ -532,7 +535,14 @@ These answer `400 Bad Request`, and nothing of the entry is written:
 - an element that is not an object;
 - an element whose `id` names no field of the entry (on `POST`, any non-empty `id`), and two elements that name the same `id`;
 - a `type` that is not one of the words above, written in lower case as listed;
-- `custom_fields` on an entry of any other type than `password` and `custom`. The type the entry has after the request decides: the `type` of a `POST` body, or a `type` change in the same `PATCH`. Write the typed values of the other types through their [sub-object](#type-specific-fields), for example `credit_card`.
+- `custom_fields` that would change the fields of an entry of any other type than `password` and `custom`, and `custom_fields` on an `encrypted_file` entry (see below).
+
+On an entry of any other type than `password` and `custom`, `custom_fields` is read-only. The type the entry has after the request decides: the `type` of a `POST` body, or a `type` change in the same `PATCH`. A list that changes nothing is accepted and not written, so an entry sent back as a `GET` returned it is not refused for its `custom_fields`:
+
+- on an entry that keeps its type, the list a `GET` of that entry returns -- the same fields in the same order, each element with the same `id`, `name`, `value`, `input_id` and `type` where it sends them; `secret` is not compared;
+- `[]` where the request gives the entry its type -- a `POST`, or a `type` change --, because the entry then has no custom fields of its own.
+
+Any other list answers `400`. Write the typed values of these types through their [sub-object](#type-specific-fields), for example `credit_card`. On `PATCH` of such an entry that keeps its type, other than an `encrypted_file`, `custom_fields` answers `403` when the entry is sealed for you.
 
 `custom_fields` on a link answers `409` (see [Update Entry](#update-entry)); that check comes before the `400` for the type.
 
@@ -757,7 +767,7 @@ Creates a new entry within a database. Use the `parent` query parameter to place
 | `category` | string | No | Category label. *Server 20.0.0 and later:* a value the database's [category list](databases.md#list-categories) does not already hold is added to that list -- see [How a Category Is Created](databases.md#how-a-category-is-created) |
 | `tags` | string | No | Tags (comma-separated) |
 | `comments` | string | No | Comments/notes |
-| `custom_fields` | array of objects | No | Custom fields, for `password` and `custom` types (see [Custom Field Object](#custom-field-object)). *Server 20.0.0 and later:* refused with `400` for the other types; see [Writing Custom Fields](#writing-custom-fields) |
+| `custom_fields` | array of objects | No | Custom fields, for `password` and `custom` types (see [Custom Field Object](#custom-field-object)). *Server 20.0.0 and later:* read-only on the other types -- the list a `GET` returned is accepted and changes nothing, any other list answers `400`; see [Writing Custom Fields](#writing-custom-fields) |
 | `<type>` | object | No | Type-specific data sub-object keyed by type name (see [Type-Specific Fields](#type-specific-fields)) |
 | `urls` | array of strings | No | Associated URLs |
 | `expires_at` | string (ISO 8601) or null | No | The day the entry expires: the date part of the value as written; `null` for none. See [Dates](#dates) |
@@ -946,7 +956,7 @@ The `totp` key writes the entry's one-time-code (TOTP) settings. It has four for
 
 #### Custom fields (`custom_fields`)
 
-*Server 20.0.0 and later.* `custom_fields` is the complete list of the entry's fields, and each element is matched to a field the entry has -- by `id`, otherwise by `name`, otherwise, where no element has an `id`, by its position -- which keeps its type. Send back the `id` of each field `GET` returned; `custom_fields` sent back exactly as `GET` returned them leave every field as it was. Only `password` and `custom` entries accept the key. The rules and the `400`s are under [Writing Custom Fields](#writing-custom-fields).
+*Server 20.0.0 and later.* `custom_fields` is the complete list of the entry's fields, and each element is matched to a field the entry has -- by `id`, otherwise by `name`, otherwise, where no element has an `id`, by its position -- which keeps its type. Send back the `id` of each field `GET` returned; `custom_fields` sent back exactly as `GET` returned them leave every field as it was. Only `password` and `custom` entries write it; on the other types the list a `GET` returned is accepted and changes nothing. The rules and the `400`s are under [Writing Custom Fields](#writing-custom-fields).
 
 #### Type (`type`)
 
@@ -1014,7 +1024,7 @@ Returns the compact representation of the updated entry.
 |--------|-------------|
 | `400 Bad Request` | Invalid fields (body `error.code` = `400`), **or** a refused `totp` write (`error.code` = `4001` to `4006`, see [One-Time Code Settings](#one-time-code-settings)), **or** `image_*` keys that do not name a usable icon (`error.code` = `4007`, see [Assigning an Icon](#assigning-an-icon)), **or** (*Server 20.0.0 and later*) `custom_fields` that [Writing Custom Fields](#writing-custom-fields) refuses |
 | `401 Unauthorized` | Missing or invalid authentication token |
-| `403 Forbidden` | Insufficient permissions -- *Server 20.0.0 and later:* read as well as update permission on the entry --, a `totp` write on an entry that is sealed for you, **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`); *Server 20.0.0 and later:* a protected entry, or an `X-New-Second-Password` that sets, changes or removes a second password (`4030`); the entry is being edited by another user (`4035`) |
+| `403 Forbidden` | Insufficient permissions -- *Server 20.0.0 and later:* read as well as update permission on the entry --, a `totp` write on an entry that is sealed for you, `custom_fields` on such an entry of another type than `password`, `custom` and `encrypted_file` (see [Writing Custom Fields](#writing-custom-fields)), **or** legacy second-password protection that REST cannot verify on an `encrypted_file` or `certificate` entry (body `error.code` = `403`); a missing/incorrect `X-Second-Password` for a protected entry (`4031`); a `totp` write without read permission on the entry (`4033`); *Server 20.0.0 and later:* a protected entry, or an `X-New-Second-Password` that sets, changes or removes a second password (`4030`); the entry is being edited by another user (`4035`) |
 | `404 Not Found` | Database or entry not found |
 | `501 Not Implemented` | `totp` sent for an entry of type `encrypted_file` or `certificate` |
 | `503 Service Unavailable` | *Server 20.0.0 and later.* The database is not available at the moment (see [Databases Not Available at the Moment](databases.md#databases-not-available-at-the-moment)), or the change could not be written to the database; nothing is written. Try again later |
@@ -1403,7 +1413,7 @@ Only these four members exist. `{}`, any other member, or a member of the wrong 
 12. `400` / `4006` or `501` for the entry's type (after a `type` change in the same body)
 13. `400` / `4005` for an object without `secret` on an entry that has no seed
 14. `400` / `4001` to `4004` from the admission rules and the code computation
-15. `400` for a value of the wrong JSON type and `409` for `custom_fields` or a type sub-object on a link; (*Server 20.0.0 and later*) `400` for `custom_fields` on a type that does not take them, which comes after that `409`, and for `custom_fields` that [Writing Custom Fields](#writing-custom-fields) refuses. The body is applied to a copy of the entry to decide this, so the entry itself is untouched when it answers
+15. (*Server 20.0.0 and later*) `403` when the entry is sealed for you and the body sends `custom_fields` for an entry that keeps a type other than `password`, `custom` and `encrypted_file` and is no link (see [Writing Custom Fields](#writing-custom-fields)); then `400` for a value of the wrong JSON type and `409` for `custom_fields` or a type sub-object on a link; (*Server 20.0.0 and later*) `400` for `custom_fields` on a type that does not take them, which comes after that `409`, and for `custom_fields` that [Writing Custom Fields](#writing-custom-fields) refuses. The body is applied to a copy of the entry to decide this, so the entry itself is untouched when it answers
 16. `403` when the entry is, or by this body becomes, a link to an entry you may not read or use, that is sealed for you, that is a folder or that was deleted; `400` when the entry is, or by this body becomes, a link to itself, a link to another link, or a link although another link already points at it
 17. Only now is anything written, as one: `X-New-Second-Password` is applied, the previous version goes to the history where the database keeps one, the body is applied, `updated_at` is bumped, and the write is audited
 
